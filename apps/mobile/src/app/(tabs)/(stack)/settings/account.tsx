@@ -2,12 +2,15 @@ import React from "react"
 import { ScrollView, View, StyleSheet, TouchableOpacity, Alert } from "react-native"
 import { Text } from "react-native"
 import { Gravatar } from "react-native-gravatar"
+import { Ionicons } from "@expo/vector-icons"
+import { useRouter } from "expo-router"
 import { useUser, useAuthStore, useValidSubscription, useProductName } from "../../../../stores"
 import { useAppTheme, AppTheme } from "../../../../theme"
 
 export default function AccountScreen() {
   const theme = useAppTheme()
   const styles = makeStyles(theme)
+  const router = useRouter()
   const user = useUser()
   const logout = useAuthStore((s) => s.logout)
   const validSubscription = useValidSubscription()
@@ -37,27 +40,119 @@ export default function AccountScreen() {
         />
       </View>
 
-      <View style={styles.detailsCard}>
-        <View style={styles.row}>
-          <Text style={styles.label}>Name</Text>
-          <Text style={styles.value}>{user?.name || "—"}</Text>
-        </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Email</Text>
-          <Text style={styles.value}>{user?.email || "—"}</Text>
-        </View>
-        <View style={[styles.row, styles.lastRow]}>
-          <Text style={styles.label}>Subscription</Text>
-          <Text style={[styles.value, validSubscription && { color: theme.colors.success }]}>
-            {productName}
-          </Text>
-        </View>
+      <SectionHeader theme={theme}>Profile</SectionHeader>
+      <View style={styles.card}>
+        <EditableRow
+          theme={theme}
+          label="Name"
+          value={user?.name || "—"}
+          onPress={() => router.push("/(tabs)/(stack)/settings/edit-name" as any)}
+        />
+        <EditableRow
+          theme={theme}
+          label="Email"
+          value={user?.email || "—"}
+          onPress={() => router.push("/(tabs)/(stack)/settings/edit-email" as any)}
+          isLast
+        />
       </View>
 
-      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-        <Text style={styles.logoutText}>Log Out</Text>
+      <SectionHeader theme={theme}>Security</SectionHeader>
+      <View style={styles.card}>
+        <EditableRow
+          theme={theme}
+          label="Change Password"
+          onPress={() => router.push("/(tabs)/(stack)/settings/change-password" as any)}
+          isLast
+        />
+      </View>
+
+      <SectionHeader theme={theme}>Subscription</SectionHeader>
+      <View style={styles.card}>
+        <EditableRow
+          theme={theme}
+          label="Plan"
+          value={productName}
+          valueColor={validSubscription ? theme.colors.success : undefined}
+          onPress={() => router.push("/(tabs)/(stack)/settings/subscription" as any)}
+          isLast
+        />
+      </View>
+
+      <TouchableOpacity style={styles.actionButton} onPress={handleLogout}>
+        <Text style={[styles.actionText, { color: theme.colors.error }]}>Log Out</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.actionButton}
+        onPress={() => router.push("/(tabs)/(stack)/settings/delete-account" as any)}
+      >
+        <Text style={[styles.actionText, { color: theme.colors.error }]}>Delete Account</Text>
       </TouchableOpacity>
     </ScrollView>
+  )
+}
+
+const SectionHeader = ({ theme, children }: { theme: AppTheme; children: React.ReactNode }) => (
+  <Text
+    style={{
+      marginTop: 24,
+      marginBottom: 6,
+      marginHorizontal: 16,
+      fontSize: 13,
+      color: theme.colors.textSecondary,
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+    }}
+  >
+    {children}
+  </Text>
+)
+
+const EditableRow = ({
+  theme,
+  label,
+  value,
+  valueColor,
+  onPress,
+  isLast,
+}: {
+  theme: AppTheme
+  label: string
+  value?: string
+  valueColor?: string
+  onPress?: () => void
+  isLast?: boolean
+}) => {
+  const styles = makeStyles(theme)
+  return (
+    <TouchableOpacity
+      style={[styles.row, isLast && styles.lastRow]}
+      onPress={onPress}
+      disabled={!onPress}
+      activeOpacity={onPress ? 0.6 : 1}
+    >
+      <Text style={styles.label}>{label}</Text>
+      <View style={styles.valueWrap}>
+        {value !== undefined && (
+          <Text
+            style={[styles.value, valueColor ? { color: valueColor } : null]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {value}
+          </Text>
+        )}
+        {onPress && (
+          <Ionicons
+            name="chevron-forward"
+            size={18}
+            color={theme.colors.textSecondary}
+            style={{ marginLeft: 6 }}
+          />
+        )}
+      </View>
+    </TouchableOpacity>
   )
 }
 
@@ -76,10 +171,11 @@ const makeStyles = (theme: AppTheme) =>
       height: 80,
       borderRadius: 40,
     },
-    detailsCard: {
+    card: {
       marginHorizontal: 16,
       backgroundColor: theme.colors.cardBackground,
       overflow: "hidden",
+      borderRadius: 10,
     },
     row: {
       flexDirection: "row",
@@ -97,19 +193,26 @@ const makeStyles = (theme: AppTheme) =>
       fontSize: 17,
       color: theme.colors.textPrimary,
     },
+    valueWrap: {
+      flexDirection: "row",
+      alignItems: "center",
+      flexShrink: 1,
+      marginLeft: 12,
+    },
     value: {
       fontSize: 17,
       color: theme.colors.textSecondary,
+      maxWidth: 200,
     },
-    logoutButton: {
+    actionButton: {
       marginHorizontal: 16,
       marginTop: 16,
       backgroundColor: theme.colors.cardBackground,
       paddingVertical: 11,
       alignItems: "center",
+      borderRadius: 10,
     },
-    logoutText: {
+    actionText: {
       fontSize: 17,
-      color: theme.colors.error,
     },
   })

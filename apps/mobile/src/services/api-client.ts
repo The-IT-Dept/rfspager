@@ -202,6 +202,12 @@ export const auth = {
 
 // --- User ---
 
+export interface UpdateProfileInput {
+  name?: string
+  email?: string
+  current_password?: string // required when email is being changed
+}
+
 export const user = {
   me: () => get<User & { notifications_count: number; unread_notifications_count: number }>("/me"),
   magicLink: (route?: string) => {
@@ -209,6 +215,9 @@ export const user = {
     if (route) q.set("route", route)
     return get<{ magicLink: string }>(`/magic-link?${q}`)
   },
+  update: (input: UpdateProfileInput) => request<User>("PATCH", "/me", input),
+  deleteAccount: (password: string) =>
+    request<{ status: string }>("DELETE", "/me", { confirm: "DELETE", password }),
 }
 
 // --- Messages ---

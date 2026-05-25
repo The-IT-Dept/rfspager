@@ -70,6 +70,13 @@ export default function AppStackLayout() {
         }}
       />
       <Stack.Screen name="settings/account" options={{ title: "My Account" }} />
+      <Stack.Screen name="settings/edit-name" options={{ title: "Name" }} />
+      <Stack.Screen name="settings/edit-email" options={{ title: "Email" }} />
+      <Stack.Screen name="settings/change-password" options={{ title: "Change Password" }} />
+      <Stack.Screen
+        name="settings/delete-account"
+        options={{ title: "Delete Account", presentation: "modal" }}
+      />
       <Stack.Screen
         name="settings/subscription"
         options={{ title: "Subscription", presentation: "modal" }}

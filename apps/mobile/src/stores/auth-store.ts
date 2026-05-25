@@ -5,7 +5,13 @@
 import { create } from "zustand"
 import { persist, createJSONStorage } from "zustand/middleware"
 import AsyncStorage from "@react-native-async-storage/async-storage"
-import { api, setApiToken, setOnUnauthorized, type User } from "../services/api-client"
+import {
+  api,
+  setApiToken,
+  setOnUnauthorized,
+  type UpdateProfileInput,
+  type User,
+} from "../services/api-client"
 import { setIAPAuthToken, setOnSubscriptionSynced } from "../services/purchase-service"
 import { getInstallationId, getInstallationInput } from "../utils/installation"
 import { logEvent, setUserEmail, setUserId } from "../utils/analytics"
@@ -25,6 +31,9 @@ interface AuthState {
     extras?: { name?: string; email?: string },
   ) => Promise<string>
   forgotPassword: (email: string) => Promise<string>
+  updateProfile: (input: UpdateProfileInput) => Promise<string>
+  updatePassword: (current: string, next: string, nextConfirmation: string) => Promise<string>
+  deleteAccount: (password: string) => Promise<string>
   logout: (message?: string) => void
   resetApp: () => void
   refreshUser: () => Promise<void>
@@ -125,6 +134,48 @@ export const useAuthStore = create<AuthState>()(
             return "OK"
           } catch (e: any) {
             return e?.message || "Failed"
+          }
+        },
+
+        updateProfile: async (input) => {
+          try {
+            const updated = await api.user.update(input)
+            // Merge into the cached user so downstream selectors (name/email
+            // changes) reflect immediately without a full /me round-trip.
+            const current = get().user
+            set({
+              user: current ? { ...current, ...updated } : updated,
+              lastUserRefresh: Date.now(),
+            })
+            if (updated.email) setUserEmail(updated.email)
+            logEvent("profile_updated")
+            return "OK"
+          } catch (e: any) {
+            return e?.message || "Failed to update profile"
+          }
+        },
+
+        updatePassword: async (current, next, nextConfirmation) => {
+          try {
+            await api.auth.updatePassword(current, next, nextConfirmation)
+            logEvent("password_updated")
+            return "OK"
+          } catch (e: any) {
+            return e?.message || "Failed to update password"
+          }
+        },
+
+        deleteAccount: async (password) => {
+          try {
+            await api.user.deleteAccount(password)
+            logEvent("account_deleted")
+            // Tear down local session — same path as a normal logout, minus
+            // the server installation-delete (the cascade already removed it).
+            syncToken(null)
+            set({ token: null, user: null, lastUserRefresh: 0, logoutMessage: "" })
+            return "OK"
+          } catch (e: any) {
+            return e?.message || "Failed to delete account"
           }
         },
 
