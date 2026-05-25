@@ -1,11 +1,13 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/the-it-dept/rfspager/internal/notify"
@@ -328,7 +330,13 @@ func (h *Handlers) ApproveSystem(w http.ResponseWriter, r *http.Request) {
 		}
 		name, _ := row["name"].(string)
 		if userID > 0 {
-			go h.notifier.NotifySystemApproved(r.Context(), userID, name)
+			// Detach from r.Context() — it's cancelled the moment this handler
+			// returns, which races the goroutine's DB query for push tokens.
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				h.notifier.NotifySystemApproved(ctx, userID, name)
+			}()
 		}
 	}
 
