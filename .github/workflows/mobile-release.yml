@@ -1,0 +1,198 @@
+name: mobile-release
+
+# Trigger: tags shaped like `mobile-v1.2.3`.
+# Runs LOCAL EAS builds (no EAS cloud queue) on a macOS runner, then submits
+# to the App Store + Play Store using `eas submit`.
+#
+# See docs/ci-secrets.md for the full inventory of required secrets.
+on:
+  push:
+    tags:
+      - "mobile-v*"
+
+  # Allow manual runs for testing the pipeline without cutting a tag.
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Platform to build"
+        required: true
+        default: "all"
+        type: choice
+        options: [all, ios, android]
+      submit:
+        description: "Submit to stores after build"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+
+concurrency:
+  group: mobile-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # iOS — runs on macOS so Xcode is available for the local build.
+  # ---------------------------------------------------------------------------
+  ios:
+    if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'ios'
+    name: ios (eas build --local)
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: apps/mobile
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "16.2"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/mobile/pnpm-lock.yaml
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+          bundler-cache: false
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install eas-cli
+        run: npm install -g eas-cli
+
+      # Materialise platform-secret files from GH secrets. These are
+      # base64-encoded in the secret store to survive the binary boundary.
+      - name: Write GoogleService-Info.plist
+        run: |
+          echo "${{ secrets.IOS_GOOGLE_SERVICE_INFO_PLIST }}" | base64 -d > GoogleService-Info.plist
+
+      - name: Build (local)
+        run: |
+          eas build \
+            --platform ios \
+            --profile release \
+            --local \
+            --non-interactive \
+            --output build.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: apps/mobile/build.ipa
+          retention-days: 14
+
+      - name: Write App Store Connect API key
+        if: github.event_name == 'push' || inputs.submit == 'true'
+        run: |
+          mkdir -p .secrets
+          echo "${{ secrets.APPLE_ASC_KEY_P8 }}" | base64 -d > .secrets/asc.p8
+          # eas submit reads ASC_KEY_PATH / ASC_KEY_ID / ASC_ISSUER_ID
+          echo "ASC_KEY_PATH=$PWD/.secrets/asc.p8" >> "$GITHUB_ENV"
+          echo "ASC_KEY_ID=${{ secrets.APPLE_ASC_KEY_ID }}"     >> "$GITHUB_ENV"
+          echo "ASC_ISSUER_ID=${{ secrets.APPLE_ASC_ISSUER_ID }}" >> "$GITHUB_ENV"
+
+      - name: Submit to App Store Connect
+        if: github.event_name == 'push' || inputs.submit == 'true'
+        run: |
+          eas submit \
+            --platform ios \
+            --profile release \
+            --path build.ipa \
+            --non-interactive
+
+  # ---------------------------------------------------------------------------
+  # Android — can run on Linux; local EAS build needs Java + Android SDK.
+  # ---------------------------------------------------------------------------
+  android:
+    if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'android'
+    name: android (eas build --local)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: apps/mobile
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: ""
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/mobile/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install eas-cli
+        run: npm install -g eas-cli
+
+      - name: Write google-services.json
+        run: echo "${{ secrets.ANDROID_GOOGLE_SERVICES_JSON }}" | base64 -d > google-services.json
+
+      - name: Write upload keystore
+        run: |
+          mkdir -p .secrets
+          echo "${{ secrets.ANDROID_UPLOAD_KEYSTORE }}" | base64 -d > .secrets/upload.keystore
+
+      - name: Build (local)
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/apps/mobile/.secrets/upload.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          eas build \
+            --platform android \
+            --profile release \
+            --local \
+            --non-interactive \
+            --output build.aab
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-aab
+          path: apps/mobile/build.aab
+          retention-days: 14
+
+      - name: Write Play service-account key
+        if: github.event_name == 'push' || inputs.submit == 'true'
+        run: |
+          echo "${{ secrets.ANDROID_PLAY_SERVICE_ACCOUNT_JSON }}" | base64 -d > .secrets/play.json
+
+      - name: Submit to Play Store
+        if: github.event_name == 'push' || inputs.submit == 'true'
+        env:
+          GOOGLE_SERVICE_ACCOUNT_KEY_PATH: ${{ github.workspace }}/apps/mobile/.secrets/play.json
+        run: |
+          eas submit \
+            --platform android \
+            --profile release \
+            --path build.aab \
+            --non-interactive

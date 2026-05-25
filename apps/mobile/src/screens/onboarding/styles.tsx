@@ -1,0 +1,243 @@
+import { StyleSheet } from "react-native"
+
+const makeStyles = (theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.backgroundTertiary,
+    },
+    headerStyle: {
+      backgroundColor: theme.colors.cardBackground,
+      alignItems: "center",
+      paddingHorizontal: 20,
+      paddingBottom: 24,
+      paddingTop: 20,
+    },
+    scrollView: {
+      backgroundColor: theme.colors.backgroundTertiary,
+      flex: 1,
+    },
+    contentContainerStyle: {
+      paddingBottom: 40,
+    },
+    contentCard: {
+      backgroundColor: theme.colors.cardBackground,
+      marginHorizontal: 16,
+      marginTop: 8,
+      paddingHorizontal: 20,
+      paddingVertical: 24,
+    },
+    topBar: {
+      height: 4,
+      width: 36,
+      alignSelf: "center",
+      marginBottom: 24,
+      borderRadius: 2,
+      backgroundColor: theme.colors.borderSecondary,
+    },
+    headingText: {
+      fontWeight: "600",
+      fontSize: 28,
+      color: theme.colors.textPrimary,
+      marginBottom: 12,
+      textAlign: "center",
+    },
+    subHeading: {
+      fontSize: 17,
+      fontWeight: "400",
+      color: theme.colors.textTertiary,
+      lineHeight: 24,
+      textAlign: "center",
+      marginBottom: 32,
+    },
+    welcomeImage: {
+      width: "80%",
+      height: 120,
+      marginVertical: 24,
+      alignSelf: "center",
+    },
+    notificationAnimation: {
+      width: "80%",
+      height: 100,
+      alignSelf: "center",
+      marginVertical: 24,
+    },
+    adsenseAnimation: {
+      alignSelf: "center",
+      width: "80%",
+      height: 80,
+      marginVertical: 24,
+    },
+    shieldAnimation: {
+      alignSelf: "center",
+      width: "60%",
+      height: 100,
+      marginVertical: 24,
+    },
+    title: {
+      color: theme.colors.textPrimary,
+      fontSize: 20,
+      fontWeight: "600",
+      textAlign: "center",
+      marginTop: 12,
+    },
+    swipableDotsContainer: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      marginVertical: 32,
+    },
+    dotStyle: {
+      height: 8,
+      width: 8,
+      borderRadius: 4,
+      marginHorizontal: 4,
+      backgroundColor: theme.colors.borderSecondary,
+    },
+    dotActive: {
+      backgroundColor: theme.colors.primary,
+    },
+    nextButton: {
+      backgroundColor: theme.colors.primary,
+      height: 50,
+      width: "100%",
+      borderRadius: 0,
+      justifyContent: "center",
+      alignItems: "center",
+      marginTop: 16,
+    },
+    nextLabel: {
+      color: theme.colors.white,
+      fontSize: 17,
+      fontWeight: "600",
+    },
+    disclaimerSection: {
+      backgroundColor: theme.colors.cardBackground,
+      marginHorizontal: 16,
+      marginTop: 8,
+      paddingHorizontal: 20,
+      paddingVertical: 24,
+    },
+    disclaimerText: {
+      fontSize: 15,
+      color: theme.colors.textPrimary,
+      lineHeight: 22,
+      marginBottom: 20,
+    },
+    onboard4bottomText: {
+      fontSize: 13,
+      color: theme.colors.textTertiary,
+      lineHeight: 18,
+      textAlign: "center",
+      marginBottom: 20,
+    },
+    legalSection: {
+      backgroundColor: theme.colors.cardBackground,
+      marginHorizontal: 16,
+      marginTop: 8,
+      paddingHorizontal: 20,
+      paddingVertical: 20,
+    },
+    legalRow: {
+      marginBottom: 20,
+    },
+    agreeConditionsTitle: {
+      color: theme.colors.primary,
+      fontSize: 17,
+      fontWeight: "600",
+      marginBottom: 12,
+    },
+    checkBoxContainer: {
+      flexDirection: "row",
+      alignItems: "center",
+    },
+    agreeConditionsSubtitle: {
+      color: theme.colors.textPrimary,
+      fontSize: 16,
+      marginLeft: 12,
+      flex: 1,
+      lineHeight: 22,
+    },
+    clickToContinue: {
+      color: theme.colors.textTertiary,
+      fontSize: 15,
+      textAlign: "center",
+      marginBottom: 20,
+    },
+    continueButton: {
+      backgroundColor: theme.colors.primary,
+      height: 50,
+      justifyContent: "center",
+      alignItems: "center",
+      marginTop: 8,
+    },
+    continueButtonDisabled: {
+      backgroundColor: theme.colors.borderSecondary,
+    },
+    continueLabel: {
+      color: theme.colors.white,
+      fontSize: 17,
+      fontWeight: "600",
+    },
+    continueButtonSection: {
+      backgroundColor: theme.colors.cardBackground,
+      marginHorizontal: 16,
+      marginTop: 8,
+      paddingHorizontal: 20,
+      paddingVertical: 20,
+    },
+    downArrow: {
+      alignSelf: "center",
+      height: 20,
+      width: 20,
+      tintColor: theme.colors.textTertiary,
+      marginBottom: 12,
+    },
+    premiumFeaturesList: {
+      marginVertical: 24,
+    },
+    premiumFeatureItem: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      marginBottom: 20,
+      paddingHorizontal: 4,
+    },
+    premiumFeatureIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: "#F0F8FF",
+      justifyContent: "center",
+      alignItems: "center",
+      marginRight: 16,
+      marginTop: 2,
+    },
+    premiumFeatureContent: {
+      flex: 1,
+    },
+    premiumFeatureTitle: {
+      fontSize: 16,
+      fontWeight: "600",
+      color: theme.colors.textPrimary,
+      marginBottom: 4,
+    },
+    premiumFeatureDescription: {
+      fontSize: 14,
+      color: theme.colors.textTertiary,
+      lineHeight: 20,
+    },
+    premiumNotice: {
+      backgroundColor: "#F0F8FF",
+      padding: 16,
+      borderRadius: 8,
+      marginTop: 8,
+    },
+    premiumNoticeText: {
+      fontSize: 14,
+      color: theme.colors.primary,
+      textAlign: "center",
+      lineHeight: 20,
+    },
+  })
+
+export { makeStyles }

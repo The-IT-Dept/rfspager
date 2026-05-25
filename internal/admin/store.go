@@ -1,0 +1,743 @@
+package admin
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"math"
+	"strings"
+	"time"
+
+	"github.com/jmoiron/sqlx"
+	"golang.org/x/crypto/bcrypt"
+)
+
+type Store struct {
+	db *sqlx.DB
+}
+
+func NewStore(db *sqlx.DB) *Store {
+	return &Store{db: db}
+}
+
+// RunMigration executes the admin_users migration.
+func (s *Store) RunMigration(ctx context.Context, sql string) error {
+	_, err := s.db.ExecContext(ctx, sql)
+	return err
+}
+
+// SeedAdmin ensures a default admin user exists. Call on boot.
+func (s *Store) SeedAdmin(ctx context.Context, email, password string) error {
+	var exists bool
+	if err := s.db.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM admin_users WHERE email = $1)`, email); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO admin_users (email, password_hash, name, role, active, created_at, updated_at)
+		 VALUES ($1, $2, 'Admin', 'superadmin', true, NOW(), NOW())`, email, string(hash))
+	return err
+}
+
+// --- Admin Users ---
+
+func (s *Store) GetAdminByEmail(ctx context.Context, email string) (*AdminUser, error) {
+	var u AdminUser
+	err := s.db.GetContext(ctx, &u, `SELECT * FROM admin_users WHERE email = $1`, email)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (s *Store) GetAdminByID(ctx context.Context, id int64) (*AdminUser, error) {
+	var u AdminUser
+	err := s.db.GetContext(ctx, &u, `SELECT * FROM admin_users WHERE id = $1`, id)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (s *Store) UpdateAdminLastLogin(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE admin_users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1`, id)
+	return err
+}
+
+func (s *Store) ListAdminUsers(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	return s.paginatedQuery(ctx, "admin_users", "*", "1=1", nil, p, []string{"email", "name"})
+}
+
+func (s *Store) CreateAdminUser(ctx context.Context, data map[string]any) (int64, error) {
+	if pw, ok := data["password"].(string); ok {
+		hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+		if err != nil {
+			return 0, err
+		}
+		data["password_hash"] = string(hash)
+		delete(data, "password")
+	}
+	return s.insertRow(ctx, "admin_users", data)
+}
+
+func (s *Store) UpdateAdminUser(ctx context.Context, id int64, data map[string]any) error {
+	if pw, ok := data["password"].(string); ok && pw != "" {
+		hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+		if err != nil {
+			return err
+		}
+		data["password_hash"] = string(hash)
+		delete(data, "password")
+	} else {
+		delete(data, "password")
+	}
+	return s.updateRow(ctx, "admin_users", id, data)
+}
+
+func (s *Store) DeleteAdminUser(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM admin_users WHERE id = $1`, id)
+	return err
+}
+
+// --- Users ---
+
+func (s *Store) ListUsers(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	return s.paginatedQuery(ctx, "users u", `u.*,
+		(SELECT COUNT(*) FROM installations i WHERE i.user_id = u.id AND i.deleted_at IS NULL) as installations_count,
+		(SELECT COUNT(*) FROM subscriptions s WHERE s.user_id = u.id) as subscriptions_count,
+		(SELECT COUNT(*) FROM alertzones a WHERE a.user_id = u.id) as alertzones_count`,
+		"1=1", nil, p, []string{"u.name", "u.email"})
+}
+
+func (s *Store) GetUser(ctx context.Context, id int64) (map[string]any, error) {
+	return s.getRow(ctx, "users", id, "")
+}
+
+func (s *Store) CreateUser(ctx context.Context, data map[string]any) (int64, error) {
+	if pw, ok := data["password"].(string); ok {
+		hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+		if err != nil {
+			return 0, err
+		}
+		data["password"] = string(hash)
+	}
+	return s.insertRow(ctx, "users", data)
+}
+
+func (s *Store) UpdateUser(ctx context.Context, id int64, data map[string]any) error {
+	if pw, ok := data["password"].(string); ok && pw != "" {
+		hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+		if err != nil {
+			return err
+		}
+		data["password"] = string(hash)
+	} else {
+		delete(data, "password")
+	}
+	return s.updateRow(ctx, "users", id, data)
+}
+
+func (s *Store) DeleteUser(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
+	return err
+}
+
+// --- Capcodes ---
+
+func (s *Store) ListCapcodes(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	return s.paginatedQuery(ctx, "capcodes c LEFT JOIN agencies a ON a.id = c.agency_id",
+		`c.*, a.agency as agency_name,
+		(SELECT COUNT(*) FROM messages m WHERE m.capcode_id = c.id AND m.deleted_at IS NULL) as messages_count,
+		(SELECT COUNT(*) FROM subscriptions s WHERE s.capcode_id = c.id) as subscriptions_count`,
+		"c.deleted_at IS NULL", nil, p, []string{"c.address", "c.alias", "a.agency"},
+		"capcodes c")
+}
+
+func (s *Store) GetCapcode(ctx context.Context, id int64) (map[string]any, error) {
+	return s.getRow(ctx, "capcodes c LEFT JOIN agencies a ON a.id = c.agency_id",
+		id, "c.*, a.agency as agency_name")
+}
+
+func (s *Store) CreateCapcode(ctx context.Context, data map[string]any) (int64, error) {
+	return s.insertRow(ctx, "capcodes", data)
+}
+
+func (s *Store) UpdateCapcode(ctx context.Context, id int64, data map[string]any) error {
+	return s.updateRow(ctx, "capcodes", id, data)
+}
+
+func (s *Store) DeleteCapcode(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE capcodes SET deleted_at = NOW() WHERE id = $1`, id)
+	return err
+}
+
+// --- Agencies ---
+
+func (s *Store) ListAgencies(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	return s.paginatedQuery(ctx, "agencies a",
+		`a.*, (SELECT COUNT(*) FROM capcodes c WHERE c.agency_id = a.id AND c.deleted_at IS NULL) as capcodes_count`,
+		"1=1", nil, p, []string{"a.agency"})
+}
+
+func (s *Store) GetAgency(ctx context.Context, id int64) (map[string]any, error) {
+	return s.getRow(ctx, "agencies", id, "")
+}
+
+func (s *Store) CreateAgency(ctx context.Context, data map[string]any) (int64, error) {
+	return s.insertRow(ctx, "agencies", data)
+}
+
+func (s *Store) UpdateAgency(ctx context.Context, id int64, data map[string]any) error {
+	return s.updateRow(ctx, "agencies", id, data)
+}
+
+func (s *Store) DeleteAgency(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM agencies WHERE id = $1`, id)
+	return err
+}
+
+// --- Systems ---
+
+func (s *Store) ListSystems(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	return s.ListSystemsFiltered(ctx, p, false)
+}
+
+// ListSystemsFiltered is the same as ListSystems with an extra `pendingOnly`
+// switch used by the admin queue view.
+func (s *Store) ListSystemsFiltered(ctx context.Context, p ListParams, pendingOnly bool) (*PaginatedResult, error) {
+	where := "s.deleted_at IS NULL"
+	if p.IncludeDeleted {
+		where = "1=1"
+	}
+	if pendingOnly {
+		where += " AND s.approved_at IS NULL"
+	}
+	return s.paginatedQuery(ctx, "systems s LEFT JOIN users u ON u.id = s.user_id",
+		`s.*, u.name as user_name,
+		(SELECT MAX(m.created_at) FROM messages m WHERE m.system_id = s.id) as last_message_at`,
+		where, nil, p, []string{"s.name", "s.system_id", "u.name"})
+}
+
+func (s *Store) GetSystem(ctx context.Context, id int64) (map[string]any, error) {
+	return s.getRow(ctx, "systems s LEFT JOIN users u ON u.id = s.user_id",
+		id, "s.*, u.name as user_name")
+}
+
+func (s *Store) CreateSystem(ctx context.Context, data map[string]any) (int64, error) {
+	return s.insertRow(ctx, "systems", data)
+}
+
+func (s *Store) UpdateSystem(ctx context.Context, id int64, data map[string]any) error {
+	return s.updateRow(ctx, "systems", id, data)
+}
+
+func (s *Store) DeleteSystem(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE systems SET deleted_at = NOW() WHERE id = $1`, id)
+	return err
+}
+
+// --- Messages ---
+
+func (s *Store) ListMessages(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	return s.paginatedQuery(ctx,
+		"messages m LEFT JOIN systems sy ON sy.id = m.system_id LEFT JOIN capcodes c ON c.id = m.capcode_id LEFT JOIN agencies a ON a.id = c.agency_id",
+		`m.*, sy.name as system_name, c.address as capcode_address, c.alias as capcode_alias, a.agency as agency_name,
+		 (SELECT COUNT(*) FROM notifications n WHERE n.message_id = m.id) as notifications_count,
+		 (SELECT COUNT(*) FROM notifications n WHERE n.message_id = m.id AND n.pushed_at IS NOT NULL) as notifications_pushed_count`,
+		"m.deleted_at IS NULL", nil, p, []string{"m.address", "m.message"},
+		"messages m")
+}
+
+func (s *Store) GetMessage(ctx context.Context, id int64) (map[string]any, error) {
+	return s.getRow(ctx,
+		"messages m LEFT JOIN systems sy ON sy.id = m.system_id LEFT JOIN capcodes c ON c.id = m.capcode_id LEFT JOIN agencies a ON a.id = c.agency_id",
+		id, "m.*, sy.name as system_name, c.address as capcode_address, c.alias as capcode_alias, a.agency as agency_name")
+}
+
+func (s *Store) CreateMessage(ctx context.Context, data map[string]any) (int64, error) {
+	return s.insertRow(ctx, "messages", data)
+}
+
+func (s *Store) UpdateMessage(ctx context.Context, id int64, data map[string]any) error {
+	return s.updateRow(ctx, "messages", id, data)
+}
+
+func (s *Store) DeleteMessage(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE messages SET deleted_at = NOW() WHERE id = $1`, id)
+	return err
+}
+
+// --- Installations ---
+
+func (s *Store) ListInstallations(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	return s.paginatedQuery(ctx, "installations i LEFT JOIN users u ON u.id = i.user_id",
+		`i.*, u.name as user_name`,
+		"i.deleted_at IS NULL", nil, p, []string{"i.id", "i.vendor", "i.model", "u.name"})
+}
+
+func (s *Store) GetInstallation(ctx context.Context, id string) (map[string]any, error) {
+	row := s.db.QueryRowxContext(ctx,
+		`SELECT i.*, u.name as user_name FROM installations i LEFT JOIN users u ON u.id = i.user_id WHERE i.id = $1`, id)
+	result := make(map[string]any)
+	err := row.MapScan(result)
+	if err != nil {
+		return nil, err
+	}
+	cleanMapScan(result)
+	return result, nil
+}
+
+func (s *Store) DeleteInstallation(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE installations SET deleted_at = NOW() WHERE id = $1`, id)
+	return err
+}
+
+// --- Subscriptions ---
+
+func (s *Store) ListSubscriptions(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	return s.paginatedQuery(ctx,
+		"subscriptions s LEFT JOIN users u ON u.id = s.user_id LEFT JOIN capcodes c ON c.id = s.capcode_id LEFT JOIN agencies a ON a.id = c.agency_id",
+		`s.*, u.name as user_name, c.address as capcode_address, c.alias as capcode_alias, a.agency as agency_name`,
+		"1=1", nil, p, []string{"u.name", "c.address", "c.alias"})
+}
+
+func (s *Store) CreateSubscription(ctx context.Context, data map[string]any) (int64, error) {
+	return s.insertRow(ctx, "subscriptions", data)
+}
+
+func (s *Store) DeleteSubscription(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM subscriptions WHERE id = $1`, id)
+	return err
+}
+
+// --- Alertzones ---
+
+func (s *Store) ListAlertzones(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	return s.paginatedQuery(ctx, "alertzones a LEFT JOIN users u ON u.id = a.user_id",
+		`a.*, u.name as user_name`,
+		"1=1", nil, p, []string{"a.name", "u.name"})
+}
+
+func (s *Store) GetAlertzone(ctx context.Context, id int64) (map[string]any, error) {
+	return s.getRow(ctx, "alertzones a LEFT JOIN users u ON u.id = a.user_id",
+		id, "a.*, u.name as user_name")
+}
+
+func (s *Store) CreateAlertzone(ctx context.Context, data map[string]any) (int64, error) {
+	return s.insertRow(ctx, "alertzones", data)
+}
+
+func (s *Store) UpdateAlertzone(ctx context.Context, id int64, data map[string]any) error {
+	return s.updateRow(ctx, "alertzones", id, data)
+}
+
+func (s *Store) DeleteAlertzone(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM alertzones WHERE id = $1`, id)
+	return err
+}
+
+// --- Notifications ---
+
+func (s *Store) ListNotifications(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	return s.paginatedQuery(ctx, "notifications n",
+		`n.*`,
+		"1=1", nil, p, []string{"n.type", "n.notifiable_id::text"})
+}
+
+func (s *Store) MarkNotificationRead(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE notifications SET read_at = NOW() WHERE id = $1`, id)
+	return err
+}
+
+func (s *Store) DeleteNotification(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM notifications WHERE id = $1`, id)
+	return err
+}
+
+// --- Responders ---
+
+func (s *Store) ListResponders(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	return s.paginatedQuery(ctx,
+		"responding r LEFT JOIN users u ON u.id = r.user_id LEFT JOIN messages m ON m.id = r.message_id",
+		`r.*, u.name as user_name, SUBSTRING(m.message, 1, 80) as message_preview`,
+		"1=1", nil, p, []string{"u.name"})
+}
+
+func (s *Store) DeleteResponder(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM responding WHERE id = $1`, id)
+	return err
+}
+
+// --- Capcode Suggestions ---
+
+func (s *Store) ListCapcodeSuggestions(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	return s.paginatedQuery(ctx,
+		"capcode_suggestions cs LEFT JOIN users u ON u.id = cs.user_id",
+		`cs.*, u.name as user_name`,
+		"1=1", nil, p, []string{"cs.address", "cs.agency", "cs.alias", "u.name"})
+}
+
+func (s *Store) GetCapcodeSuggestion(ctx context.Context, id int64) (map[string]any, error) {
+	return s.getRow(ctx, "capcode_suggestions", id, "")
+}
+
+func (s *Store) ApproveCapcodeSuggestion(ctx context.Context, id int64) (int64, error) {
+	suggestion, err := s.GetCapcodeSuggestion(ctx, id)
+	if err != nil {
+		return 0, err
+	}
+
+	// Create agency
+	var agencyID int64
+	agencyName, _ := suggestion["agency"].(string)
+	err = s.db.QueryRowContext(ctx,
+		`INSERT INTO agencies (agency, created_at, updated_at) VALUES ($1, NOW(), NOW())
+		 ON CONFLICT (agency) DO UPDATE SET agency = EXCLUDED.agency RETURNING id`, agencyName).Scan(&agencyID)
+	if err != nil {
+		return 0, err
+	}
+
+	// Create capcode
+	icon, _ := suggestion["icon"].(string)
+	if icon == "" {
+		icon = "fas fa-broadcast-tower"
+	}
+	colour, _ := suggestion["colour"].(string)
+	if colour == "" {
+		colour = "#3490dc"
+	}
+
+	var capcodeID int64
+	err = s.db.QueryRowContext(ctx,
+		`INSERT INTO capcodes (address, alias, agency_id, icon, colour, "ignore", created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, false, NOW(), NOW()) RETURNING id`,
+		suggestion["address"], suggestion["alias"], agencyID, icon, colour).Scan(&capcodeID)
+	if err != nil {
+		return 0, err
+	}
+
+	// Delete suggestion
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM capcode_suggestions WHERE id = $1`, id)
+
+	return capcodeID, nil
+}
+
+func (s *Store) DeleteCapcodeSuggestion(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM capcode_suggestions WHERE id = $1`, id)
+	return err
+}
+
+// --- Major Incidents ---
+
+func (s *Store) ListMajorIncidents(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	return s.paginatedQuery(ctx, "majorincidents", "*",
+		"1=1", nil, p, []string{"title", "category"})
+}
+
+func (s *Store) GetMajorIncident(ctx context.Context, id int64) (map[string]any, error) {
+	return s.getRow(ctx, "majorincidents", id, "")
+}
+
+func (s *Store) CreateMajorIncident(ctx context.Context, data map[string]any) (int64, error) {
+	return s.insertRow(ctx, "majorincidents", data)
+}
+
+func (s *Store) UpdateMajorIncident(ctx context.Context, id int64, data map[string]any) error {
+	return s.updateRow(ctx, "majorincidents", id, data)
+}
+
+func (s *Store) DeleteMajorIncident(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM majorincidents WHERE id = $1`, id)
+	return err
+}
+
+// --- Hazard Reductions ---
+
+func (s *Store) ListHazardReductions(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	return s.paginatedQuery(ctx, "hazardreductions", "*",
+		"1=1", nil, p, []string{"title", "\"leadAgency\"", "lga"})
+}
+
+func (s *Store) GetHazardReduction(ctx context.Context, id int64) (map[string]any, error) {
+	return s.getRow(ctx, "hazardreductions", id, "")
+}
+
+func (s *Store) CreateHazardReduction(ctx context.Context, data map[string]any) (int64, error) {
+	return s.insertRow(ctx, "hazardreductions", data)
+}
+
+func (s *Store) UpdateHazardReduction(ctx context.Context, id int64, data map[string]any) error {
+	return s.updateRow(ctx, "hazardreductions", id, data)
+}
+
+func (s *Store) DeleteHazardReduction(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM hazardreductions WHERE id = $1`, id)
+	return err
+}
+
+// --- Dashboard Stats ---
+
+type DashboardStats struct {
+	TotalUsers       int64 `json:"total_users" db:"total_users"`
+	PaidUsers        int64 `json:"paid_users" db:"paid_users"`
+	FreeUsers        int64 `json:"free_users" db:"free_users"`
+	TotalCapcodes    int64 `json:"total_capcodes" db:"total_capcodes"`
+	TotalMessages    int64 `json:"total_messages" db:"total_messages"`
+	TotalSystems     int64 `json:"total_systems" db:"total_systems"`
+	MessagesToday    int64 `json:"messages_today" db:"messages_today"`
+	NewUsersToday    int64 `json:"new_users_today" db:"new_users_today"`
+	TotalInstallations int64 `json:"total_installations" db:"total_installations"`
+}
+
+func (s *Store) GetDashboardStats(ctx context.Context) (*DashboardStats, error) {
+	var stats DashboardStats
+	err := s.db.GetContext(ctx, &stats, `
+		SELECT
+			(SELECT COUNT(*) FROM users) as total_users,
+			(SELECT COUNT(*) FROM users WHERE subscription_valid = true) as paid_users,
+			(SELECT COUNT(*) FROM users WHERE subscription_valid = false OR subscription_valid IS NULL) as free_users,
+			(SELECT COUNT(*) FROM capcodes WHERE deleted_at IS NULL) as total_capcodes,
+			(SELECT COUNT(*) FROM messages WHERE deleted_at IS NULL) as total_messages,
+			(SELECT COUNT(*) FROM systems WHERE deleted_at IS NULL) as total_systems,
+			(SELECT COUNT(*) FROM messages WHERE deleted_at IS NULL AND created_at >= CURRENT_DATE) as messages_today,
+			(SELECT COUNT(*) FROM users WHERE created_at >= CURRENT_DATE) as new_users_today,
+			(SELECT COUNT(*) FROM installations WHERE deleted_at IS NULL) as total_installations
+	`)
+	return &stats, err
+}
+
+// --- Generic helpers ---
+
+type ListParams struct {
+	Page           int
+	PerPage        int
+	Search         string
+	SortBy         string
+	SortDir        string
+	IncludeDeleted bool // opt-in: include soft-deleted rows in the result set
+}
+
+type PaginatedResult struct {
+	Data       []map[string]any `json:"data"`
+	Total      int64            `json:"total"`
+	Page       int              `json:"page"`
+	PerPage    int              `json:"per_page"`
+	TotalPages int              `json:"total_pages"`
+}
+
+// allowedSortColumns is a safelist check to prevent SQL injection in ORDER BY.
+var allowedSortDirs = map[string]bool{"asc": true, "desc": true, "ASC": true, "DESC": true}
+
+func (s *Store) paginatedQuery(ctx context.Context, from, selectCols, where string, whereArgs []any, p ListParams, searchCols []string, countFrom ...string) (*PaginatedResult, error) {
+	if p.Page < 1 {
+		p.Page = 1
+	}
+	if p.PerPage < 1 {
+		p.PerPage = 25
+	}
+	if p.PerPage > 100 {
+		p.PerPage = 100
+	}
+
+	args := make([]any, len(whereArgs))
+	copy(args, whereArgs)
+	argIdx := len(args) + 1
+
+	// Search
+	if p.Search != "" && len(searchCols) > 0 {
+		clauses := make([]string, len(searchCols))
+		for i, col := range searchCols {
+			clauses[i] = fmt.Sprintf("CAST(%s AS TEXT) ILIKE $%d", col, argIdx)
+		}
+		where += fmt.Sprintf(" AND (%s)", strings.Join(clauses, " OR "))
+		args = append(args, "%"+p.Search+"%")
+		argIdx++
+	}
+
+	// Count - use simpler table for count when JOINs aren't needed for filtering
+	countTable := from
+	if len(countFrom) > 0 && countFrom[0] != "" && p.Search == "" {
+		countTable = countFrom[0]
+	}
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s", countTable, where)
+	var total int64
+	if err := s.db.GetContext(ctx, &total, countQuery, args...); err != nil {
+		return nil, fmt.Errorf("count query: %w", err)
+	}
+
+	// Sort - validate to prevent injection
+	orderClause := "ORDER BY id DESC"
+	if p.SortBy != "" {
+		dir := "ASC"
+		if allowedSortDirs[p.SortDir] {
+			dir = strings.ToUpper(p.SortDir)
+		}
+		// Only allow alphanumeric, underscores, and dots in sort column
+		safeSortBy := sanitizeColumnName(p.SortBy)
+		if safeSortBy != "" {
+			orderClause = fmt.Sprintf("ORDER BY %s %s", safeSortBy, dir)
+		}
+	}
+
+	offset := (p.Page - 1) * p.PerPage
+	dataQuery := fmt.Sprintf("SELECT %s FROM %s WHERE %s %s LIMIT %d OFFSET %d",
+		selectCols, from, where, orderClause, p.PerPage, offset)
+
+	rows, err := s.db.QueryxContext(ctx, dataQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("data query: %w", err)
+	}
+	defer rows.Close()
+
+	var data []map[string]any
+	for rows.Next() {
+		row := make(map[string]any)
+		if err := rows.MapScan(row); err != nil {
+			return nil, err
+		}
+		cleanMapScan(row)
+		data = append(data, row)
+	}
+	if data == nil {
+		data = []map[string]any{}
+	}
+
+	return &PaginatedResult{
+		Data:       data,
+		Total:      total,
+		Page:       p.Page,
+		PerPage:    p.PerPage,
+		TotalPages: int(math.Ceil(float64(total) / float64(p.PerPage))),
+	}, nil
+}
+
+func (s *Store) getRow(ctx context.Context, from string, id int64, selectCols string) (map[string]any, error) {
+	if selectCols == "" {
+		selectCols = "*"
+	}
+	// Determine the ID column based on table alias
+	idCol := "id"
+	parts := strings.Fields(from)
+	if len(parts) > 1 {
+		idCol = parts[1] + ".id"
+	}
+
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s = $1", selectCols, from, idCol)
+	row := s.db.QueryRowxContext(ctx, query, id)
+	result := make(map[string]any)
+	if err := row.MapScan(result); err != nil {
+		return nil, err
+	}
+	cleanMapScan(result)
+	return result, nil
+}
+
+func (s *Store) insertRow(ctx context.Context, table string, data map[string]any) (int64, error) {
+	data["created_at"] = time.Now()
+	data["updated_at"] = time.Now()
+
+	cols := make([]string, 0, len(data))
+	placeholders := make([]string, 0, len(data))
+	vals := make([]any, 0, len(data))
+	i := 1
+	for k, v := range data {
+		cols = append(cols, fmt.Sprintf(`"%s"`, k))
+		placeholders = append(placeholders, fmt.Sprintf("$%d", i))
+		vals = append(vals, v)
+		i++
+	}
+
+	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) RETURNING id",
+		table, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
+
+	var id int64
+	err := s.db.QueryRowContext(ctx, query, vals...).Scan(&id)
+	return id, err
+}
+
+func (s *Store) updateRow(ctx context.Context, table string, id int64, data map[string]any) error {
+	data["updated_at"] = time.Now()
+
+	sets := make([]string, 0, len(data))
+	vals := make([]any, 0, len(data)+1)
+	i := 1
+	for k, v := range data {
+		sets = append(sets, fmt.Sprintf(`"%s" = $%d`, k, i))
+		vals = append(vals, v)
+		i++
+	}
+	vals = append(vals, id)
+
+	query := fmt.Sprintf("UPDATE %s SET %s WHERE id = $%d", table, strings.Join(sets, ", "), i)
+	_, err := s.db.ExecContext(ctx, query, vals...)
+	return err
+}
+
+// sanitizeColumnName allows only safe characters for ORDER BY columns.
+func sanitizeColumnName(name string) string {
+	for _, ch := range name {
+		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '.') {
+			return ""
+		}
+	}
+	return name
+}
+
+// cleanMapScan converts []byte values to strings and handles SQL null types for JSON serialization.
+func cleanMapScan(m map[string]any) {
+	for k, v := range m {
+		switch val := v.(type) {
+		case []byte:
+			// Try to parse as JSON first
+			var jsonVal any
+			if err := json.Unmarshal(val, &jsonVal); err == nil {
+				m[k] = jsonVal
+			} else {
+				m[k] = string(val)
+			}
+		case sql.NullString:
+			if val.Valid {
+				m[k] = val.String
+			} else {
+				m[k] = nil
+			}
+		case sql.NullInt64:
+			if val.Valid {
+				m[k] = val.Int64
+			} else {
+				m[k] = nil
+			}
+		case sql.NullFloat64:
+			if val.Valid {
+				m[k] = val.Float64
+			} else {
+				m[k] = nil
+			}
+		case sql.NullBool:
+			if val.Valid {
+				m[k] = val.Bool
+			} else {
+				m[k] = nil
+			}
+		case sql.NullTime:
+			if val.Valid {
+				m[k] = val.Time
+			} else {
+				m[k] = nil
+			}
+		}
+	}
+}

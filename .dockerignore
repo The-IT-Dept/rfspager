@@ -1,0 +1,28 @@
+# Keep the Docker build context small for the Go server image.
+.git
+.github
+.claude
+.expo
+.idea
+.vscode
+.secrets
+.env
+.env.*
+*.log
+
+# Heavy sibling projects — not needed for the server build.
+apps/
+laravel-old/
+
+# Server-side build leftovers
+tmp/
+/server
+*.exe
+*.test
+coverage.out
+
+# Docs and license aren't needed in the binary image.
+docs/
+LICENSE.md
+README.md
+*.md

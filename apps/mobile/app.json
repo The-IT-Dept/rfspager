@@ -1,0 +1,168 @@
+{
+  "expo": {
+    "runtimeVersion": "4",
+    "name": "RFSPager",
+    "slug": "RFSPager",
+    "scheme": [
+      "rfspager",
+      "fb827789334584757"
+    ],
+    "version": "4.1.0",
+    "icon": "./assets/images/icon.png",
+    "jsEngine": "hermes",
+    "experiments": {
+      "typedRoutes": true
+    },
+    "splash": {
+      "image": "./assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "buildNumber": "4.1.0",
+      "supportsTablet": true,
+      "bundleIdentifier": "io.devlan.rfspager",
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "associatedDomains": [
+        "applinks:rfspager.app"
+      ],
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "entitlements": {
+        "aps-environment": "production"
+      },
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": [
+          "comgooglemaps",
+          "citymapper",
+          "uber",
+          "lyft",
+          "transit",
+          "truckmap",
+          "waze",
+          "yandexnavi",
+          "moovit",
+          "yandextaxi",
+          "yandexmaps",
+          "kakaomap",
+          "szn-mapy",
+          "mapsme",
+          "osmandmaps",
+          "gett",
+          "nmap",
+          "dgis",
+          "lftgpas"
+        ],
+        "NSLocationWhenInUseUsageDescription": "Turning on location services allows us to show your location relative to incidents.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Turning on location services allows us to show your location relative to incidents.",
+        "NSLocationAlwaysUsageDescription": "Turning on location services allows us to show your location relative to incidents.",
+        "NSUserTrackingUsageDescription": "This identifier will be used to deliver personalized ads to you.",
+        "SKAdNetworkItems": [
+          {
+            "SKAdNetworkIdentifier": "cstr6suwn9.skadnetwork"
+          }
+        ],
+        "UIBackgroundModes": []
+      }
+    },
+    "web": {
+      "favicon": "./assets/images/favicon.png"
+    },
+    "android": {
+      "versionCode": 530040100,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#800000"
+      },
+      "package": "io.devlan.rfspager",
+      "googleServicesFile": "./google-services.json",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCfkQrVivQWX7Yd9ew2R0X0q-Vq7WMYFyg"
+        }
+      },
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "https",
+              "host": "rfspager.app",
+              "pathPrefix": "/reset-password"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static",
+            "forceStaticLinking": [
+              "RNFBApp",
+              "RNFBAnalytics",
+              "RNFBCrashlytics",
+              "RNFBMessaging"
+            ],
+            "deploymentTarget": "16.4",
+            "newArchEnabled": false,
+            "appleTeamId": "W62CSN3S5H"
+          },
+          "android": {
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 34,
+            "buildToolsVersion": "35.0.0",
+            "newArchEnabled": false
+          }
+        }
+      ],
+      [
+        "react-native-fbsdk-next",
+        {
+          "appID": "827789334584757",
+          "clientToken": "8f3fec964ad7a1859bf704364229a0f5",
+          "displayName": "RFSPager",
+          "scheme": "fb827789334584757",
+          "advertiserIDCollectionEnabled": true,
+          "autoLogAppEventsEnabled": true,
+          "isAutoInitEnabled": true,
+          "iosUserTrackingPermission": "This identifier will be used to deliver personalized ads to you."
+        }
+      ],
+      "@react-native-firebase/app",
+      "@react-native-firebase/crashlytics",
+      "@react-native-firebase/messaging",
+      "expo-apple-authentication",
+      "expo-localization",
+      "expo-asset",
+      "expo-font",
+      "expo-tracking-transparency",
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-2990192963224757~8857936487",
+          "iosAppId": "ca-app-pub-2990192963224757~4577918301"
+        }
+      ],
+      "expo-router"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "8cfee94d-1a51-43f4-aaae-be693fb122a6"
+      }
+    }
+  }
+}

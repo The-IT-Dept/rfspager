@@ -1,0 +1,49 @@
+{
+  "cli": {
+    "appVersionSource": "local"
+  },
+  "build": {
+    "release": {
+      "node": "22.20.0",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://v3.rfspager.app/graphql"
+      },
+
+      "channel": "production",
+
+      "ios": {
+        "autoIncrement": false
+      }
+    },
+    "development": {
+      "node": "22.20.0",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://192.168.15.30:8080"
+      },
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "node": "22.20.0",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://192.168.15.30:8080"
+      },
+      "ios": {
+        "developmentClient": true,
+        "simulator": true
+      }
+    }
+  },
+  "submit": {
+    "release": {
+      "android": {
+        "track": "internal"
+      },
+      "ios": {
+        "appleId": "nick@npratley.net",
+        "ascAppId": "1568913265",
+        "appleTeamId": "W62CSN3S5H"
+      }
+    }
+  }
+}
