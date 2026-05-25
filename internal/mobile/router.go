@@ -31,6 +31,8 @@ func Router(db *sqlx.DB, jwtSecret, appleBundleID string, sseBroker *SSEBroker, 
 
 		// User
 		r.Get("/me", h.Me)
+		r.Patch("/me", auth.UpdateProfile)
+		r.Delete("/me", auth.DeleteAccount)
 
 		// Messages
 		r.Get("/messages", h.ListMessages)

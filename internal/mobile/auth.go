@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
@@ -169,6 +170,169 @@ func (h *AuthHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	h.db.ExecContext(r.Context(), `UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2`, string(hash), user.ID)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// UpdateProfile patches the current user's editable fields. Name can be
+// changed freely. Email changes require the user's current password (because
+// the email is the login identifier — we don't want a stolen session token
+// to be enough to lock the real owner out). Email uniqueness is enforced.
+func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	user := GetUser(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	var req struct {
+		Name            *string `json:"name"`
+		Email           *string `json:"email"`
+		CurrentPassword string  `json:"current_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+
+	emailChanging := req.Email != nil && !strings.EqualFold(strings.TrimSpace(*req.Email), user.Email)
+
+	if emailChanging {
+		if req.CurrentPassword == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "current_password required to change email"})
+			return
+		}
+		var hash string
+		if err := h.db.QueryRowContext(r.Context(), `SELECT password FROM users WHERE id = $1`, user.ID).Scan(&hash); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.CurrentPassword)); err != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "current password is incorrect"})
+			return
+		}
+	}
+
+	// Build the update set dynamically — Postgres COALESCE keeps existing
+	// values when a column is omitted.
+	var (
+		nameArg  any = nil
+		emailArg any = nil
+	)
+	if req.Name != nil {
+		nameArg = strings.TrimSpace(*req.Name)
+	}
+	if req.Email != nil {
+		emailArg = strings.TrimSpace(*req.Email)
+	}
+
+	var updated AuthUser
+	err := h.db.QueryRowContext(r.Context(),
+		`UPDATE users
+		 SET name  = COALESCE($1, name),
+		     email = COALESCE($2, email),
+		     email_verified_at = CASE WHEN $2 IS NOT NULL AND $2 <> email THEN NULL ELSE email_verified_at END,
+		     updated_at = NOW()
+		 WHERE id = $3
+		 RETURNING id, user_id, name, email, subscription_valid, subscription_product_id,
+		           subscription_expiry, will_renew, subscription_platform, superuser`,
+		nameArg, emailArg, user.ID).Scan(
+		&updated.ID, &updated.UserID, &updated.Name, &updated.Email,
+		&updated.SubscriptionValid, &updated.SubscriptionProductID,
+		&updated.SubscriptionExpiry, &updated.WillRenew, &updated.SubscriptionPlatform,
+		&updated.Superuser)
+	if err != nil {
+		// Most likely cause is the email unique constraint.
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "email already taken"})
+			return
+		}
+		slog.Error("failed to update profile", "error", err, "user_id", user.ID)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// DeleteAccount hard-deletes the current user and all rows owned by them.
+// Required by Apple's App Store guideline 5.1.1(v). We run everything in a
+// single transaction so a partial deletion can't leave dangling rows that
+// reference a missing user.
+//
+// The request body must echo {"confirm": "DELETE"} and supply the current
+// password — both as belt-and-braces against accidental or hijacked-session
+// deletions.
+func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
+	user := GetUser(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	var req struct {
+		Confirm  string `json:"confirm"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if req.Confirm != "DELETE" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": `confirm must be "DELETE"`})
+		return
+	}
+
+	var hash string
+	if err := h.db.QueryRowContext(r.Context(), `SELECT password FROM users WHERE id = $1`, user.ID).Scan(&hash); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "password is incorrect"})
+		return
+	}
+
+	tx, err := h.db.BeginTxx(r.Context(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Tables that reference users.id directly. Order matters only insofar as
+	// the user row goes last; the rest have no inter-dependencies.
+	cleanups := []string{
+		`DELETE FROM responding         WHERE user_id = $1`,
+		`DELETE FROM subscriptions      WHERE user_id = $1`,
+		`DELETE FROM filters            WHERE user_id = $1`,
+		`DELETE FROM alertzones         WHERE user_id = $1`,
+		`DELETE FROM installations      WHERE user_id = $1`,
+		`DELETE FROM iap_transactions   WHERE user_id = $1`,
+		`DELETE FROM notifications      WHERE notifiable_id = $1 AND notifiable_type = 'App\Models\User'`,
+		// Don't delete systems the user owns — they may have shared data others
+		// rely on. Disown instead.
+		`UPDATE systems SET user_id = NULL, updated_at = NOW() WHERE user_id = $1`,
+	}
+	for _, q := range cleanups {
+		if _, err := tx.ExecContext(r.Context(), q, user.ID); err != nil {
+			slog.Error("delete-account cleanup failed", "query", q, "error", err, "user_id", user.ID)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+	}
+
+	if _, err := tx.ExecContext(r.Context(), `DELETE FROM users WHERE id = $1`, user.ID); err != nil {
+		slog.Error("delete-account user delete failed", "error", err, "user_id", user.ID)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	slog.Info("account deleted", "user_id", user.ID, "email", user.Email)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
