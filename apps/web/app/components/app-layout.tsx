@@ -32,6 +32,7 @@ import {
   Flame,
   AlertTriangle,
   ShieldCheck,
+  Wallet,
   LogOut,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -69,7 +70,8 @@ const navGroups: NavGroup[] = [
     label: "Accounts",
     items: [
       { label: "Users", path: "/admin/users", icon: UsersIcon },
-      { label: "Subscriptions", path: "/admin/subscriptions", icon: CreditCard },
+      { label: "Billing", path: "/admin/billing", icon: Wallet },
+      { label: "Capcode Subs", path: "/admin/subscriptions", icon: CreditCard },
       { label: "Installations", path: "/admin/installations", icon: Smartphone },
       { label: "Alertzones", path: "/admin/alertzones", icon: MapPin },
       { label: "Notifications", path: "/admin/notifications", icon: Bell },

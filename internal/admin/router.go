@@ -31,6 +31,15 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier) chi.Router
 			r.Get("/{id}", h.GetUser)
 			r.Put("/{id}", h.UpdateUser)
 			r.Delete("/{id}", h.DeleteUser)
+			r.Get("/{id}/installations", h.GetUserInstallations)
+			r.Get("/{id}/iap-transactions", h.GetUserIAPTransactions)
+		})
+
+		// Billing / IAP
+		r.Route("/billing", func(r chi.Router) {
+			r.Get("/stats", h.BillingStats)
+			r.Get("/transactions", h.ListIAPTransactions)
+			r.Get("/transactions/{id}", h.GetIAPTransaction)
 		})
 
 		// Capcodes

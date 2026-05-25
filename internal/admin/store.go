@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -15,10 +16,40 @@ import (
 
 type Store struct {
 	db *sqlx.DB
+
+	statsCacheMu sync.RWMutex
+	statsCache   map[string]statsCacheEntry
+}
+
+type statsCacheEntry struct {
+	value     any
+	expiresAt time.Time
 }
 
 func NewStore(db *sqlx.DB) *Store {
-	return &Store{db: db}
+	return &Store{db: db, statsCache: map[string]statsCacheEntry{}}
+}
+
+// cachedStats returns a cached value if present and unexpired, otherwise calls
+// fetch, stores the result, and returns it. The cache is per-process and best
+// suited for headline numbers where a few seconds of staleness is acceptable.
+func (s *Store) cachedStats(key string, ttl time.Duration, fetch func() (any, error)) (any, error) {
+	s.statsCacheMu.RLock()
+	entry, ok := s.statsCache[key]
+	s.statsCacheMu.RUnlock()
+	if ok && time.Now().Before(entry.expiresAt) {
+		return entry.value, nil
+	}
+
+	val, err := fetch()
+	if err != nil {
+		return nil, err
+	}
+
+	s.statsCacheMu.Lock()
+	s.statsCache[key] = statsCacheEntry{value: val, expiresAt: time.Now().Add(ttl)}
+	s.statsCacheMu.Unlock()
+	return val, nil
 }
 
 // RunMigration executes the admin_users migration.
@@ -503,20 +534,182 @@ type DashboardStats struct {
 }
 
 func (s *Store) GetDashboardStats(ctx context.Context) (*DashboardStats, error) {
-	var stats DashboardStats
+	val, err := s.cachedStats("dashboard", 15*time.Second, func() (any, error) {
+		var stats DashboardStats
+		// total_messages uses pg_class.reltuples (autovacuum-maintained estimate)
+		// instead of COUNT(*) — exact count over a 2M+ row table costs hundreds
+		// of ms even with the partial index. The headline number doesn't need
+		// to be precise.
+		err := s.db.GetContext(ctx, &stats, `
+			SELECT
+				(SELECT COUNT(*) FROM users) as total_users,
+				(SELECT COUNT(*) FROM users WHERE subscription_valid = true) as paid_users,
+				(SELECT COUNT(*) FROM users WHERE subscription_valid = false OR subscription_valid IS NULL) as free_users,
+				(SELECT COUNT(*) FROM capcodes WHERE deleted_at IS NULL) as total_capcodes,
+				(SELECT COALESCE(reltuples, 0)::bigint FROM pg_class WHERE relname = 'messages') as total_messages,
+				(SELECT COUNT(*) FROM systems WHERE deleted_at IS NULL) as total_systems,
+				(SELECT COUNT(*) FROM messages WHERE deleted_at IS NULL AND created_at >= CURRENT_DATE) as messages_today,
+				(SELECT COUNT(*) FROM users WHERE created_at >= CURRENT_DATE) as new_users_today,
+				(SELECT COUNT(*) FROM installations WHERE deleted_at IS NULL) as total_installations
+		`)
+		if err != nil {
+			return nil, err
+		}
+		return &stats, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return val.(*DashboardStats), nil
+}
+
+// --- Billing / IAP ---
+
+// BillingStats is the headline IAP/Stripe billing snapshot for the dashboard.
+type BillingStats struct {
+	ActiveTotal       int64   `json:"active_total" db:"active_total"`
+	ActiveApple       int64   `json:"active_apple" db:"active_apple"`
+	ActiveGoogle      int64   `json:"active_google" db:"active_google"`
+	ActiveStripe      int64   `json:"active_stripe" db:"active_stripe"`
+	ActiveGifted      int64   `json:"active_gifted" db:"active_gifted"`
+	NewSubs7d         int64   `json:"new_subs_7d" db:"new_subs_7d"`
+	NewSubs30d        int64   `json:"new_subs_30d" db:"new_subs_30d"`
+	Cancellations30d  int64   `json:"cancellations_30d" db:"cancellations_30d"`
+	Refunds30d        int64   `json:"refunds_30d" db:"refunds_30d"`
+	ExpiringSoon      int64   `json:"expiring_soon" db:"expiring_soon"`
+	WillNotRenew      int64   `json:"will_not_renew" db:"will_not_renew"`
+	MRREstimateCents  int64   `json:"mrr_estimate_cents" db:"mrr_estimate_cents"`
+}
+
+// GetBillingStats computes a snapshot of active subscriptions, recent churn,
+// and an MRR estimate. MRR is a rough approximation: monthly plans count at
+// their price, yearly plans amortised to 1/12. Cached for 15s.
+func (s *Store) GetBillingStats(ctx context.Context) (*BillingStats, error) {
+	val, err := s.cachedStats("billing", 15*time.Second, func() (any, error) {
+		stats, err := s.fetchBillingStats(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return stats, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return val.(*BillingStats), nil
+}
+
+func (s *Store) fetchBillingStats(ctx context.Context) (*BillingStats, error) {
+	var stats BillingStats
 	err := s.db.GetContext(ctx, &stats, `
 		SELECT
-			(SELECT COUNT(*) FROM users) as total_users,
-			(SELECT COUNT(*) FROM users WHERE subscription_valid = true) as paid_users,
-			(SELECT COUNT(*) FROM users WHERE subscription_valid = false OR subscription_valid IS NULL) as free_users,
-			(SELECT COUNT(*) FROM capcodes WHERE deleted_at IS NULL) as total_capcodes,
-			(SELECT COUNT(*) FROM messages WHERE deleted_at IS NULL) as total_messages,
-			(SELECT COUNT(*) FROM systems WHERE deleted_at IS NULL) as total_systems,
-			(SELECT COUNT(*) FROM messages WHERE deleted_at IS NULL AND created_at >= CURRENT_DATE) as messages_today,
-			(SELECT COUNT(*) FROM users WHERE created_at >= CURRENT_DATE) as new_users_today,
-			(SELECT COUNT(*) FROM installations WHERE deleted_at IS NULL) as total_installations
+			(SELECT COUNT(*) FROM users WHERE subscription_valid = true) AS active_total,
+			(SELECT COUNT(*) FROM users WHERE subscription_valid = true AND subscription_platform = 'apple') AS active_apple,
+			(SELECT COUNT(*) FROM users WHERE subscription_valid = true AND subscription_platform = 'google') AS active_google,
+			(SELECT COUNT(*) FROM users WHERE subscription_valid = true AND subscription_platform = 'stripe') AS active_stripe,
+			(SELECT COUNT(*) FROM users WHERE subscription_valid = true AND subscription_product_id LIKE '%gifted%') AS active_gifted,
+			(SELECT COUNT(DISTINCT user_id) FROM iap_transactions
+				WHERE event_type = 'purchase' AND is_valid = true AND created_at >= NOW() - INTERVAL '7 days') AS new_subs_7d,
+			(SELECT COUNT(DISTINCT user_id) FROM iap_transactions
+				WHERE event_type = 'purchase' AND is_valid = true AND created_at >= NOW() - INTERVAL '30 days') AS new_subs_30d,
+			(SELECT COUNT(*) FROM iap_transactions
+				WHERE event_type IN ('webhook:EXPIRED','webhook:GRACE_PERIOD_EXPIRED','webhook:REVOKE','webhook:DID_CHANGE_RENEWAL_STATUS')
+				AND created_at >= NOW() - INTERVAL '30 days') AS cancellations_30d,
+			(SELECT COUNT(*) FROM iap_transactions
+				WHERE event_type = 'webhook:REFUND' AND created_at >= NOW() - INTERVAL '30 days') AS refunds_30d,
+			(SELECT COUNT(*) FROM users
+				WHERE subscription_valid = true AND subscription_expiry IS NOT NULL
+				AND subscription_expiry BETWEEN NOW() AND NOW() + INTERVAL '7 days') AS expiring_soon,
+			(SELECT COUNT(*) FROM users WHERE subscription_valid = true AND will_renew = false) AS will_not_renew,
+			(SELECT COALESCE(SUM(
+				CASE
+					WHEN subscription_product_id ILIKE '%yearly%' THEN 8333  -- ~$99.99/yr / 12
+					WHEN subscription_product_id ILIKE '%monthly%' THEN 999  -- $9.99/mo
+					ELSE 0
+				END), 0)::bigint
+				FROM users WHERE subscription_valid = true) AS mrr_estimate_cents
 	`)
 	return &stats, err
+}
+
+// ListIAPTransactions returns a paginated, filterable view of the iap_transactions log.
+// Supports filtering by platform, event_type, and user_id via query params.
+func (s *Store) ListIAPTransactions(ctx context.Context, p ListParams, platform, eventType string, userID int64) (*PaginatedResult, error) {
+	where := "1=1"
+	var args []any
+	argIdx := 1
+	if platform != "" {
+		where += fmt.Sprintf(" AND t.platform = $%d", argIdx)
+		args = append(args, platform)
+		argIdx++
+	}
+	if eventType != "" {
+		where += fmt.Sprintf(" AND t.event_type = $%d", argIdx)
+		args = append(args, eventType)
+		argIdx++
+	}
+	if userID > 0 {
+		where += fmt.Sprintf(" AND t.user_id = $%d", argIdx)
+		args = append(args, userID)
+	}
+
+	// Default sort to most recent first.
+	if p.SortBy == "" {
+		p.SortBy = "t.created_at"
+		p.SortDir = "desc"
+	}
+
+	return s.paginatedQuery(ctx,
+		"iap_transactions t LEFT JOIN users u ON u.id = t.user_id",
+		`t.id, t.user_id, t.platform, t.transaction_id, t.original_transaction_id,
+		 t.product_id, t.event_type, t.is_valid, t.expires_at, t.will_renew,
+		 t.environment, t.created_at,
+		 u.name AS user_name, u.email AS user_email`,
+		where, args, p,
+		[]string{"u.name", "u.email", "t.transaction_id", "t.original_transaction_id", "t.product_id"},
+		"iap_transactions t")
+}
+
+// GetIAPTransaction returns one transaction with raw_payload included.
+func (s *Store) GetIAPTransaction(ctx context.Context, id int64) (map[string]any, error) {
+	row := s.db.QueryRowxContext(ctx,
+		`SELECT t.*, u.name AS user_name, u.email AS user_email
+		 FROM iap_transactions t
+		 LEFT JOIN users u ON u.id = t.user_id
+		 WHERE t.id = $1`, id)
+	result := make(map[string]any)
+	if err := row.MapScan(result); err != nil {
+		return nil, err
+	}
+	cleanMapScan(result)
+	return result, nil
+}
+
+// ListUserInstallations returns a user's devices for the user detail page.
+func (s *Store) ListUserInstallations(ctx context.Context, userID int64) ([]map[string]any, error) {
+	rows, err := s.db.QueryxContext(ctx,
+		`SELECT id, vendor, model, version, app_version, push_type, timezone, created_at, updated_at, deleted_at
+		 FROM installations
+		 WHERE user_id = $1
+		 ORDER BY (deleted_at IS NULL) DESC, updated_at DESC NULLS LAST, created_at DESC`,
+		userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []map[string]any
+	for rows.Next() {
+		m := make(map[string]any)
+		if err := rows.MapScan(m); err != nil {
+			return nil, err
+		}
+		cleanMapScan(m)
+		out = append(out, m)
+	}
+	if out == nil {
+		out = []map[string]any{}
+	}
+	return out, nil
 }
 
 // --- Generic helpers ---

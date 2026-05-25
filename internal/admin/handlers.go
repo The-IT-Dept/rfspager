@@ -762,6 +762,75 @@ func (h *Handlers) DeleteAdminUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// --- Billing / IAP ---
+
+func (h *Handlers) BillingStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.store.GetBillingStats(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func (h *Handlers) ListIAPTransactions(w http.ResponseWriter, r *http.Request) {
+	platform := r.URL.Query().Get("platform")
+	eventType := r.URL.Query().Get("event_type")
+	userID, _ := strconv.ParseInt(r.URL.Query().Get("user_id"), 10, 64)
+	result, err := h.store.ListIAPTransactions(r.Context(), parseListParams(r), platform, eventType, userID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handlers) GetIAPTransaction(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	row, err := h.store.GetIAPTransaction(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, row)
+}
+
+func (h *Handlers) GetUserInstallations(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	rows, err := h.store.ListUserInstallations(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": rows})
+}
+
+func (h *Handlers) GetUserIAPTransactions(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	p := parseListParams(r)
+	if p.PerPage > 50 {
+		p.PerPage = 50
+	}
+	result, err := h.store.ListIAPTransactions(r.Context(), p, "", "", id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 // --- Helpers ---
 
 func parseListParams(r *http.Request) ListParams {
