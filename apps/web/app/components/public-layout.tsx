@@ -127,6 +127,14 @@ export function PublicLayout() {
                           <span className="inline-block mt-1 text-[10px] font-bold text-[#F7241D] bg-red-50 px-2 py-0.5 rounded-full uppercase">Pro</span>
                         )}
                       </div>
+                      <Link
+                        to="/account"
+                        onClick={() => setMenuOpen(false)}
+                        className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                      >
+                        My Account
+                      </Link>
+                      <div className="my-1 border-t border-gray-100" />
                       <button
                         onClick={() => {
                           logout();

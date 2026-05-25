@@ -10,6 +10,7 @@ export default [
     route("login", "routes/public/login.tsx"),
     route("register", "routes/public/register.tsx"),
     route("subscribe", "routes/public/subscribe.tsx"),
+    route("account", "routes/public/account.tsx"),
   ]),
 
   // Admin panel under /admin
@@ -19,7 +20,10 @@ export default [
       index("routes/admin/dashboard.tsx"),
       route("users", "routes/admin/users.tsx"),
       route("users/new", "routes/admin/users.new.tsx"),
+      route("users/:id", "routes/admin/users.$id.tsx"),
       route("users/:id/edit", "routes/admin/users.$id.edit.tsx"),
+      route("billing", "routes/admin/billing.tsx"),
+      route("billing/transactions/:id", "routes/admin/billing.transactions.$id.tsx"),
       route("capcodes", "routes/admin/capcodes.tsx"),
       route("capcodes/new", "routes/admin/capcodes.new.tsx"),
       route("capcodes/:id/edit", "routes/admin/capcodes.$id.edit.tsx"),
