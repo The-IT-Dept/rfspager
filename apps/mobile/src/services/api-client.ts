@@ -14,6 +14,12 @@ function getBaseUrl(): string {
   return DEFAULT_BASE
 }
 
+/** Server origin (https://…). Exported so the spectrum WS client can build
+ *  ws(s):// URLs against the same backend. */
+export function apiBaseUrl(): string {
+  return getBaseUrl()
+}
+
 const API_BASE = `${getBaseUrl()}/api/v2/mobile`
 
 let _token: string | null = null
@@ -369,10 +375,48 @@ export interface CreateSystemInput {
   accepted_terms: boolean
 }
 
+export interface SystemDetail {
+  id: number
+  system_id: string
+  name: string
+  suburb: string | null
+  frequency: number
+  lat: number | null
+  lng: number | null
+  is_owner: boolean
+  is_pending: boolean
+  online: boolean
+  connected_at: string | null
+  last_ping_at: string | null
+  last_message_at: string | null
+  // Owner-only fields. Undefined for non-owners.
+  api_key?: string | null
+  created_at?: string | null
+  approved_at?: string | null
+  request_notes?: string | null
+  install_command?: string | null
+  receiver?: {
+    pod_id?: string | null
+    version?: string | null
+    os?: string | null
+    arch?: string | null
+    hostname?: string | null
+    dongles?: Array<{
+      index: number
+      name?: string
+      manufacturer?: string
+      product?: string
+      serial?: string
+      tuner?: string
+    }> | null
+  }
+}
+
 export const systems = {
   list: () => get<System[]>(`/systems`),
   mine: () => get<MySystem[]>(`/my-systems`),
   create: (body: CreateSystemInput) => post<MySystem>(`/systems`, body),
+  get: (uuid: string) => get<SystemDetail>(`/systems/${uuid}`),
 }
 
 // --- Photos ---

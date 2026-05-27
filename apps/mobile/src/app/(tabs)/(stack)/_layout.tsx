@@ -61,7 +61,7 @@ export default function AppStackLayout() {
         name="systems-create"
         options={{ title: "Register interest", presentation: "modal" }}
       />
-      <Stack.Screen name="my-system/[uuid]" options={{ title: "My system" }} />
+      <Stack.Screen name="system/[uuid]" options={{ title: "System" }} />
       <Stack.Screen
         name="settings/index"
         options={{

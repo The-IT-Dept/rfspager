@@ -32,6 +32,7 @@ export default [
       route("agencies/:id/edit", "routes/admin/agencies.$id.edit.tsx"),
       route("systems", "routes/admin/systems.tsx"),
       route("systems/new", "routes/admin/systems.new.tsx"),
+      route("systems/:id", "routes/admin/systems.$id.tsx"),
       route("systems/:id/edit", "routes/admin/systems.$id.edit.tsx"),
       route("messages", "routes/admin/messages.tsx"),
       route("messages/:id/edit", "routes/admin/messages.$id.edit.tsx"),

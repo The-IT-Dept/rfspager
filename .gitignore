@@ -132,3 +132,12 @@ apps/web/.vite/
 # ---------------------------------------------------------------------------
 *.log
 .turbo/
+
+# Receiver build artefacts + agent-side runtime files
+/bin/
+/receiver
+/pager.log
+.claude/
+
+# Pre-FSL Expo mobile reference (kept locally, do not check in — 1+ GB)
+/app-old/

@@ -158,6 +158,62 @@ func (h *MessageHandler) MultimonMessage(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]string{"status": result})
 }
 
+// IngestPage processes a decoded page from a receiver agent over the websocket
+// transport. Same write path as ProcessPagermon / MultimonMessage but no HTTP
+// concerns. Returns an ack status — "ok" if accepted, "dup" if deduped against
+// a recent message, "err" otherwise.
+func (h *MessageHandler) IngestPage(ctx context.Context, system *models.System, address, message string, timestamp time.Time) (string, error) {
+	if address == "" || message == "" {
+		return "err", fmt.Errorf("address and message required")
+	}
+	if timestamp.IsZero() {
+		timestamp = time.Now()
+	}
+	result, msg := h.createMessage(ctx, system, address, message, timestamp, nil)
+	if msg == nil {
+		if result == "Duplicate message." {
+			return "dup", nil
+		}
+		return "err", fmt.Errorf("%s", result)
+	}
+	return "ok", nil
+}
+
+// ReceiverMe handles GET /api/receiver/me. The receiver agent calls this on
+// boot with its apikey header so it can confirm the key is valid and learn
+// which frequency / system to listen to. Returns a small JSON describing the
+// system the key belongs to.
+func (h *MessageHandler) ReceiverMe(w http.ResponseWriter, r *http.Request) {
+	apiKey := r.Header.Get("apikey")
+	if apiKey == "" {
+		apiKey = r.Header.Get("X-Api-Key")
+	}
+	if apiKey == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "apikey required"})
+		return
+	}
+
+	system, err := h.db.GetSystemByAPIKey(r.Context(), apiKey)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unknown api key"})
+		return
+	}
+
+	out := map[string]any{
+		"id":          system.ID,
+		"system_id":   system.SystemID,
+		"name":        system.Name,
+		"frequency":   system.Frequency,
+	}
+	if system.Lat.Valid {
+		out["lat"] = system.Lat.Float64
+	}
+	if system.Lng.Valid {
+		out["lng"] = system.Lng.Float64
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // Ping handles POST /api/v2/system/ping
 func (h *MessageHandler) Ping(w http.ResponseWriter, r *http.Request) {
 	system := middleware.GetSystem(r.Context())

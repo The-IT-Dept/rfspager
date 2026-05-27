@@ -16,9 +16,7 @@ const fields: FieldDef[] = [
     ),
   },
   { name: "sync", label: "Sync Enabled", type: "toggle" },
-  { name: "steal_capcodes", label: "Steal Capcodes", type: "toggle" },
   { name: "frequency", label: "Frequency", type: "number" },
-  { name: "base_url", label: "Base URL" },
 ];
 
 export default function EditSystemPage() {
@@ -26,5 +24,14 @@ export default function EditSystemPage() {
   const [data, setData] = useState<Record<string, any> | null>(null);
   useEffect(() => { api.get(`/systems/${id}`).then(setData); }, [id]);
   if (!data) return <p className="text-muted-foreground">Loading...</p>;
-  return <ResourceForm title="Edit System" fields={fields} endpoint={`/systems/${id}`} method="PUT" initialData={data} backPath="/admin/systems" />;
+  return (
+    <ResourceForm
+      title="Edit System"
+      fields={fields}
+      endpoint={`/systems/${id}`}
+      method="PUT"
+      initialData={data}
+      backPath={`/admin/systems/${id}`}
+    />
+  );
 }

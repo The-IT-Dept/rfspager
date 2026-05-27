@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Label } from "~/components/ui/label";
@@ -29,6 +30,26 @@ function ApiKeyCell({ value }: { value: unknown }) {
 function DeletedBadge({ value }: { value: unknown }) {
   if (!value) return null;
   return <Badge variant="destructive">deleted</Badge>;
+}
+
+function OnlineCell({ row }: { row: Record<string, any> }) {
+  const online = !!row.receiver_online;
+  const lastPing = row.receiver_last_ping_at as string | null | undefined;
+  if (online) {
+    return (
+      <Badge variant="outline" className="border-emerald-500 text-emerald-700 bg-emerald-50" title={`last ping ${lastPing}`}>
+        online
+      </Badge>
+    );
+  }
+  if (!lastPing) {
+    return <span className="text-xs text-muted-foreground">offline</span>;
+  }
+  return (
+    <span className="text-xs text-muted-foreground" title={`last ping ${lastPing}`}>
+      offline
+    </span>
+  );
 }
 
 function StatusBadge({ row }: { row: Record<string, any> }) {
@@ -91,14 +112,37 @@ export default function SystemsPage() {
   const endpoint = `/systems${params.toString() ? `?${params}` : ""}`;
 
   const columns: Column[] = [
-    { key: "id", label: "ID", sortable: true },
+    {
+      key: "id",
+      label: "ID",
+      sortable: true,
+      render: (v, row) => (
+        <Link to={`/admin/systems/${(row as Record<string, any>).id}`} className="font-mono text-xs hover:underline">
+          {String(v)}
+        </Link>
+      ),
+    },
     {
       key: "_status",
       label: "Status",
       render: (_, row) => <StatusBadge row={row as Record<string, any>} />,
     },
+    {
+      key: "receiver_online",
+      label: "Receiver",
+      render: (_, row) => <OnlineCell row={row as Record<string, any>} />,
+    },
     { key: "user_name", label: "Owner", sortable: true },
-    { key: "name", label: "Name", sortable: true },
+    {
+      key: "name",
+      label: "Name",
+      sortable: true,
+      render: (v, row) => (
+        <Link to={`/admin/systems/${(row as Record<string, any>).id}`} className="hover:underline">
+          {String(v)}
+        </Link>
+      ),
+    },
     { key: "suburb", label: "Suburb", sortable: true },
     { key: "system_id", label: "UUID" },
     { key: "api_key", label: "Ingress Key", render: (v) => <ApiKeyCell value={v} /> },

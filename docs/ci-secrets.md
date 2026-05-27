@@ -18,6 +18,12 @@ it. Once a secret is in GitHub Actions, the workflows in
 GitHub UI: **Repo → Settings → Secrets and variables → Actions → New
 repository secret**.
 
+> Looking for **runtime** secrets (the ones the server reads at boot,
+> e.g. APNs, Firebase, IAP, Stripe)? Those live in `./.env` on the
+> server host — see `.env.example` for the full list. CI doesn't need
+> them. For wiring App Store + Play Store subscription **webhooks** to
+> the server, see [`iap-webhooks.md`](./iap-webhooks.md).
+
 ---
 
 ## Secret inventory at a glance

@@ -1,13 +1,12 @@
 import React, { FC, useCallback } from "react"
 import {
+  ActivityIndicator,
   FlatList,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
-  ActivityIndicator,
 } from "react-native"
 import moment from "moment"
 import { Ionicons } from "@expo/vector-icons"
@@ -34,44 +33,40 @@ export const SystemsScreen: FC = function SystemsScreen() {
   const router = useRouter()
   const { data, isLoading, refetch, isRefetching } = useSystems()
 
+  const items = data ?? []
+
   const renderItem = useCallback(
-    ({ item }: { item: System }) => {
+    ({ item, index }: { item: System; index: number }) => {
       const online = isOnline(item.last_message_at)
       const pending = !!item.is_pending
       const owner = !!item.is_owner
+      const isLast = index === items.length - 1
+
+      const statusColor = pending
+        ? theme.colors.warning
+        : online
+          ? theme.colors.success
+          : theme.colors.textTertiary
+      const statusLabel = pending ? "Pending" : online ? "Online" : "Offline"
 
       return (
         <Pressable
-          style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-          onPress={() => {
-            if (owner) router.push(`/(tabs)/(stack)/my-system/${item.uuid}` as any)
-          }}
+          style={({ pressed }) => [
+            styles.row,
+            !isLast && styles.rowDivider,
+            pressed && styles.rowPressed,
+          ]}
+          onPress={() => router.push(`/(tabs)/(stack)/system/${item.uuid}` as any)}
         >
-          <View
-            style={[
-              styles.dot,
-              {
-                backgroundColor: pending
-                  ? theme.colors.warning
-                  : online
-                    ? theme.colors.success
-                    : theme.colors.textDisabled,
-              },
-            ]}
-          />
-          <View style={styles.content}>
+          <View style={[styles.dot, { backgroundColor: statusColor }]} />
+          <View style={styles.rowContent}>
             <View style={styles.titleRow}>
               <Text style={styles.name} numberOfLines={1}>
                 {item.name || "Unnamed system"}
               </Text>
               {owner && (
                 <View style={[styles.chip, { backgroundColor: theme.colors.primary + "15" }]}>
-                  <Text style={[styles.chipText, { color: theme.colors.primary }]}>Owner</Text>
-                </View>
-              )}
-              {pending && (
-                <View style={[styles.chip, { backgroundColor: theme.colors.warning + "20" }]}>
-                  <Text style={[styles.chipText, { color: theme.colors.warning }]}>Pending approval</Text>
+                  <Text style={[styles.chipText, { color: theme.colors.primary }]}>OWNER</Text>
                 </View>
               )}
             </View>
@@ -80,21 +75,20 @@ export const SystemsScreen: FC = function SystemsScreen() {
               {item.uuid}
             </Text>
           </View>
-          <View style={styles.right}>
-            <Text
-              style={[
-                styles.status,
-                { color: pending ? theme.colors.warning : online ? theme.colors.success : theme.colors.textTertiary },
-              ]}
-            >
-              {pending ? "Pending" : online ? "Online" : "Offline"}
-            </Text>
+          <View style={styles.rowRight}>
+            <Text style={[styles.status, { color: statusColor }]}>{statusLabel}</Text>
             <Text style={styles.timestamp}>{formatLastMessage(item.last_message_at)}</Text>
           </View>
+          <Ionicons
+            name="chevron-forward"
+            size={16}
+            color={theme.colors.textTertiary}
+            style={styles.chevron}
+          />
         </Pressable>
       )
     },
-    [router, styles, theme],
+    [items.length, router, styles, theme],
   )
 
   if (isLoading) {
@@ -108,28 +102,30 @@ export const SystemsScreen: FC = function SystemsScreen() {
 
   return (
     <FlatList
-      data={data ?? []}
+      style={styles.container}
+      data={items}
       keyExtractor={(item) => item.uuid}
       renderItem={renderItem}
       contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={styles.list}
-      ItemSeparatorComponent={() => <View style={styles.separator} />}
+      contentContainerStyle={styles.listContent}
       ListHeaderComponent={
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={styles.createButton}
+        <View style={styles.headerSection}>
+          <Pressable
+            style={({ pressed }) => [styles.actionRow, pressed && styles.rowPressed]}
             onPress={() => router.push("/(tabs)/(stack)/systems-create" as any)}
           >
-            <Ionicons name="add-circle-outline" size={18} color={theme.colors.primary} />
-            <Text style={styles.createButtonText}>Register interest to host a system</Text>
+            <Ionicons name="add-circle-outline" size={20} color={theme.colors.primary} />
+            <Text style={styles.actionText}>Register interest to host a system</Text>
             <Ionicons name="chevron-forward" size={16} color={theme.colors.textTertiary} />
-          </TouchableOpacity>
+          </Pressable>
         </View>
       }
       ListEmptyComponent={
-        <View style={styles.empty}>
+        <View style={styles.emptySection}>
           <Text style={styles.emptyTitle}>No systems yet</Text>
-          <Text style={styles.emptySubtitle}>Systems will appear here once they're added.</Text>
+          <Text style={styles.emptySubtitle}>
+            Systems appear here as they come online. Register interest above to host one yourself.
+          </Text>
         </View>
       }
       refreshControl={
@@ -145,29 +141,31 @@ export const SystemsScreen: FC = function SystemsScreen() {
 
 const makeStyles = (theme: AppTheme) =>
   StyleSheet.create({
-    list: {
-      paddingTop: 8,
-      paddingBottom: 24,
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.backgroundTertiary,
     },
-    headerActions: {
+    listContent: {
+      paddingBottom: 32,
+    },
+    headerSection: {
+      marginTop: 16,
       marginHorizontal: 16,
-      marginBottom: 12,
+      backgroundColor: theme.colors.cardBackground,
+      marginBottom: 24,
+      overflow: "hidden",
     },
-    createButton: {
+    actionRow: {
       flexDirection: "row",
       alignItems: "center",
-      gap: 10,
-      backgroundColor: theme.colors.cardBackground,
-      borderRadius: 12,
-      paddingHorizontal: 14,
-      paddingVertical: 12,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border,
+      gap: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
     },
-    createButtonText: {
+    actionText: {
       flex: 1,
       fontSize: 15,
-      fontWeight: "600",
+      fontWeight: "500",
       color: theme.colors.textPrimary,
     },
     row: {
@@ -178,6 +176,10 @@ const makeStyles = (theme: AppTheme) =>
       backgroundColor: theme.colors.cardBackground,
       marginHorizontal: 16,
     },
+    rowDivider: {
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.colors.border,
+    },
     rowPressed: {
       backgroundColor: theme.colors.backgroundTertiary,
     },
@@ -187,7 +189,7 @@ const makeStyles = (theme: AppTheme) =>
       borderRadius: 5,
       marginRight: 12,
     },
-    content: {
+    rowContent: {
       flex: 1,
       paddingRight: 12,
     },
@@ -203,14 +205,14 @@ const makeStyles = (theme: AppTheme) =>
       color: theme.colors.textPrimary,
     },
     chip: {
-      paddingHorizontal: 8,
+      paddingHorizontal: 6,
       paddingVertical: 2,
-      borderRadius: 10,
+      borderRadius: 3,
     },
     chipText: {
-      fontSize: 11,
+      fontSize: 10,
       fontWeight: "700",
-      letterSpacing: 0.3,
+      letterSpacing: 0.4,
     },
     subline: {
       fontSize: 12,
@@ -218,8 +220,9 @@ const makeStyles = (theme: AppTheme) =>
       marginTop: 2,
       fontFamily: "Menlo",
     },
-    right: {
+    rowRight: {
       alignItems: "flex-end",
+      marginRight: 6,
     },
     status: {
       fontSize: 13,
@@ -230,29 +233,29 @@ const makeStyles = (theme: AppTheme) =>
       color: theme.colors.textTertiary,
       marginTop: 2,
     },
-    separator: {
-      height: StyleSheet.hairlineWidth,
-      backgroundColor: theme.colors.border,
-      marginHorizontal: 16,
+    chevron: {
+      marginLeft: 2,
     },
     loaderContainer: {
       flex: 1,
       justifyContent: "center",
       alignItems: "center",
-      backgroundColor: theme.colors.background,
+      backgroundColor: theme.colors.backgroundTertiary,
     },
     loaderText: {
       marginTop: 16,
       fontSize: 15,
       color: theme.colors.textSecondary,
     },
-    empty: {
-      paddingVertical: 80,
-      paddingHorizontal: 32,
+    emptySection: {
+      marginHorizontal: 16,
+      paddingVertical: 40,
+      paddingHorizontal: 24,
+      backgroundColor: theme.colors.cardBackground,
       alignItems: "center",
     },
     emptyTitle: {
-      fontSize: 18,
+      fontSize: 17,
       fontWeight: "600",
       color: theme.colors.textPrimary,
       marginBottom: 6,
@@ -261,5 +264,6 @@ const makeStyles = (theme: AppTheme) =>
       fontSize: 14,
       color: theme.colors.textTertiary,
       textAlign: "center",
+      lineHeight: 20,
     },
   })

@@ -252,16 +252,32 @@ func (s *Store) ListSystemsFiltered(ctx context.Context, p ListParams, pendingOn
 	if pendingOnly {
 		where += " AND s.approved_at IS NULL"
 	}
-	return s.paginatedQuery(ctx, "systems s LEFT JOIN users u ON u.id = s.user_id",
-		`s.*, u.name as user_name,
-		(SELECT MAX(m.created_at) FROM messages m WHERE m.system_id = s.id) as last_message_at`,
+	return s.paginatedQuery(ctx,
+		"systems s LEFT JOIN users u ON u.id = s.user_id LEFT JOIN system_connections sc ON sc.system_id = s.id",
+		systemSelectColumns,
 		where, nil, p, []string{"s.name", "s.system_id", "u.name"})
 }
 
 func (s *Store) GetSystem(ctx context.Context, id int64) (map[string]any, error) {
-	return s.getRow(ctx, "systems s LEFT JOIN users u ON u.id = s.user_id",
-		id, "s.*, u.name as user_name")
+	return s.getRow(ctx,
+		"systems s LEFT JOIN users u ON u.id = s.user_id LEFT JOIN system_connections sc ON sc.system_id = s.id",
+		id, systemSelectColumns)
 }
+
+// systemSelectColumns is the column list joined onto system rows for admin
+// views. Bundles receiver-agent connection info (online/version/host/dongles)
+// alongside the system fields the UI already shows.
+const systemSelectColumns = `s.*, u.name as user_name,
+	(SELECT MAX(m.created_at) FROM messages m WHERE m.system_id = s.id) as last_message_at,
+	sc.pod_id            as receiver_pod_id,
+	sc.connected_at      as receiver_connected_at,
+	sc.last_ping_at      as receiver_last_ping_at,
+	sc.receiver_version  as receiver_version,
+	sc.receiver_os       as receiver_os,
+	sc.receiver_arch     as receiver_arch,
+	sc.receiver_hostname as receiver_hostname,
+	sc.dongles::text     as receiver_dongles,
+	(sc.system_id IS NOT NULL AND sc.last_ping_at > NOW() - INTERVAL '90 seconds') as receiver_online`
 
 func (s *Store) CreateSystem(ctx context.Context, data map[string]any) (int64, error) {
 	return s.insertRow(ctx, "systems", data)
@@ -280,13 +296,14 @@ func (s *Store) DeleteSystem(ctx context.Context, id int64) error {
 // --- Messages ---
 
 func (s *Store) ListMessages(ctx context.Context, p ListParams) (*PaginatedResult, error) {
+	// Exact COUNT(*) on this 2M+ row table costs ~300ms; use reltuples estimate when unfiltered.
 	return s.paginatedQuery(ctx,
 		"messages m LEFT JOIN systems sy ON sy.id = m.system_id LEFT JOIN capcodes c ON c.id = m.capcode_id LEFT JOIN agencies a ON a.id = c.agency_id",
 		`m.*, sy.name as system_name, c.address as capcode_address, c.alias as capcode_alias, a.agency as agency_name,
 		 (SELECT COUNT(*) FROM notifications n WHERE n.message_id = m.id) as notifications_count,
 		 (SELECT COUNT(*) FROM notifications n WHERE n.message_id = m.id AND n.pushed_at IS NOT NULL) as notifications_pushed_count`,
 		"m.deleted_at IS NULL", nil, p, []string{"m.address", "m.message"},
-		"messages m")
+		approxCountReltuples("messages"))
 }
 
 func (s *Store) GetMessage(ctx context.Context, id int64) (map[string]any, error) {
@@ -734,6 +751,15 @@ type PaginatedResult struct {
 // allowedSortColumns is a safelist check to prevent SQL injection in ORDER BY.
 var allowedSortDirs = map[string]bool{"asc": true, "desc": true, "ASC": true, "DESC": true}
 
+// approxReltuplesPrefix marks a countFrom value as a request to use pg_class.reltuples
+// (autovacuum-maintained row estimate) instead of an exact COUNT(*). Used for large
+// tables where exact counts are prohibitively expensive.
+const approxReltuplesPrefix = "__approx_reltuples__:"
+
+// approxCountReltuples returns a sentinel countFrom value that tells paginatedQuery
+// to use pg_class.reltuples for the row count instead of COUNT(*).
+func approxCountReltuples(table string) string { return approxReltuplesPrefix + table }
+
 func (s *Store) paginatedQuery(ctx context.Context, from, selectCols, where string, whereArgs []any, p ListParams, searchCols []string, countFrom ...string) (*PaginatedResult, error) {
 	if p.Page < 1 {
 		p.Page = 1
@@ -760,15 +786,26 @@ func (s *Store) paginatedQuery(ctx context.Context, from, selectCols, where stri
 		argIdx++
 	}
 
-	// Count - use simpler table for count when JOINs aren't needed for filtering
-	countTable := from
-	if len(countFrom) > 0 && countFrom[0] != "" && p.Search == "" {
-		countTable = countFrom[0]
-	}
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s", countTable, where)
+	// Count - use simpler table for count when JOINs aren't needed for filtering.
+	// When countFrom is an approx-reltuples sentinel and there's no search, use the
+	// autovacuum-maintained row estimate instead of scanning the full index (huge
+	// win on tables like messages with 2M+ rows where COUNT(*) takes ~300ms).
 	var total int64
-	if err := s.db.GetContext(ctx, &total, countQuery, args...); err != nil {
-		return nil, fmt.Errorf("count query: %w", err)
+	if len(countFrom) > 0 && countFrom[0] != "" && p.Search == "" && strings.HasPrefix(countFrom[0], approxReltuplesPrefix) {
+		table := strings.TrimPrefix(countFrom[0], approxReltuplesPrefix)
+		if err := s.db.GetContext(ctx, &total,
+			`SELECT COALESCE(reltuples, 0)::bigint FROM pg_class WHERE relname = $1`, table); err != nil {
+			return nil, fmt.Errorf("count query: %w", err)
+		}
+	} else {
+		countTable := from
+		if len(countFrom) > 0 && countFrom[0] != "" && p.Search == "" {
+			countTable = countFrom[0]
+		}
+		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s", countTable, where)
+		if err := s.db.GetContext(ctx, &total, countQuery, args...); err != nil {
+			return nil, fmt.Errorf("count query: %w", err)
+		}
 	}
 
 	// Sort - validate to prevent injection

@@ -11,6 +11,11 @@
       "release-type": "go",
       "package-name": "rfspager-server"
     },
+    "cmd/receiver": {
+      "component": "receiver",
+      "release-type": "go",
+      "package-name": "rfspager-receiver"
+    },
     "apps/web": {
       "component": "web",
       "release-type": "node",

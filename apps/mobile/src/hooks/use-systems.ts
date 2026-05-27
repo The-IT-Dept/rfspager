@@ -19,6 +19,16 @@ export function useMySystems() {
   })
 }
 
+export function useSystem(uuid: string | undefined) {
+  return useQuery({
+    queryKey: ["system", uuid],
+    queryFn: () => api.systems.get(uuid!),
+    enabled: !!uuid,
+    staleTime: 10 * 1000,
+    refetchInterval: 30 * 1000,
+  })
+}
+
 export function useCreateSystem() {
   const qc = useQueryClient()
   return useMutation({

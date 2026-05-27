@@ -12,16 +12,19 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
-import { Pencil, ArrowLeft, ShieldCheck } from "lucide-react";
+import { Pencil, ArrowLeft, ShieldCheck, Copy, Check } from "lucide-react";
 import { api } from "~/lib/api";
 
 interface UserDetail {
   id: number;
+  user_id?: string | null; // UUID, used as Adapty customer_user_id + mobile client identifier
   name: string;
   email: string;
+  email_verified_at?: string | null;
   superuser?: boolean;
   created_at?: string;
   updated_at?: string;
+  deleted_at?: string | null;
   subscription_valid?: boolean;
   subscription_product_id?: string | null;
   subscription_expiry?: string | null;
@@ -36,6 +39,8 @@ interface UserDetail {
   stripe_subscription_status?: string | null;
   stripe_subscription_start_date?: string | null;
   stripe_subscription_end_date?: string | null;
+  adapty_id?: string | null;
+  last_adapty_sync_at?: string | null;
 }
 
 interface Installation {
@@ -73,6 +78,30 @@ function Field({ label, children, mono }: { label: string; children: React.React
       <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className={`mt-1 text-sm break-all ${mono ? "font-mono" : ""}`}>{children}</p>
     </div>
+  );
+}
+
+// CopyValue renders a monospace value with a small copy-to-clipboard button.
+// Falls back to plain text on null/empty.
+function CopyValue({ value }: { value?: string | null }) {
+  const [copied, setCopied] = useState(false);
+  if (!value) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="font-mono text-xs break-all">{value}</span>
+      <button
+        type="button"
+        onClick={() => {
+          navigator.clipboard.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        }}
+        className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+        title="Copy"
+      >
+        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+      </button>
+    </span>
   );
 }
 
@@ -131,6 +160,18 @@ export default function UserDetailPage() {
       </div>
 
       <Card>
+        <CardHeader><CardTitle>Identifiers</CardTitle></CardHeader>
+        <CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Field label="Internal ID"><CopyValue value={String(user.id)} /></Field>
+          <Field label="User ID (UUID)"><CopyValue value={user.user_id} /></Field>
+          <Field label="Email"><CopyValue value={user.email} /></Field>
+          <Field label="Email Verified">{fmtDate(user.email_verified_at)}</Field>
+          <Field label="Adapty Profile ID"><CopyValue value={user.adapty_id} /></Field>
+          <Field label="Last Adapty Sync">{fmtDate(user.last_adapty_sync_at)}</Field>
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader><CardTitle>Subscription</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <Field label="Status">
@@ -156,10 +197,10 @@ export default function UserDetailPage() {
       <Card>
         <CardHeader><CardTitle>Store Identifiers</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Field label="Apple Original Transaction ID" mono>{user.apple_original_transaction_id || "—"}</Field>
-          <Field label="Google Purchase Token" mono>{user.google_purchase_token || "—"}</Field>
-          <Field label="Stripe Customer ID" mono>{user.stripe_id || "—"}</Field>
-          <Field label="Stripe Subscription ID" mono>{user.stripe_subscription_id || "—"}</Field>
+          <Field label="Apple Original Transaction ID"><CopyValue value={user.apple_original_transaction_id} /></Field>
+          <Field label="Google Purchase Token"><CopyValue value={user.google_purchase_token} /></Field>
+          <Field label="Stripe Customer ID"><CopyValue value={user.stripe_id} /></Field>
+          <Field label="Stripe Subscription ID"><CopyValue value={user.stripe_subscription_id} /></Field>
           {user.stripe_subscription_status && (
             <>
               <Field label="Stripe Status">
@@ -264,9 +305,13 @@ export default function UserDetailPage() {
       <Card>
         <CardHeader><CardTitle>Account</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="User ID" mono>#{user.id}</Field>
           <Field label="Created">{fmtDate(user.created_at)}</Field>
           <Field label="Updated">{fmtDate(user.updated_at)}</Field>
+          {user.deleted_at && (
+            <Field label="Deleted">
+              <Badge variant="destructive">{fmtDate(user.deleted_at)}</Badge>
+            </Field>
+          )}
         </CardContent>
       </Card>
     </div>

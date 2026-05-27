@@ -11,6 +11,7 @@ import (
 func Router(db *sqlx.DB, jwtSecret, appleBundleID string, sseBroker *SSEBroker, iapHandler *iap.Handler) chi.Router {
 	auth := NewAuthHandler(db, jwtSecret, appleBundleID)
 	h := NewHandlers(db)
+	sh := NewSystemHandlers(db)
 
 	r := chi.NewRouter()
 
@@ -74,6 +75,7 @@ func Router(db *sqlx.DB, jwtSecret, appleBundleID string, sseBroker *SSEBroker, 
 		r.Get("/systems", h.ListSystems)
 		r.Post("/systems", h.CreateSystem)
 		r.Get("/my-systems", h.MySystems)
+		r.Get("/systems/{uuid}", sh.GetSystem)
 
 		// Photos
 		r.Get("/photos", h.ListPhotos)

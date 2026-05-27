@@ -112,16 +112,31 @@ func (h *AuthHandler) generateToken(user *AdminUser) (string, error) {
 
 // JWTAuth middleware validates JWT tokens for admin routes.
 func (h *AuthHandler) JWTAuth(next http.Handler) http.Handler {
+	return h.jwtAuth(next, false)
+}
+
+// JWTAuthHeaderOrQuery is the same as JWTAuth but also accepts the token
+// in a `token` query parameter. Browser EventSource can't set custom
+// headers, so SSE endpoints use this variant.
+func (h *AuthHandler) JWTAuthHeaderOrQuery(next http.Handler) http.Handler {
+	return h.jwtAuth(next, true)
+}
+
+func (h *AuthHandler) jwtAuth(next http.Handler, allowQueryToken bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-			return
+		var tokenStr string
+		if authHeader != "" {
+			tokenStr = strings.TrimPrefix(authHeader, "Bearer ")
+			if tokenStr == authHeader {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid authorization header"})
+				return
+			}
+		} else if allowQueryToken {
+			tokenStr = r.URL.Query().Get("token")
 		}
-
-		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-		if tokenStr == authHeader {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid authorization header"})
+		if tokenStr == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
 

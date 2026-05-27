@@ -3,7 +3,8 @@ package db
 import (
 	"context"
 	"crypto/md5"
-"fmt"
+	"database/sql"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -24,7 +25,9 @@ func New(databaseURL string) (*DB, error) {
 	conn.SetMaxOpenConns(25)
 	conn.SetMaxIdleConns(5)
 	conn.SetConnMaxLifetime(5 * time.Minute)
-	return &DB{conn: conn}, nil
+	// Allow SELECT * to return columns we don't model — the systems table
+	// (and others) have grown columns over time that aren't in our structs.
+	return &DB{conn: conn.Unsafe()}, nil
 }
 
 func (d *DB) Close() error {
@@ -45,6 +48,17 @@ func (d *DB) GetSystemByUUID(ctx context.Context, systemID string) (*models.Syst
 	var s models.System
 	err := d.conn.GetContext(ctx, &s,
 		`SELECT * FROM systems WHERE system_id = $1 AND deleted_at IS NULL`, systemID)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// GetSystemByID finds a system by its primary-key id.
+func (d *DB) GetSystemByID(ctx context.Context, id int64) (*models.System, error) {
+	var s models.System
+	err := d.conn.GetContext(ctx, &s,
+		`SELECT * FROM systems WHERE id = $1 AND deleted_at IS NULL`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -114,20 +128,57 @@ func (d *DB) CreateCapcode(ctx context.Context, c *models.Capcode) error {
 		c.Address, c.Alias, c.AgencyID, c.Icon, c.Colour, c.Ignore).Scan(&c.ID)
 }
 
-// IsDuplicateMessage checks if a message with the same address and content
-// was received within a 10-minute window.
+// IsDuplicateMessage checks whether the incoming message has already been
+// stored for this capcode recently. Two checks layered:
+//
+//  1. Exact byte-for-byte match (MD5) within ±5 min. Catches POCSAG's normal
+//     re-transmission pattern where dispatch repeats the same page two or
+//     three times for redundancy.
+//
+//  2. Same-capcode prefix match (first 30 chars) within ±30 s. Catches the
+//     case where the receiver decoded a re-transmission with a corrupted
+//     tail and lost the last few words — the MD5 differs but the message
+//     is clearly the same dispatch. Real distinct messages to the same
+//     capcode within 30 s would have to share the entire first 30
+//     characters, which RFS and FRNSW dispatch formats never do (RFS
+//     embeds the timestamp at chars 12–20; FRNSW puts the incident type
+//     starting at char 12 — both discriminate inside the prefix).
 func (d *DB) IsDuplicateMessage(ctx context.Context, address, message string, timestamp time.Time) (bool, error) {
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(message)))
 	start := timestamp.Add(-5 * time.Minute)
 	end := timestamp.Add(5 * time.Minute)
 
 	var exists bool
-	err := d.conn.GetContext(ctx, &exists,
+	if err := d.conn.GetContext(ctx, &exists,
 		`SELECT EXISTS(
 			SELECT 1 FROM messages
 			WHERE address = $1 AND md5 = $2
 			AND created_at BETWEEN $3 AND $4
-		)`, address, hash, start, end)
+		)`, address, hash, start, end); err != nil {
+		return false, err
+	}
+	if exists {
+		return true, nil
+	}
+
+	// Prefix-match second pass. Skip for very short messages (the MD5
+	// pass already covers them and short prefixes would over-collide).
+	if len(message) < 12 {
+		return false, nil
+	}
+	prefix := message
+	if len(prefix) > 30 {
+		prefix = prefix[:30]
+	}
+	prefixStart := timestamp.Add(-30 * time.Second)
+	prefixEnd := timestamp.Add(30 * time.Second)
+	err := d.conn.GetContext(ctx, &exists,
+		`SELECT EXISTS(
+			SELECT 1 FROM messages
+			WHERE address = $1
+			  AND substr(message, 1, 30) = $2
+			  AND created_at BETWEEN $3 AND $4
+		)`, address, prefix, prefixStart, prefixEnd)
 	return exists, err
 }
 
@@ -230,6 +281,133 @@ func (d *DB) GetSystemBySanctumToken(ctx context.Context, tokenID string, hashed
 		return nil, err
 	}
 	return &s, nil
+}
+
+// --- system_spectrum_snapshot ---
+
+// UpsertSpectrumSnapshot persists the most-recent ring buffer of spectrum
+// frames for one system. Called periodically by the receiver hub; not on
+// every frame (5 fps × N systems would be a wasteful write pattern).
+func (d *DB) UpsertSpectrumSnapshot(ctx context.Context, systemID int64, payload []byte) error {
+	_, err := d.conn.ExecContext(ctx,
+		`INSERT INTO system_spectrum_snapshot (system_id, updated_at, payload)
+		 VALUES ($1, NOW(), $2)
+		 ON CONFLICT (system_id) DO UPDATE SET
+		    updated_at = EXCLUDED.updated_at,
+		    payload = EXCLUDED.payload`,
+		systemID, payload)
+	return err
+}
+
+// GetSpectrumSnapshot returns the most recent snapshot payload for a system,
+// or nil if none exists.
+func (d *DB) GetSpectrumSnapshot(ctx context.Context, systemID int64) ([]byte, time.Time, error) {
+	var payload []byte
+	var updatedAt time.Time
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT payload, updated_at FROM system_spectrum_snapshot WHERE system_id = $1`,
+		systemID).Scan(&payload, &updatedAt)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return payload, updatedAt, nil
+}
+
+// --- system_connections ---
+
+// SystemConnection is one row in system_connections, plus the joined system
+// info for convenient admin display.
+type SystemConnection struct {
+	SystemID         int64          `db:"system_id" json:"system_id"`
+	PodID            string         `db:"pod_id" json:"pod_id"`
+	ConnectedAt      time.Time      `db:"connected_at" json:"connected_at"`
+	LastPingAt       time.Time      `db:"last_ping_at" json:"last_ping_at"`
+	ReceiverVersion  sql.NullString `db:"receiver_version" json:"receiver_version,omitempty"`
+	ReceiverOS       sql.NullString `db:"receiver_os" json:"receiver_os,omitempty"`
+	ReceiverArch     sql.NullString `db:"receiver_arch" json:"receiver_arch,omitempty"`
+	ReceiverHostname sql.NullString `db:"receiver_hostname" json:"receiver_hostname,omitempty"`
+	Dongles          []byte         `db:"dongles" json:"dongles,omitempty"` // raw JSONB
+}
+
+// UpsertSystemConnection records (or replaces) a receiver's connection. The
+// PRIMARY KEY on system_id means a new pod taking over evicts any prior row;
+// the previous holding pod's heartbeat will then return 0 rows affected and
+// the local socket should be dropped.
+func (d *DB) UpsertSystemConnection(ctx context.Context, c *SystemConnection) error {
+	_, err := d.conn.ExecContext(ctx,
+		`INSERT INTO system_connections
+		   (system_id, pod_id, connected_at, last_ping_at,
+		    receiver_version, receiver_os, receiver_arch, receiver_hostname, dongles)
+		 VALUES ($1, $2, NOW(), NOW(), $3, $4, $5, $6, $7)
+		 ON CONFLICT (system_id) DO UPDATE SET
+		    pod_id = EXCLUDED.pod_id,
+		    connected_at = EXCLUDED.connected_at,
+		    last_ping_at = EXCLUDED.last_ping_at,
+		    receiver_version = EXCLUDED.receiver_version,
+		    receiver_os = EXCLUDED.receiver_os,
+		    receiver_arch = EXCLUDED.receiver_arch,
+		    receiver_hostname = EXCLUDED.receiver_hostname,
+		    dongles = EXCLUDED.dongles`,
+		c.SystemID, c.PodID,
+		c.ReceiverVersion, c.ReceiverOS, c.ReceiverArch, c.ReceiverHostname, c.Dongles)
+	return err
+}
+
+// TouchSystemConnection bumps last_ping_at iff the current row still belongs
+// to this pod. Returns (true, nil) if our row was bumped; (false, nil) means
+// another pod has taken over and the caller should close its local socket.
+func (d *DB) TouchSystemConnection(ctx context.Context, systemID int64, podID string) (bool, error) {
+	res, err := d.conn.ExecContext(ctx,
+		`UPDATE system_connections SET last_ping_at = NOW()
+		 WHERE system_id = $1 AND pod_id = $2`, systemID, podID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// DeleteSystemConnection removes the row iff it still belongs to this pod.
+// A no-op if another pod has already taken over.
+func (d *DB) DeleteSystemConnection(ctx context.Context, systemID int64, podID string) error {
+	_, err := d.conn.ExecContext(ctx,
+		`DELETE FROM system_connections WHERE system_id = $1 AND pod_id = $2`,
+		systemID, podID)
+	return err
+}
+
+// PruneStaleSystemConnections deletes rows whose heartbeat is older than the
+// given cutoff. Safe to call from any pod — the row owner has already given
+// up, otherwise its heartbeat would have refreshed it.
+func (d *DB) PruneStaleSystemConnections(ctx context.Context, olderThan time.Duration) (int64, error) {
+	res, err := d.conn.ExecContext(ctx,
+		`DELETE FROM system_connections WHERE last_ping_at < NOW() - $1::interval`,
+		fmt.Sprintf("%d seconds", int(olderThan.Seconds())))
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// GetSystemConnection returns the live connection for a system, or nil if
+// the receiver is offline.
+func (d *DB) GetSystemConnection(ctx context.Context, systemID int64) (*SystemConnection, error) {
+	var c SystemConnection
+	err := d.conn.GetContext(ctx, &c,
+		`SELECT * FROM system_connections WHERE system_id = $1`, systemID)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// ListSystemConnections returns all live receiver connections.
+func (d *DB) ListSystemConnections(ctx context.Context) ([]SystemConnection, error) {
+	var out []SystemConnection
+	err := d.conn.SelectContext(ctx, &out,
+		`SELECT * FROM system_connections ORDER BY last_ping_at DESC`)
+	return out, err
 }
 
 // CreateSystemCheckin records a system checkin.
