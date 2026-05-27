@@ -333,6 +333,25 @@ export async function fetchUnknownCapcodes(days = 30, limit = 200): Promise<{ da
   return res.json()
 }
 
+export interface CapcodeMessageSample {
+  id: number
+  address: string
+  message: string
+  created_at: string
+  system_name: string | null
+}
+
+/** Recent pages for a single capcode address — used as context in the
+ *  suggest form so the user (and reviewer) can see what kind of unit
+ *  this address pages. Public, no auth. */
+export async function fetchCapcodeMessages(address: string, limit = 8): Promise<{ data: CapcodeMessageSample[] }> {
+  const res = await fetch(
+    `${getBaseUrl()}/api/public/capcodes/messages?address=${encodeURIComponent(address)}&limit=${limit}`,
+  )
+  if (!res.ok) throw new Error(`Failed to load capcode messages (HTTP ${res.status})`)
+  return res.json()
+}
+
 // --- Subscriptions ---
 
 export const subscriptions = {

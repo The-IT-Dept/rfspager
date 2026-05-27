@@ -67,6 +67,9 @@ export const ProfileAlertzonesCreateScreen: FC =
         style={styles.createContainer}
         showsVerticalScrollIndicator={false}
         contentInsetAdjustmentBehavior="automatic"
+        automaticallyAdjustKeyboardInsets
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingBottom: 48 }}
       >
         {/* Zone Details Form */}
         <View style={styles.formContainer}>

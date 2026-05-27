@@ -112,7 +112,12 @@ export const AuthLoginScreen: FC = () => {
 
     return (
       <SafeAreaView style={styles.container}>
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          automaticallyAdjustKeyboardInsets
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingBottom: 48 }}
+        >
           <View style={styles.headerSection}>
             <Image source={Images.loginScreenlogo} resizeMode="contain" style={styles.image} />
             <Text style={styles.loginText}>Login</Text>

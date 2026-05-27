@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"sync"
@@ -456,15 +457,25 @@ func (s *Store) ApproveCapcodeSuggestion(ctx context.Context, id int64) (int64, 
 
 	// Resolve / upsert the agency only if a name was provided. Empty agency
 	// is valid for an amendment that only touches the alias.
+	//
+	// We don't use ON CONFLICT (agency) here because that requires a unique
+	// constraint or index on the column — migration 019 adds it, but older
+	// installations may not have run it yet. SELECT-then-INSERT covers both.
+	// The race window (two concurrent approvals of the same agency) is
+	// vanishingly small and would just produce a second row that the
+	// unique index will block once it lands.
 	var agencyID *int64
 	if agencyName != "" {
 		var aid int64
 		err = s.db.QueryRowContext(ctx,
-			`INSERT INTO agencies (agency, created_at, updated_at) VALUES ($1, NOW(), NOW())
-			 ON CONFLICT (agency) DO UPDATE SET agency = EXCLUDED.agency RETURNING id`,
-			agencyName).Scan(&aid)
+			`SELECT id FROM agencies WHERE agency = $1`, agencyName).Scan(&aid)
+		if err == sql.ErrNoRows {
+			err = s.db.QueryRowContext(ctx,
+				`INSERT INTO agencies (agency, created_at, updated_at) VALUES ($1, NOW(), NOW()) RETURNING id`,
+				agencyName).Scan(&aid)
+		}
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("resolving agency %q: %w", agencyName, err)
 		}
 		agencyID = &aid
 	}
@@ -518,6 +529,34 @@ func (s *Store) ApproveCapcodeSuggestion(ctx context.Context, id int64) (int64, 
 			address, alias, *agencyID, icon, colour).Scan(&capcodeID)
 		if err != nil {
 			return 0, err
+		}
+	}
+
+	// Backfill historical messages that were ingested with this address
+	// before the capcode existed. New incoming messages already get
+	// capcode_id set at ingest time, but anything that came in while the
+	// address was unknown is sitting with capcode_id IS NULL — claim them.
+	//
+	// For an amendment the existing capcode already owns its messages, but
+	// there can still be stragglers (e.g. messages stored during a brief
+	// window when the lookup race lost). The predicate `capcode_id IS NULL`
+	// makes this safe to run unconditionally.
+	if capcodeID > 0 && address != "" {
+		res, err := s.db.ExecContext(ctx,
+			`UPDATE messages
+			    SET capcode_id = $1, updated_at = NOW()
+			  WHERE address = $2
+			    AND capcode_id IS NULL
+			    AND deleted_at IS NULL`,
+			capcodeID, address)
+		if err == nil {
+			if n, _ := res.RowsAffected(); n > 0 {
+				slog.Info("backfilled messages on capcode approval",
+					"capcode_id", capcodeID, "address", address, "rows", n)
+			}
+		} else {
+			slog.Warn("backfill messages failed",
+				"capcode_id", capcodeID, "address", address, "error", err)
 		}
 	}
 

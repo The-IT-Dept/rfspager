@@ -1,5 +1,10 @@
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { api, fetchUnknownCapcodes, type CapcodeSuggestionInput } from "../services/api-client"
+import {
+  api,
+  fetchUnknownCapcodes,
+  fetchCapcodeMessages,
+  type CapcodeSuggestionInput,
+} from "../services/api-client"
 
 export function useAgencies() {
   return useQuery({
@@ -31,6 +36,15 @@ export function useUnknownCapcodes() {
     queryKey: ["capcodes-unknown"],
     queryFn: () => fetchUnknownCapcodes(30, 200),
     staleTime: 2 * 60 * 1000,
+  })
+}
+
+export function useCapcodeMessages(address: string | null | undefined) {
+  return useQuery({
+    queryKey: ["capcode-messages", address ?? ""],
+    queryFn: () => fetchCapcodeMessages(address as string, 8),
+    enabled: !!address,
+    staleTime: 30 * 1000,
   })
 }
 

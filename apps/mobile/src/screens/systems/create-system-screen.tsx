@@ -1,8 +1,6 @@
 import React, { FC, useState } from "react"
 import {
   Alert,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -63,12 +61,14 @@ export const CreateSystemScreen: FC = function CreateSystemScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
+    <ScrollView
       style={{ flex: 1, backgroundColor: theme.colors.background }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      contentInsetAdjustmentBehavior="automatic"
+      automaticallyAdjustKeyboardInsets
+      keyboardShouldPersistTaps="handled"
+      contentContainerStyle={[styles.scroll, { paddingBottom: 48 }]}
     >
-      <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.scroll}>
-        <Stepper step={step} theme={theme} />
+      <Stepper step={step} theme={theme} />
 
         {step === "hardware" && (
           <View>
@@ -176,8 +176,7 @@ export const CreateSystemScreen: FC = function CreateSystemScreen() {
             />
           </View>
         )}
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </ScrollView>
   )
 }
 

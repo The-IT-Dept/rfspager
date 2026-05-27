@@ -2,8 +2,6 @@ import React, { useState } from "react"
 import {
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -42,12 +40,14 @@ export default function ChangePasswordScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: theme.colors.backgroundTertiary }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    <ScrollView
+      contentInsetAdjustmentBehavior="automatic"
+      automaticallyAdjustKeyboardInsets
+      keyboardShouldPersistTaps="handled"
+      style={styles.container}
+      contentContainerStyle={{ paddingBottom: 48 }}
     >
-      <ScrollView contentInsetAdjustmentBehavior="automatic" style={styles.container}>
-        <Text style={styles.label}>Current password</Text>
+      <Text style={styles.label}>Current password</Text>
         <TextInput
           style={styles.input}
           value={current}
@@ -102,8 +102,7 @@ export default function ChangePasswordScreen() {
             <Text style={styles.buttonText}>Change password</Text>
           )}
         </TouchableOpacity>
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </ScrollView>
   )
 }
 

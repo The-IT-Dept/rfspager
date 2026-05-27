@@ -2,8 +2,6 @@ import React, { useState } from "react"
 import {
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -39,12 +37,14 @@ export default function EditNameScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: theme.colors.backgroundTertiary }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    <ScrollView
+      contentInsetAdjustmentBehavior="automatic"
+      automaticallyAdjustKeyboardInsets
+      keyboardShouldPersistTaps="handled"
+      style={styles.container}
+      contentContainerStyle={{ paddingBottom: 48 }}
     >
-      <ScrollView contentInsetAdjustmentBehavior="automatic" style={styles.container}>
-        <Text style={styles.label}>Name</Text>
+      <Text style={styles.label}>Name</Text>
         <TextInput
           style={styles.input}
           value={name}
@@ -69,8 +69,7 @@ export default function EditNameScreen() {
             <Text style={styles.buttonText}>Save</Text>
           )}
         </TouchableOpacity>
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </ScrollView>
   )
 }
 

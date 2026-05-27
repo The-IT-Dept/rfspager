@@ -2,8 +2,6 @@ import React, { useState } from "react"
 import {
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -48,12 +46,14 @@ export default function EditEmailScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: theme.colors.backgroundTertiary }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    <ScrollView
+      contentInsetAdjustmentBehavior="automatic"
+      automaticallyAdjustKeyboardInsets
+      keyboardShouldPersistTaps="handled"
+      style={styles.container}
+      contentContainerStyle={{ paddingBottom: 48 }}
     >
-      <ScrollView contentInsetAdjustmentBehavior="automatic" style={styles.container}>
-        <Text style={styles.label}>New email</Text>
+      <Text style={styles.label}>New email</Text>
         <TextInput
           style={styles.input}
           value={email}
@@ -96,8 +96,7 @@ export default function EditEmailScreen() {
             <Text style={styles.buttonText}>Change email</Text>
           )}
         </TouchableOpacity>
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </ScrollView>
   )
 }
 

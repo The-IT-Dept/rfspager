@@ -10,7 +10,7 @@ import {
   ActionButtonsRow,
 } from "../../components/action-buttons/ActionButtons"
 
-import { useLocalSearchParams } from "expo-router"
+import { useLocalSearchParams, useRouter } from "expo-router"
 
 import {
   hasLocation,
@@ -28,6 +28,7 @@ import { AppTheme, useAppTheme } from "../../theme"
 
 export function PagerMessageScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
+  const router = useRouter()
   const validSubscription = useValidSubscription()
   const upsertInstallation = useAuthStore((s) => s.upsertInstallation)
   const queryClient = useQueryClient()
@@ -146,6 +147,43 @@ export function PagerMessageScreen() {
             <ShareButton onPress={() => shareMessage(messageAdapted)} />
           </ActionButtonsRow>
         </View>
+
+        {/* Receiver — which SDR station picked this page off the air.
+            Tappable to jump to the system detail (live spectrum etc).
+            Falls back gracefully if upstream didn't link a system. */}
+        {messageAdapted.system_name && (
+          <View style={styles.sectionContainer}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Decoded By</Text>
+            </View>
+            <TouchableOpacity
+              activeOpacity={messageAdapted.system_uuid ? 0.6 : 1}
+              disabled={!messageAdapted.system_uuid}
+              onPress={() =>
+                messageAdapted.system_uuid &&
+                router.push(`/(tabs)/(stack)/system/${messageAdapted.system_uuid}` as any)
+              }
+              style={styles.receiverRow}
+            >
+              <View style={styles.receiverIcon}>
+                <FontAwesome5 name="broadcast-tower" size={12} color={theme.colors.textSecondary} />
+              </View>
+              <View style={styles.receiverContent}>
+                <Text style={styles.receiverName}>{messageAdapted.system_name}</Text>
+                {messageAdapted.system_suburb && (
+                  <Text style={styles.receiverMeta}>{messageAdapted.system_suburb}</Text>
+                )}
+              </View>
+              {messageAdapted.system_uuid && (
+                <FontAwesome5
+                  name="chevron-right"
+                  size={12}
+                  color={theme.colors.textTertiary}
+                />
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
 
         <View style={styles.messageSection}>
           <Text style={styles.messageText}>{messageAdapted.message}</Text>
@@ -471,5 +509,34 @@ const makeStyles = (theme: AppTheme) =>
       fontSize: 16,
       fontWeight: "600",
       color: theme.colors.textPrimary,
+    },
+    // Receiver row
+    receiverRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+    },
+    receiverIcon: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: theme.colors.backgroundTertiary,
+      alignItems: "center",
+      justifyContent: "center",
+      marginRight: 12,
+    },
+    receiverContent: {
+      flex: 1,
+    },
+    receiverName: {
+      fontSize: 15,
+      fontWeight: "600",
+      color: theme.colors.textPrimary,
+    },
+    receiverMeta: {
+      fontSize: 13,
+      color: theme.colors.textTertiary,
+      marginTop: 1,
     },
   })

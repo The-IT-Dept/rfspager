@@ -372,6 +372,46 @@ func (h *Handlers) UnknownCapcodes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// CapcodeMessages returns the most recent messages for a single capcode
+// address. Used by the suggestion form so reviewers (and suggesters) can see
+// the kind of pages that come through this address before guessing what it
+// represents. Public — no more sensitive than the existing pager feed.
+func (h *Handlers) CapcodeMessages(w http.ResponseWriter, r *http.Request) {
+	addr := strings.TrimSpace(r.URL.Query().Get("address"))
+	if addr == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "address is required"})
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit < 1 || limit > 50 {
+		limit = 10
+	}
+
+	rows, err := h.db.QueryxContext(r.Context(), `
+		SELECT m.id, m.address, m.message, m.created_at,
+		       s.name AS system_name
+		  FROM messages m
+		  LEFT JOIN systems s ON s.id = m.system_id AND s.deleted_at IS NULL
+		 WHERE m.deleted_at IS NULL
+		   AND m.address = $1
+		 ORDER BY m.created_at DESC
+		 LIMIT $2`, addr, limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	data := []map[string]any{}
+	for rows.Next() {
+		row := make(map[string]any)
+		rows.MapScan(row)
+		cleanMapScan(row)
+		data = append(data, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data})
+}
+
 // Stations returns NSW emergency service stations (RFS, FRNSW, police,
 // ambulance, SES) as a GeoJSON FeatureCollection so the map can use it
 // directly as a Mapbox/MapLibre source. Filtered client-side by category

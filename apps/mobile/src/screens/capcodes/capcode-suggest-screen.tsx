@@ -1,9 +1,8 @@
 /* eslint-disable react-native/no-inline-styles */
-import React, { FC, useState } from "react"
+import React, { FC, useMemo, useState } from "react"
 import {
   Alert,
-  KeyboardAvoidingView,
-  Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,7 +13,11 @@ import {
 import { Stack, useLocalSearchParams, useRouter } from "expo-router"
 
 import { useAppTheme, AppTheme } from "../../theme"
-import { useCreateCapcodeSuggestion } from "../../hooks"
+import {
+  useCreateCapcodeSuggestion,
+  useCapcodeMessages,
+  useAgencies,
+} from "../../hooks"
 
 export const CapcodeSuggestScreen: FC = function CapcodeSuggestScreen() {
   const theme = useAppTheme()
@@ -34,7 +37,31 @@ export const CapcodeSuggestScreen: FC = function CapcodeSuggestScreen() {
   const [agency, setAgency] = useState(params.agency ?? "")
   const [note, setNote] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  const [agencyFocused, setAgencyFocused] = useState(false)
   const mutation = useCreateCapcodeSuggestion()
+  const recentMessages = useCapcodeMessages(address || null)
+  const recent = recentMessages.data?.data ?? []
+  const agenciesQuery = useAgencies()
+  const allAgencies = agenciesQuery.data ?? []
+
+  // Filter the agency suggestion list by what the user is typing. Empty
+  // input shows the full sorted list so they can browse if they don't
+  // know what to type yet.
+  const filteredAgencies = useMemo(() => {
+    const q = agency.trim().toLowerCase()
+    const sorted = [...allAgencies].sort((a, b) => a.name.localeCompare(b.name))
+    if (!q) return sorted.slice(0, 50)
+    return sorted
+      .filter((a) => a.name.toLowerCase().includes(q))
+      .slice(0, 50)
+  }, [allAgencies, agency])
+
+  // Hide the suggestion list once the typed value exactly matches a known
+  // agency name — they've made a choice, no need to keep showing options.
+  const showSuggestions =
+    agencyFocused &&
+    filteredAgencies.length > 0 &&
+    !allAgencies.some((a) => a.name.toLowerCase() === agency.trim().toLowerCase())
 
   const submit = async () => {
     if (!address) {
@@ -67,10 +94,7 @@ export const CapcodeSuggestScreen: FC = function CapcodeSuggestScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={styles.container}
-    >
+    <View style={styles.container}>
       <Stack.Screen
         options={{
           title: isAmendment ? "Suggest Edit" : "Suggest Capcode",
@@ -91,7 +115,9 @@ export const CapcodeSuggestScreen: FC = function CapcodeSuggestScreen() {
       <ScrollView
         style={styles.scrollView}
         contentInsetAdjustmentBehavior="automatic"
+        automaticallyAdjustKeyboardInsets
         keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingBottom: 48 }}
       >
         <View style={styles.targetCard}>
           <Text style={styles.targetLabel}>
@@ -107,25 +133,88 @@ export const CapcodeSuggestScreen: FC = function CapcodeSuggestScreen() {
         </View>
 
         <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>RECENT PAGES</Text>
+        </View>
+        <View style={styles.formCard}>
+          {recentMessages.isLoading ? (
+            <Text style={styles.recentEmpty}>Loading recent pages…</Text>
+          ) : recent.length === 0 ? (
+            <Text style={styles.recentEmpty}>
+              No recent pages on file for this address.
+            </Text>
+          ) : (
+            recent.map((m, i) => (
+              <View
+                key={m.id}
+                style={[
+                  styles.recentRow,
+                  i === recent.length - 1 && styles.recentRowLast,
+                ]}
+              >
+                <View style={styles.recentMeta}>
+                  <Text style={styles.recentTime}>{relTime(m.created_at)}</Text>
+                  {m.system_name && (
+                    <Text style={styles.recentSystem} numberOfLines={1}>
+                      via {m.system_name}
+                    </Text>
+                  )}
+                </View>
+                <Text style={styles.recentBody} numberOfLines={3}>
+                  {m.message}
+                </Text>
+              </View>
+            ))
+          )}
+        </View>
+
+        <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>SUGGESTION</Text>
         </View>
 
         <View style={styles.formCard}>
-          <Field label="Alias" theme={theme}>
+          {/* Agency first — having the right agency matters more than the
+              alias and the autocomplete keeps names consistent. */}
+          <Field label="Agency" theme={theme}>
+            <TextInput
+              value={agency}
+              onChangeText={setAgency}
+              placeholder="Start typing — e.g. NSW Rural…"
+              placeholderTextColor={theme.colors.textTertiary}
+              style={styles.input}
+              autoCapitalize="words"
+              onFocus={() => setAgencyFocused(true)}
+              onBlur={() => setTimeout(() => setAgencyFocused(false), 150)}
+            />
+          </Field>
+          {showSuggestions && (
+            <View style={styles.suggestionList}>
+              {filteredAgencies.map((a) => (
+                <Pressable
+                  key={a.id}
+                  onPress={() => {
+                    setAgency(a.name)
+                    setAgencyFocused(false)
+                  }}
+                  style={({ pressed }) => [
+                    styles.suggestionItem,
+                    pressed && styles.suggestionItemPressed,
+                  ]}
+                >
+                  <Text style={styles.suggestionText} numberOfLines={1}>
+                    {a.name}
+                  </Text>
+                  <Text style={styles.suggestionCount}>
+                    {a.capcode_count}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+          <Field label="Alias" theme={theme} isLast>
             <TextInput
               value={alias}
               onChangeText={setAlias}
               placeholder="e.g. Cooma Fire Brigade"
-              placeholderTextColor={theme.colors.textTertiary}
-              style={styles.input}
-              autoCapitalize="words"
-            />
-          </Field>
-          <Field label="Agency" theme={theme} isLast>
-            <TextInput
-              value={agency}
-              onChangeText={setAgency}
-              placeholder="e.g. NSW Rural Fire Service"
               placeholderTextColor={theme.colors.textTertiary}
               style={styles.input}
               autoCapitalize="words"
@@ -165,7 +254,7 @@ export const CapcodeSuggestScreen: FC = function CapcodeSuggestScreen() {
           </Text>
         </TouchableOpacity>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   )
 }
 
@@ -203,6 +292,16 @@ function Field({
       {children}
     </View>
   )
+}
+
+function relTime(s: string): string {
+  const d = new Date(s)
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000)
+  if (mins < 1) return "now"
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return d.toLocaleDateString("en-AU", { day: "2-digit", month: "short" })
 }
 
 const makeStyles = (theme: AppTheme) =>
@@ -288,5 +387,74 @@ const makeStyles = (theme: AppTheme) =>
       color: "#FFFFFF",
       fontSize: 17,
       fontWeight: "600",
+    },
+    // Agency suggestions
+    suggestionList: {
+      backgroundColor: theme.colors.cardBackground,
+      maxHeight: 220,
+      borderTopWidth: 0.5,
+      borderTopColor: theme.colors.border,
+    },
+    suggestionItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderBottomWidth: 0.5,
+      borderBottomColor: theme.colors.border,
+    },
+    suggestionItemPressed: {
+      backgroundColor: theme.colors.backgroundTertiary,
+    },
+    suggestionText: {
+      flex: 1,
+      fontSize: 15,
+      color: theme.colors.textPrimary,
+    },
+    suggestionCount: {
+      fontSize: 12,
+      color: theme.colors.textTertiary,
+      marginLeft: 12,
+      fontVariant: ["tabular-nums"],
+    },
+    // Recent pages
+    recentEmpty: {
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      fontSize: 13,
+      color: theme.colors.textTertiary,
+      fontStyle: "italic",
+    },
+    recentRow: {
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderBottomWidth: 0.5,
+      borderBottomColor: theme.colors.border,
+    },
+    recentRowLast: {
+      borderBottomWidth: 0,
+    },
+    recentMeta: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 2,
+    },
+    recentTime: {
+      fontSize: 11,
+      color: theme.colors.textTertiary,
+      fontVariant: ["tabular-nums"],
+    },
+    recentSystem: {
+      fontSize: 11,
+      color: theme.colors.textTertiary,
+      flex: 1,
+      textAlign: "right",
+      marginLeft: 8,
+    },
+    recentBody: {
+      fontSize: 13,
+      color: theme.colors.textPrimary,
+      lineHeight: 17,
     },
   })

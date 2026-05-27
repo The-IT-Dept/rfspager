@@ -112,7 +112,12 @@ export const AuthRegisterScreen: FC = () => {
 
     return (
       <SafeAreaView style={styles.container}>
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          automaticallyAdjustKeyboardInsets
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingBottom: 48 }}
+        >
           <View style={styles.headerSection}>
             <Image source={Images.signUpLogo} resizeMode="contain" style={styles.image} />
             <Text style={styles.signUpText}>Sign Up</Text>

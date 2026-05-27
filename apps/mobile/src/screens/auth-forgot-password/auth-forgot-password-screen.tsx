@@ -57,7 +57,12 @@ export const AuthForgotPasswordScreen: FC = () => {
 
     return (
       <SafeAreaView style={styles.container}>
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          automaticallyAdjustKeyboardInsets
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingBottom: 48 }}
+        >
           <View style={styles.headerSection}>
             <Image source={Images.forgetPassword} resizeMode="contain" style={styles.imageStyle} />
             <Text style={styles.forgotPassword}>Forgot Password?</Text>

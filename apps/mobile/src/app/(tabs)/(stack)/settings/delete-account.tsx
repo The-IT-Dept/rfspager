@@ -2,8 +2,6 @@ import React, { useState } from "react"
 import {
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -51,12 +49,14 @@ export default function DeleteAccountScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: theme.colors.backgroundTertiary }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    <ScrollView
+      contentInsetAdjustmentBehavior="automatic"
+      automaticallyAdjustKeyboardInsets
+      keyboardShouldPersistTaps="handled"
+      style={styles.container}
+      contentContainerStyle={{ paddingBottom: 48 }}
     >
-      <ScrollView contentInsetAdjustmentBehavior="automatic" style={styles.container}>
-        <Text style={styles.title}>This will permanently delete your account.</Text>
+      <Text style={styles.title}>This will permanently delete your account.</Text>
         <Text style={styles.body}>
           Your profile, capcode subscriptions, filters, alert zones and push registrations will be
           removed. Any systems you've registered will remain available to others but will no longer
@@ -89,8 +89,7 @@ export default function DeleteAccountScreen() {
             <Text style={styles.buttonText}>Delete my account</Text>
           )}
         </TouchableOpacity>
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </ScrollView>
   )
 }
 

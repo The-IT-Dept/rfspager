@@ -541,6 +541,25 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+// Shorter form used in the recent-pages list inside the modal.
+function relTime(dateStr: string): string {
+  const d = new Date(dateStr);
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  return d.toLocaleDateString("en-AU", { day: "2-digit", month: "short" });
+}
+
+interface RecentMessage {
+  id: number;
+  address: string;
+  message: string;
+  created_at: string;
+  system_name: string | null;
+}
+
 function SuggestModal({
   target,
   agencies,
@@ -561,6 +580,26 @@ function SuggestModal({
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<RecentMessage[] | null>(null);
+  const [recentLoading, setRecentLoading] = useState(true);
+
+  // Fetch recent pages for this address so the suggester (and the reviewer
+  // reading their note later) has context for what kind of unit this is.
+  useEffect(() => {
+    let cancelled = false;
+    setRecentLoading(true);
+    fetch(`/api/public/capcodes/messages?address=${encodeURIComponent(target.address)}&limit=8`)
+      .then((r) => (r.ok ? r.json() : { data: [] }))
+      .then((j) => {
+        if (cancelled) return;
+        setRecent(j.data ?? []);
+      })
+      .catch(() => !cancelled && setRecent([]))
+      .finally(() => !cancelled && setRecentLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [target.address]);
 
   const isAmendment = target.capcode_id != null;
   const tokenAvailable =
@@ -671,22 +710,47 @@ function SuggestModal({
               </div>
             )}
 
-            <Field label="Alias">
-              <input
-                type="text"
-                value={alias}
-                onChange={(e) => setAlias(e.target.value)}
-                placeholder="e.g. Cooma Fire Brigade"
-                className="w-full px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#F7241D]/15 focus:border-[#F7241D] outline-none"
-              />
-            </Field>
+            {/* Recent pages for context */}
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">
+                Recent pages
+              </p>
+              {recentLoading ? (
+                <p className="text-[11px] text-gray-400 italic">Loading recent pages…</p>
+              ) : !recent || recent.length === 0 ? (
+                <p className="text-[11px] text-gray-400 italic">
+                  No recent pages on file for this address.
+                </p>
+              ) : (
+                <div className="rounded-lg border border-gray-100 bg-gray-50 max-h-44 overflow-y-auto divide-y divide-gray-100">
+                  {recent.map((m) => (
+                    <div key={m.id} className="px-3 py-2 text-[11px]">
+                      <div className="flex items-center justify-between gap-2 text-gray-400 font-mono mb-0.5">
+                        <span className="tabular-nums">{relTime(m.created_at)}</span>
+                        {m.system_name && (
+                          <span className="truncate">via {m.system_name}</span>
+                        )}
+                      </div>
+                      <p className="text-gray-700 font-mono leading-snug whitespace-pre-wrap break-words line-clamp-2">
+                        {m.message}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
-            <Field label="Agency">
+            {/* Agency first — having the right agency makes a much
+                bigger difference to data quality than the alias. */}
+            <Field
+              label="Agency"
+              hint="Pick from the list when you can — keeps agency names consistent."
+            >
               <input
                 type="text"
                 value={agency}
                 onChange={(e) => setAgency(e.target.value)}
-                placeholder="e.g. NSW Rural Fire Service"
+                placeholder="Start typing — e.g. NSW Rural…"
                 list="agencies-list"
                 className="w-full px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#F7241D]/15 focus:border-[#F7241D] outline-none"
               />
@@ -695,6 +759,16 @@ function SuggestModal({
                   <option key={a.id} value={a.name} />
                 ))}
               </datalist>
+            </Field>
+
+            <Field label="Alias">
+              <input
+                type="text"
+                value={alias}
+                onChange={(e) => setAlias(e.target.value)}
+                placeholder="e.g. Cooma Fire Brigade"
+                className="w-full px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#F7241D]/15 focus:border-[#F7241D] outline-none"
+              />
             </Field>
 
             <Field

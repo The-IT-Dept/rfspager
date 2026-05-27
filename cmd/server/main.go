@@ -239,6 +239,7 @@ func main() {
 			r.Get("/stations", publicHandlers.Stations)
 			r.Get("/capcodes", publicHandlers.ListCapcodes)
 			r.Get("/capcodes/unknown", publicHandlers.UnknownCapcodes)
+			r.Get("/capcodes/messages", publicHandlers.CapcodeMessages)
 			r.Get("/systems/{uuid}/spectrum", public.SpectrumSSE(database.Conn(), hub))
 			r.Get("/events", publicSSE.Handler)
 		})
