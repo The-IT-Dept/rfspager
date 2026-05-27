@@ -13,7 +13,15 @@ interface ServerEnvelope {
 }
 
 interface Props {
-  systemId: number;
+  /**
+   * URL to the spectrum SSE endpoint. Either the admin endpoint
+   * (`/api/v1/admin/systems/{id}/spectrum?token=...`) or the public
+   * UUID-keyed one (`/api/public/systems/{uuid}/spectrum`).
+   *
+   * If omitted, falls back to the legacy admin URL built from `systemId`.
+   */
+  url?: string;
+  systemId?: number;
   height?: number;
 }
 
@@ -41,7 +49,7 @@ function colourMap(db: number, minDb: number, maxDb: number): [number, number, n
   return stops[stops.length - 1][1];
 }
 
-export function SpectrumWaterfall({ systemId, height = 420 }: Props) {
+export function SpectrumWaterfall({ url, systemId, height = 420 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<"connecting" | "live" | "idle" | "error">("connecting");
@@ -81,9 +89,13 @@ export function SpectrumWaterfall({ systemId, height = 420 }: Props) {
     ctx.fillStyle = "#0a0a0a";
     ctx.fillRect(0, 0, width, height);
 
-    const token = localStorage.getItem("admin_token") ?? "";
-    const url = `/api/v1/admin/systems/${systemId}/spectrum?token=${encodeURIComponent(token)}`;
-    const es = new EventSource(url);
+    let streamURL = url;
+    if (!streamURL && systemId != null) {
+      const token = localStorage.getItem("admin_token") ?? "";
+      streamURL = `/api/v1/admin/systems/${systemId}/spectrum?token=${encodeURIComponent(token)}`;
+    }
+    if (!streamURL) return;
+    const es = new EventSource(streamURL);
 
     let lastFrameAt = 0;
 
@@ -122,7 +134,7 @@ export function SpectrumWaterfall({ systemId, height = 420 }: Props) {
       es.close();
       clearInterval(idleTimer);
     };
-  }, [systemId, width, height]);
+  }, [url, systemId, width, height]);
 
   return (
     <div className="space-y-2">

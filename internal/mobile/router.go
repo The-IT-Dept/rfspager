@@ -45,6 +45,10 @@ func Router(db *sqlx.DB, jwtSecret, appleBundleID string, sseBroker *SSEBroker, 
 		r.Get("/agencies", h.ListAgencies)
 		r.Get("/capcodes", h.ListCapcodes)
 
+		// Capcode suggestions (community amendments — admins review)
+		r.Post("/capcode-suggestions", h.CreateCapcodeSuggestion)
+		r.Get("/capcode-suggestions/mine", h.ListMyCapcodeSuggestions)
+
 		// Capcode subscriptions
 		r.Get("/subscriptions", h.ListSubscriptions)
 		r.Post("/subscriptions", h.CreateSubscription)

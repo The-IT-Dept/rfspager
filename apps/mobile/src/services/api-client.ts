@@ -286,6 +286,53 @@ export const capcodes = {
   },
 }
 
+// --- Capcode Suggestions ---
+
+export interface CapcodeSuggestionInput {
+  capcode_id?: number | null
+  address: string
+  alias?: string
+  agency?: string
+  icon?: string
+  colour?: string
+  note?: string
+}
+
+export interface MyCapcodeSuggestion {
+  id: number
+  capcode_id: number | null
+  address: string
+  alias: string | null
+  agency: string | null
+  icon: string | null
+  colour: string | null
+  note: string | null
+  created_at: string
+  current_alias: string | null
+  current_agency: string | null
+}
+
+export interface UnknownCapcode {
+  capcode_id: number | null
+  address: string
+  alias: string | null
+  agency_name: string | null
+  message_count: number
+  last_seen_at: string
+}
+
+export const capcodeSuggestions = {
+  create: (data: CapcodeSuggestionInput) => post<{ status: string; id: number }>("/capcode-suggestions", data),
+  listMine: () => get<MyCapcodeSuggestion[]>("/capcode-suggestions/mine"),
+}
+
+/** Fetched from the public API (no auth) so we can show unknowns to anyone. */
+export async function fetchUnknownCapcodes(days = 30, limit = 200): Promise<{ data: UnknownCapcode[] }> {
+  const res = await fetch(`${getBaseUrl()}/api/public/capcodes/unknown?days=${days}&limit=${limit}`)
+  if (!res.ok) throw new Error(`Failed to load unknown capcodes (HTTP ${res.status})`)
+  return res.json()
+}
+
 // --- Subscriptions ---
 
 export const subscriptions = {
@@ -440,6 +487,7 @@ export const api = {
   messages,
   agencies,
   capcodes,
+  capcodeSuggestions,
   subscriptions,
   filters,
   alertzones,

@@ -366,6 +366,93 @@ func (h *Handlers) DeleteFilter(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// --- Capcode Suggestions ---
+
+// CreateCapcodeSuggestion lets any logged-in user propose either a new
+// capcode (capcode_id null, address required) or an amendment to an existing
+// one (capcode_id set). Admins review and approve via the admin queue.
+//
+// We don't validate field membership beyond "must have address" — the form
+// can submit a partial change (e.g. just an alias correction) and the admin
+// reviewer fills in the rest.
+func (h *Handlers) CreateCapcodeSuggestion(w http.ResponseWriter, r *http.Request) {
+	user := GetUser(r.Context())
+	var req struct {
+		Address   string `json:"address"`
+		Alias     string `json:"alias"`
+		Agency    string `json:"agency"`
+		Icon      string `json:"icon"`
+		Colour    string `json:"colour"`
+		Note      string `json:"note"`
+		CapcodeID *int64 `json:"capcode_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if req.Address == "" {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "address is required"})
+		return
+	}
+
+	// At least one of alias / agency / note must be populated; otherwise the
+	// submission is empty noise.
+	if req.Alias == "" && req.Agency == "" && req.Note == "" {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{
+			"error": "provide an alias, agency, or note",
+		})
+		return
+	}
+
+	var id int64
+	err := h.db.QueryRowxContext(r.Context(), `
+		INSERT INTO capcode_suggestions
+		    (user_id, capcode_id, address, alias, agency, icon, colour, note, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), NOW(), NOW())
+		RETURNING id`,
+		user.ID, req.CapcodeID, req.Address, req.Alias, req.Agency,
+		req.Icon, req.Colour, req.Note).Scan(&id)
+	if err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"status": "ok",
+		"id":     id,
+	})
+}
+
+// ListMyCapcodeSuggestions returns the current user's submitted suggestions
+// still waiting for review (rows are deleted on approve or reject).
+func (h *Handlers) ListMyCapcodeSuggestions(w http.ResponseWriter, r *http.Request) {
+	user := GetUser(r.Context())
+	rows, err := h.db.QueryxContext(r.Context(), `
+		SELECT cs.id, cs.capcode_id, cs.address, cs.alias, cs.agency,
+		       cs.icon, cs.colour, cs.note, cs.created_at,
+		       c.alias  AS current_alias,
+		       a.agency AS current_agency
+		  FROM capcode_suggestions cs
+		  LEFT JOIN capcodes c ON c.id = cs.capcode_id
+		  LEFT JOIN agencies a ON a.id = c.agency_id
+		 WHERE cs.user_id = $1
+		 ORDER BY cs.created_at DESC
+		 LIMIT 200`, user.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	data := []map[string]any{}
+	for rows.Next() {
+		row := make(map[string]any)
+		rows.MapScan(row)
+		cleanMapScan(row)
+		data = append(data, row)
+	}
+	writeJSON(w, http.StatusOK, data)
+}
+
 // --- Systems ---
 
 // ListSystems returns paging systems with public-safe fields plus an

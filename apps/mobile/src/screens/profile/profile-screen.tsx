@@ -141,19 +141,6 @@ export const ProfileScreen: FC = function ProfileScreen() {
 
   const pagerSettings: SettingItem[] = [
     {
-      id: "alert-zones",
-      title: "Alert Zones",
-      type: "navigation",
-      isPremium: true,
-      onPress: () => handlePremiumFeature(() => router.push("/(tabs)/settings/alertzones")),
-    },
-    {
-      id: "capcodes",
-      title: "Capcodes",
-      type: "navigation",
-      onPress: () => router.push("/(tabs)/settings/capcodes"),
-    },
-    {
       id: "filter-capcodes",
       title: "Only Show Selected Capcodes",
       type: "toggle",

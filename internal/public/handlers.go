@@ -99,14 +99,19 @@ func (h *Handlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.db.QueryxContext(r.Context(),
 		`SELECT m.id, m.address, m.message, m.created_at,
-		 c.alias as capcode_alias, c.icon as capcode_icon, c.colour as capcode_colour,
-		 a.agency as agency_name
-		 FROM messages m
-		 LEFT JOIN capcodes c ON c.id = m.capcode_id
-		 LEFT JOIN agencies a ON a.id = c.agency_id
-		 WHERE `+where+`
-		 ORDER BY m.created_at DESC
-		 LIMIT $`+strconv.Itoa(argIdx)+` OFFSET $`+strconv.Itoa(argIdx+1), args...)
+		        c.alias  AS capcode_alias,
+		        c.icon   AS capcode_icon,
+		        c.colour AS capcode_colour,
+		        a.agency AS agency_name,
+		        s.system_id AS system_uuid,
+		        s.name      AS system_name
+		   FROM messages m
+		   LEFT JOIN capcodes c ON c.id = m.capcode_id
+		   LEFT JOIN agencies a ON a.id = c.agency_id
+		   LEFT JOIN systems  s ON s.id = m.system_id AND s.deleted_at IS NULL
+		  WHERE `+where+`
+		  ORDER BY m.created_at DESC
+		  LIMIT $`+strconv.Itoa(argIdx)+` OFFSET $`+strconv.Itoa(argIdx+1), args...)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -174,9 +179,14 @@ func (h *Handlers) MapMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListSystems returns the public-safe list of paging systems. Only exposes
-// uuid, name, suburb, is_pending (waiting on admin approval), and the
-// timestamp of the most recent message. Owner, base url, api keys and other
-// operational fields are deliberately not surfaced.
+// uuid, name, suburb, is_pending (waiting on admin approval), the timestamp
+// of the most recent message, and the live receiver WebSocket ping. Owner,
+// base url, api keys and other operational fields are deliberately not
+// surfaced.
+//
+// `last_ping_at` is what the frontend should use for the green online dot:
+// a receiver that hasn't decoded a message in hours is still "online" if
+// the WebSocket is up and pinging.
 func (h *Handlers) ListSystems(w http.ResponseWriter, r *http.Request) {
 	// See the mobile ListSystems handler for the rationale: correlated
 	// subquery so the (system_id, created_at DESC) index is used for each
@@ -186,11 +196,14 @@ func (h *Handlers) ListSystems(w http.ResponseWriter, r *http.Request) {
 		        s.name,
 		        s.suburb,
 		        (s.approved_at IS NULL) AS is_pending,
+		        sc.last_ping_at         AS last_ping_at,
+		        sc.connected_at         AS connected_at,
 		        (SELECT MAX(m.created_at)
 		           FROM messages m
 		          WHERE m.system_id = s.id
 		            AND m.deleted_at IS NULL) AS last_message_at
 		 FROM systems s
+		 LEFT JOIN system_connections sc ON sc.system_id = s.id
 		 WHERE s.deleted_at IS NULL
 		 ORDER BY (s.approved_at IS NULL) DESC, s.name`)
 	if err != nil {
@@ -228,6 +241,135 @@ func (h *Handlers) MajorIncidents(w http.ResponseWriter, r *http.Request) {
 		data = append(data, row)
 	}
 	writeJSON(w, http.StatusOK, data)
+}
+
+// ListCapcodes returns the full capcode catalogue, paginated. Public read-
+// only — anyone can browse what we're decoding. Supports ?search=, ?agency_id=,
+// ?page=, ?per_page=. Same shape as the mobile endpoint so the web and the
+// app can share a TypeScript type.
+func (h *Handlers) ListCapcodes(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	perPage, _ := strconv.Atoi(q.Get("per_page"))
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 50
+	}
+	if perPage > 2500 {
+		perPage = 2500
+	}
+
+	where := "c.deleted_at IS NULL"
+	args := []any{}
+	argIdx := 1
+	if agencyID := q.Get("agency_id"); agencyID != "" {
+		where += " AND c.agency_id = $" + strconv.Itoa(argIdx)
+		args = append(args, agencyID)
+		argIdx++
+	}
+	if search := q.Get("search"); search != "" {
+		where += " AND (c.alias ILIKE $" + strconv.Itoa(argIdx) +
+			" OR c.address ILIKE $" + strconv.Itoa(argIdx) +
+			" OR a.agency ILIKE $" + strconv.Itoa(argIdx) + ")"
+		args = append(args, "%"+search+"%")
+		argIdx++
+	}
+
+	offset := (page - 1) * perPage
+	args = append(args, perPage+1, offset)
+	rows, err := h.db.QueryxContext(r.Context(),
+		`SELECT c.id, c.address, c.alias, c.icon, c.colour, c.agency_id,
+		        a.agency AS agency_name
+		 FROM capcodes c
+		 LEFT JOIN agencies a ON a.id = c.agency_id
+		 WHERE `+where+`
+		 ORDER BY (c.alias IS NULL OR c.alias = '') ASC, c.alias ASC, c.address ASC
+		 LIMIT $`+strconv.Itoa(argIdx)+` OFFSET $`+strconv.Itoa(argIdx+1),
+		args...)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	data := []map[string]any{}
+	for rows.Next() {
+		row := make(map[string]any)
+		rows.MapScan(row)
+		cleanMapScan(row)
+		data = append(data, row)
+	}
+	hasMore := len(data) > perPage
+	if hasMore {
+		data = data[:perPage]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data":     data,
+		"page":     page,
+		"per_page": perPage,
+		"has_more": hasMore,
+	})
+}
+
+// UnknownCapcodes lists addresses that have shown up in recent messages but
+// either don't have a capcodes row at all OR have a row with no alias. These
+// are what the community can help us fill in. Default window: last 30 days.
+// Result ordered by message_count DESC so the most-seen unknowns are first.
+func (h *Handlers) UnknownCapcodes(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	days, _ := strconv.Atoi(q.Get("days"))
+	if days < 1 || days > 365 {
+		days = 30
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit < 1 || limit > 1000 {
+		limit = 200
+	}
+
+	rows, err := h.db.QueryxContext(r.Context(), `
+		SELECT
+		    COALESCE(c.id, 0)::bigint AS capcode_id,
+		    COALESCE(c.address, m.address) AS address,
+		    c.alias,
+		    a.agency AS agency_name,
+		    COUNT(m.id)::bigint AS message_count,
+		    MAX(m.created_at) AS last_seen_at
+		  FROM messages m
+		  LEFT JOIN capcodes c ON c.id = m.capcode_id
+		  LEFT JOIN agencies a ON a.id = c.agency_id
+		 WHERE m.deleted_at IS NULL
+		   AND m.created_at >= NOW() - ($1 || ' days')::interval
+		   AND (m.capcode_id IS NULL OR c.alias IS NULL OR TRIM(c.alias) = '')
+		 GROUP BY c.id, c.address, m.address, c.alias, a.agency
+		 ORDER BY message_count DESC, last_seen_at DESC
+		 LIMIT $2`, strconv.Itoa(days), limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	data := []map[string]any{}
+	for rows.Next() {
+		row := make(map[string]any)
+		rows.MapScan(row)
+		cleanMapScan(row)
+		// Normalise the sentinel 0 → null so clients can distinguish "no
+		// capcode row" from "capcode row with id 0".
+		if id, ok := row["capcode_id"].(int64); ok && id == 0 {
+			row["capcode_id"] = nil
+		}
+		data = append(data, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": data,
+		"meta": map[string]any{
+			"window_days": days,
+			"limit":       limit,
+		},
+	})
 }
 
 // Stations returns NSW emergency service stations (RFS, FRNSW, police,

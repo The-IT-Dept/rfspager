@@ -1,5 +1,5 @@
-import { useQuery, useInfiniteQuery } from "@tanstack/react-query"
-import { api } from "../services/api-client"
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { api, fetchUnknownCapcodes, type CapcodeSuggestionInput } from "../services/api-client"
 
 export function useAgencies() {
   return useQuery({
@@ -23,5 +23,32 @@ export function useCapcodes(params: { search?: string; agencyId?: number } = {})
     initialPageParam: 1,
     getNextPageParam: (lastPage) =>
       lastPage.page < lastPage.total_pages ? lastPage.page + 1 : undefined,
+  })
+}
+
+export function useUnknownCapcodes() {
+  return useQuery({
+    queryKey: ["capcodes-unknown"],
+    queryFn: () => fetchUnknownCapcodes(30, 200),
+    staleTime: 2 * 60 * 1000,
+  })
+}
+
+export function useMyCapcodeSuggestions() {
+  return useQuery({
+    queryKey: ["capcode-suggestions-mine"],
+    queryFn: () => api.capcodeSuggestions.listMine(),
+    staleTime: 60 * 1000,
+  })
+}
+
+export function useCreateCapcodeSuggestion() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: CapcodeSuggestionInput) => api.capcodeSuggestions.create(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["capcodes-unknown"] })
+      qc.invalidateQueries({ queryKey: ["capcode-suggestions-mine"] })
+    },
   })
 }

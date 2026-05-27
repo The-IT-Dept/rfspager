@@ -448,38 +448,80 @@ func (s *Store) ApproveCapcodeSuggestion(ctx context.Context, id int64) (int64, 
 		return 0, err
 	}
 
-	// Create agency
-	var agencyID int64
+	address, _ := suggestion["address"].(string)
+	alias, _ := suggestion["alias"].(string)
 	agencyName, _ := suggestion["agency"].(string)
-	err = s.db.QueryRowContext(ctx,
-		`INSERT INTO agencies (agency, created_at, updated_at) VALUES ($1, NOW(), NOW())
-		 ON CONFLICT (agency) DO UPDATE SET agency = EXCLUDED.agency RETURNING id`, agencyName).Scan(&agencyID)
-	if err != nil {
-		return 0, err
+	icon, _ := suggestion["icon"].(string)
+	colour, _ := suggestion["colour"].(string)
+
+	// Resolve / upsert the agency only if a name was provided. Empty agency
+	// is valid for an amendment that only touches the alias.
+	var agencyID *int64
+	if agencyName != "" {
+		var aid int64
+		err = s.db.QueryRowContext(ctx,
+			`INSERT INTO agencies (agency, created_at, updated_at) VALUES ($1, NOW(), NOW())
+			 ON CONFLICT (agency) DO UPDATE SET agency = EXCLUDED.agency RETURNING id`,
+			agencyName).Scan(&aid)
+		if err != nil {
+			return 0, err
+		}
+		agencyID = &aid
 	}
 
-	// Create capcode
-	icon, _ := suggestion["icon"].(string)
-	if icon == "" {
-		icon = "fas fa-broadcast-tower"
-	}
-	colour, _ := suggestion["colour"].(string)
-	if colour == "" {
-		colour = "#3490dc"
+	// If the suggestion targets an existing capcode (an amendment), UPDATE.
+	// Otherwise INSERT a new one.
+	var existingID int64
+	if v, ok := suggestion["capcode_id"]; ok && v != nil {
+		switch t := v.(type) {
+		case int64:
+			existingID = t
+		case int:
+			existingID = int64(t)
+		case float64:
+			existingID = int64(t)
+		}
 	}
 
 	var capcodeID int64
-	err = s.db.QueryRowContext(ctx,
-		`INSERT INTO capcodes (address, alias, agency_id, icon, colour, "ignore", created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, false, NOW(), NOW()) RETURNING id`,
-		suggestion["address"], suggestion["alias"], agencyID, icon, colour).Scan(&capcodeID)
-	if err != nil {
-		return 0, err
+	if existingID > 0 {
+		// Amendment — only overwrite fields the user actually supplied. The
+		// COALESCE with NULLIF keeps unchanged columns intact.
+		err = s.db.QueryRowContext(ctx, `
+			UPDATE capcodes
+			   SET alias     = COALESCE(NULLIF($2, ''), alias),
+			       agency_id = COALESCE($3, agency_id),
+			       icon      = COALESCE(NULLIF($4, ''), icon),
+			       colour    = COALESCE(NULLIF($5, ''), colour),
+			       updated_at = NOW()
+			 WHERE id = $1
+			 RETURNING id`,
+			existingID, alias, agencyID, icon, colour).Scan(&capcodeID)
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		// New capcode — agency is required.
+		if agencyID == nil {
+			return 0, fmt.Errorf("agency is required when creating a new capcode")
+		}
+		if icon == "" {
+			icon = "fas fa-broadcast-tower"
+		}
+		if colour == "" {
+			colour = "#3490dc"
+		}
+		err = s.db.QueryRowContext(ctx, `
+			INSERT INTO capcodes (address, alias, agency_id, icon, colour, "ignore", created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, false, NOW(), NOW())
+			RETURNING id`,
+			address, alias, *agencyID, icon, colour).Scan(&capcodeID)
+		if err != nil {
+			return 0, err
+		}
 	}
 
-	// Delete suggestion
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM capcode_suggestions WHERE id = $1`, id)
-
 	return capcodeID, nil
 }
 

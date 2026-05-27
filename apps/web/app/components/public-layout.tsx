@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 const NAV_LINKS = [
   { label: "Pager", path: "/pager" },
   { label: "Map", path: "/map" },
+  { label: "Capcodes", path: "/capcodes" },
   { label: "Systems", path: "/systems" },
 ];
 
@@ -65,7 +66,10 @@ export function PublicLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const isToolPage =
-    location.pathname === "/pager" || location.pathname === "/map" || location.pathname === "/systems";
+    location.pathname === "/pager" ||
+    location.pathname === "/map" ||
+    location.pathname === "/systems" ||
+    location.pathname === "/capcodes";
   const { user, avatarHash, logout } = usePublicAuth();
   const [menuOpen, setMenuOpen] = useState(false);
 

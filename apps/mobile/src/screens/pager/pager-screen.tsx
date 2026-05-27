@@ -149,7 +149,7 @@ export const PagerScreen: FC =
             </Text>
             <TouchableOpacity
               style={styles.actionButton}
-              onPress={() => router.push("/(tabs)/settings/capcodes")}
+              onPress={() => router.push("/(tabs)/capcodes")}
             >
               <Text style={styles.actionButtonText}>Select Capcodes</Text>
             </TouchableOpacity>
@@ -169,7 +169,7 @@ export const PagerScreen: FC =
             {pagerFilter && (
               <TouchableOpacity
                 style={styles.actionButton}
-                onPress={() => router.push("/(tabs)/settings/capcodes")}
+                onPress={() => router.push("/(tabs)/capcodes")}
               >
                 <Text style={styles.actionButtonText}>Adjust Capcodes</Text>
               </TouchableOpacity>

@@ -118,14 +118,19 @@ func (b *SSEBroker) Run(ctx context.Context, wakeCh <-chan string) {
 func (b *SSEBroker) broadcastByID(ctx context.Context, id int64) {
 	row := b.db.QueryRowxContext(ctx,
 		`SELECT m.id, m.address, m.message, m.created_at,
-		 c.alias as capcode_alias, c.icon as capcode_icon, c.colour as capcode_colour,
-		 a.agency as agency_name
-		 FROM messages m
-		 LEFT JOIN capcodes c ON c.id = m.capcode_id
-		 LEFT JOIN agencies a ON a.id = c.agency_id
-		 WHERE m.id = $1
-		   AND m.deleted_at IS NULL
-		   AND m.capcode_id IS NOT NULL`, id)
+		        c.alias  AS capcode_alias,
+		        c.icon   AS capcode_icon,
+		        c.colour AS capcode_colour,
+		        a.agency AS agency_name,
+		        s.system_id AS system_uuid,
+		        s.name      AS system_name
+		   FROM messages m
+		   LEFT JOIN capcodes c ON c.id = m.capcode_id
+		   LEFT JOIN agencies a ON a.id = c.agency_id
+		   LEFT JOIN systems  s ON s.id = m.system_id AND s.deleted_at IS NULL
+		  WHERE m.id = $1
+		    AND m.deleted_at IS NULL
+		    AND m.capcode_id IS NOT NULL`, id)
 
 	result := make(map[string]any)
 	if err := row.MapScan(result); err != nil {

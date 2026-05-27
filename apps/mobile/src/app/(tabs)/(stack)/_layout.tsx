@@ -81,21 +81,31 @@ export default function AppStackLayout() {
         name="settings/subscription"
         options={{ title: "Subscription", presentation: "modal" }}
       />
+      {/* Capcodes — top-level (out of settings) */}
+      <Stack.Screen name="capcodes/index" options={{ title: "Capcodes", headerLeft: () => <DrawerToggle /> }} />
+      <Stack.Screen name="capcodes/suggest" options={{ title: "Suggest Capcode", presentation: "modal" }} />
+      {/* Legacy settings/capcodes paths kept for back-compat */}
       <Stack.Screen name="settings/capcodes" options={{ title: "Capcodes" }} />
       <Stack.Screen name="settings/capcode-detail" options={{ title: "Agency Detail" }} />
+
+      {/* Alert Zones — top-level (out of settings) */}
       <Stack.Screen
-        name="settings/alertzones"
+        name="alertzones/index"
         options={{
           title: "Alert Zones",
+          headerLeft: () => <DrawerToggle />,
           headerRight: () => (
             <TouchableOpacity
-              onPress={() => router.push("/(tabs)/(stack)/settings/alertzone-create" as any)}
+              onPress={() => router.push("/(tabs)/(stack)/alertzones/create" as any)}
             >
               <Ionicons name="add" size={24} color={theme.colors.primary} />
             </TouchableOpacity>
           ),
         }}
       />
+      <Stack.Screen name="alertzones/create" options={{ title: "Create Alert Zone" }} />
+      {/* Legacy settings/alertzone* paths kept for back-compat */}
+      <Stack.Screen name="settings/alertzones" options={{ title: "Alert Zones" }} />
       <Stack.Screen name="settings/alertzone-create" options={{ title: "Create Alert Zone" }} />
       <Stack.Screen name="message/[id]" options={{ title: "Message" }} />
       <Stack.Screen name="incident/[id]" options={{ title: "Incident" }} />

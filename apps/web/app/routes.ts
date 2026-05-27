@@ -7,6 +7,7 @@ export default [
     route("pager", "routes/public/pager.tsx"),
     route("map", "routes/public/map.tsx"),
     route("systems", "routes/public/systems.tsx"),
+    route("capcodes", "routes/public/capcodes.tsx"),
     route("login", "routes/public/login.tsx"),
     route("register", "routes/public/register.tsx"),
     route("subscribe", "routes/public/subscribe.tsx"),

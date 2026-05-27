@@ -1,12 +1,22 @@
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router";
 import type { Route } from "./+types/systems";
+import { SpectrumWaterfall } from "~/components/spectrum-waterfall";
 
 const API_BASE = process.env.API_URL || "http://localhost:8080";
-const ONLINE_THRESHOLD_MINUTES = 30;
+// The receiver agent pings every 30s. Two missed pings = stale. The
+// admin UI uses 90s; we match that.
+const PING_STALE_SECONDS = 90;
+const heading = "font-[family-name:var(--font-heading)]";
 
 interface System {
   uuid: string;
   name: string;
+  suburb: string | null;
+  is_pending: boolean;
   last_message_at: string | null;
+  last_ping_at: string | null;
+  connected_at: string | null;
 }
 
 export async function loader() {
@@ -20,19 +30,26 @@ export async function loader() {
 
 export function meta() {
   return [
-    { title: "Systems — RFSPager" },
+    { title: "Receiver Network — RFSPager" },
     {
       name: "description",
       content:
-        "Status of pager systems feeding RFSPager. Online/offline state and time since the last message per system.",
+        "Live status of the SDR receivers feeding RFSPager. Pick a receiver to watch its real-time RF spectrum.",
     },
   ];
 }
 
-function isOnline(lastMessageAt: string | null): boolean {
-  if (!lastMessageAt) return false;
-  const diffMs = Date.now() - new Date(lastMessageAt).getTime();
-  return diffMs <= ONLINE_THRESHOLD_MINUTES * 60_000;
+/**
+ * A receiver is "online" when its WebSocket is currently pinging. We
+ * deliberately do NOT fall back to last_message_at — a receiver that's
+ * up but sitting on a quiet channel is still online, and a receiver
+ * whose backlog happens to include a recent message but whose socket
+ * has dropped is offline.
+ */
+function isOnline(sys: System): boolean {
+  if (!sys.last_ping_at) return false;
+  const diffMs = Date.now() - new Date(sys.last_ping_at).getTime();
+  return diffMs <= PING_STALE_SECONDS * 1000;
 }
 
 function timeAgo(dateStr: string | null): string {
@@ -42,74 +59,258 @@ function timeAgo(dateStr: string | null): string {
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 export default function SystemsPage({ loaderData }: Route.ComponentProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const systems: System[] = loaderData?.systems || [];
-  const onlineCount = systems.filter((s) => isOnline(s.last_message_at)).length;
+  const onlineCount = systems.filter((s) => isOnline(s)).length;
+
+  // Filter to only approved (non-pending) systems for the public list; we
+  // still surface a small "pending" badge under the title.
+  const visibleSystems = useMemo(
+    () => systems.filter((s) => !s.is_pending),
+    [systems],
+  );
+
+  const [selectedUuid, setSelectedUuid] = useState<string | null>(
+    () => searchParams.get("uuid") || visibleSystems[0]?.uuid || null,
+  );
+  const [search, setSearch] = useState("");
+
+  // Pick a default selection once data is in.
+  useEffect(() => {
+    if (!selectedUuid && visibleSystems.length > 0) {
+      setSelectedUuid(visibleSystems[0].uuid);
+    }
+  }, [selectedUuid, visibleSystems]);
+
+  // Sync selected → URL so refresh + share keep state.
+  useEffect(() => {
+    const p = new URLSearchParams(searchParams);
+    if (selectedUuid) p.set("uuid", selectedUuid);
+    else p.delete("uuid");
+    setSearchParams(p, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedUuid]);
+
+  const filteredSystems = useMemo(() => {
+    if (!search.trim()) return visibleSystems;
+    const s = search.trim().toLowerCase();
+    return visibleSystems.filter(
+      (sys) =>
+        sys.name.toLowerCase().includes(s) ||
+        (sys.suburb ?? "").toLowerCase().includes(s) ||
+        sys.uuid.toLowerCase().includes(s),
+    );
+  }, [visibleSystems, search]);
+
+  const selected = systems.find((s) => s.uuid === selectedUuid) || null;
+  const pendingCount = systems.length - visibleSystems.length;
 
   return (
-    <div className="max-w-[1400px] mx-auto w-full px-6 py-10">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Systems</h1>
-        <p className="mt-2 text-sm text-gray-500">
-          {systems.length} total · {onlineCount} online · {systems.length - onlineCount} offline
-        </p>
-      </div>
-
-      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="grid grid-cols-12 px-6 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 bg-gray-50 border-b border-gray-200">
-          <div className="col-span-5">Name</div>
-          <div className="col-span-5">UUID</div>
-          <div className="col-span-2 text-right">Last message</div>
+    <div className="flex flex-1 overflow-hidden bg-gray-50 h-[calc(100dvh-4rem)]">
+      {/* ——— Sidebar ——— */}
+      <aside className="w-72 lg:w-80 bg-white border-r border-gray-200 flex flex-col shrink-0 hidden md:flex">
+        <div className="px-5 py-4 border-b border-gray-100">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">
+            Receiver network
+          </p>
+          <h1 className={`${heading} text-xl font-extrabold text-gray-900 tracking-tight`}>
+            Our receivers
+          </h1>
+          <div className="flex items-center gap-3 mt-3 text-xs">
+            <span className="inline-flex items-center gap-1.5 text-emerald-700 font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              {onlineCount} online
+            </span>
+            <span className="text-gray-300">·</span>
+            <span className="text-gray-500">{visibleSystems.length - onlineCount} offline</span>
+            {pendingCount > 0 && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span className="text-gray-400">{pendingCount} pending</span>
+              </>
+            )}
+          </div>
         </div>
 
-        {systems.length === 0 ? (
-          <div className="px-6 py-16 text-center">
-            <p className="text-base font-semibold text-gray-900">No systems yet</p>
-            <p className="mt-1 text-sm text-gray-500">Systems will appear here once they're added.</p>
+        <div className="px-3 py-3 border-b border-gray-100">
+          <div className="relative">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search receivers…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#F7241D]/15 focus:border-[#F7241D] outline-none transition-all"
+            />
           </div>
-        ) : (
-          <ul>
-            {systems.map((s, idx) => {
-              const online = isOnline(s.last_message_at);
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-2 pb-4 pt-2 space-y-px">
+          {filteredSystems.length === 0 ? (
+            <div className="px-3 py-8 text-center text-sm text-gray-400">
+              No receivers match.
+            </div>
+          ) : (
+            filteredSystems.map((s) => {
+              const online = isOnline(s);
+              const active = s.uuid === selectedUuid;
               return (
-                <li
+                <button
                   key={s.uuid}
-                  className={`grid grid-cols-12 items-center px-6 py-4 ${
-                    idx === systems.length - 1 ? "" : "border-b border-gray-100"
-                  } hover:bg-gray-50 transition-colors`}
+                  onClick={() => setSelectedUuid(s.uuid)}
+                  className={`w-full text-left px-3 py-2.5 rounded-md flex items-start gap-3 transition-colors ${
+                    active ? "bg-gray-900 text-white" : "hover:bg-gray-50"
+                  }`}
                 >
-                  <div className="col-span-5 flex items-center gap-3 min-w-0">
+                  <span className="relative mt-1 flex w-2 h-2 shrink-0">
+                    {online && !active && (
+                      <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-50 animate-ping" />
+                    )}
                     <span
-                      className={`inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                        online ? "bg-emerald-500" : "bg-gray-300"
+                      className={`relative inline-flex w-2 h-2 rounded-full ${
+                        online ? "bg-emerald-500" : active ? "bg-white/40" : "bg-gray-300"
                       }`}
-                      aria-label={online ? "Online" : "Offline"}
                     />
-                    <span className="text-sm font-semibold text-gray-900 truncate">
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-sm font-semibold truncate ${active ? "text-white" : "text-gray-900"}`}>
                       {s.name || "Unnamed system"}
-                    </span>
-                    <span
-                      className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${
-                        online ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"
+                    </p>
+                    <p
+                      className={`text-[11px] truncate mt-0.5 ${
+                        active ? "text-white/60" : "text-gray-400"
                       }`}
                     >
-                      {online ? "Online" : "Offline"}
-                    </span>
+                      {s.suburb ? `${s.suburb} · ` : ""}
+                      {timeAgo(s.last_message_at)}
+                    </p>
                   </div>
-                  <div className="col-span-5 text-xs font-mono text-gray-500 truncate">{s.uuid}</div>
-                  <div className="col-span-2 text-sm text-gray-700 text-right">
-                    {timeAgo(s.last_message_at)}
-                  </div>
-                </li>
+                </button>
               );
-            })}
-          </ul>
+            })
+          )}
+        </div>
+      </aside>
+
+      {/* ——— Detail ——— */}
+      <main className="flex-1 min-w-0 overflow-y-auto">
+        {selected ? (
+          <SystemDetail key={selected.uuid} system={selected} />
+        ) : (
+          <div className="h-full flex items-center justify-center text-sm text-gray-400 px-6">
+            Pick a receiver on the left.
+          </div>
         )}
+      </main>
+    </div>
+  );
+}
+
+function SystemDetail({ system }: { system: System }) {
+  const online = isOnline(system);
+  return (
+    <div className="px-4 md:px-8 py-6 md:py-8 max-w-5xl mx-auto">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-end gap-4 md:gap-8 mb-6">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-2">
+            <div
+              className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-[0.12em] ${
+                online ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${online ? "bg-emerald-500 animate-pulse" : "bg-gray-400"}`} />
+              {online ? "ONLINE" : "OFFLINE"}
+            </div>
+            {system.suburb && (
+              <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">
+                {system.suburb}
+              </span>
+            )}
+          </div>
+          <h2 className={`${heading} text-3xl md:text-4xl font-extrabold text-gray-900 leading-tight tracking-tight`}>
+            {system.name || "Unnamed receiver"}
+          </h2>
+          <p className="text-xs text-gray-400 mt-1.5 font-mono break-all">{system.uuid}</p>
+        </div>
       </div>
+
+      {/* Spectrum */}
+      <div className="rounded-2xl bg-[#0a0a0c] ring-1 ring-white/5 overflow-hidden shadow-xl mb-6">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-black/40">
+          <div className="flex items-center gap-2 text-[11px] font-mono text-white/60">
+            <span className="text-white/40">RF spectrum</span>
+            <span className="text-white/20">·</span>
+            <span className={online ? "text-emerald-400" : "text-white/40"}>
+              {online ? "live" : "no signal"}
+            </span>
+          </div>
+          <span className="text-[10px] text-white/30 font-mono uppercase tracking-wider">
+            real-time SDR
+          </span>
+        </div>
+        <div className="p-4">
+          <SpectrumWaterfall
+            url={`/api/public/systems/${system.uuid}/spectrum`}
+            height={360}
+          />
+        </div>
+      </div>
+
+      {/* Connection info */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+        <InfoCard
+          label="Status"
+          value={online ? "Online" : "Offline"}
+          accent={online ? "#10b981" : "#9ca3af"}
+        />
+        <InfoCard
+          label="Last ping"
+          value={system.last_ping_at ? timeAgo(system.last_ping_at) : "Never"}
+          accent={online ? "#10b981" : undefined}
+        />
+        <InfoCard
+          label="Last message"
+          value={system.last_message_at ? timeAgo(system.last_message_at) : "—"}
+        />
+      </div>
+
+      {/* Transparency footer */}
+      <div className="rounded-xl bg-white border border-gray-100 px-5 py-4 text-sm text-gray-600 leading-relaxed">
+        <p className="font-semibold text-gray-900 mb-1">What you're looking at</p>
+        <p>
+          This is a live RF spectrum from one of our software-defined-radio
+          receivers tuned to the NSW Public Safety Network. Bright vertical
+          streaks are radio transmissions — pages, voice channels, control
+          bursts. Our decoder pulls the POCSAG pager messages out of this raw
+          signal and pushes them to the feed.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function InfoCard({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent?: string;
+}) {
+  return (
+    <div className="rounded-xl bg-white border border-gray-100 px-4 py-3">
+      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{label}</p>
+      <p className="text-base font-semibold text-gray-900" style={accent ? { color: accent } : undefined}>
+        {value}
+      </p>
     </div>
   );
 }

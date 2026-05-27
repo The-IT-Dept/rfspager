@@ -237,6 +237,9 @@ func main() {
 			r.Get("/major-incidents", publicHandlers.MajorIncidents)
 			r.Get("/systems", publicHandlers.ListSystems)
 			r.Get("/stations", publicHandlers.Stations)
+			r.Get("/capcodes", publicHandlers.ListCapcodes)
+			r.Get("/capcodes/unknown", publicHandlers.UnknownCapcodes)
+			r.Get("/systems/{uuid}/spectrum", public.SpectrumSSE(database.Conn(), hub))
 			r.Get("/events", publicSSE.Handler)
 		})
 
