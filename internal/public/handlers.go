@@ -2,8 +2,10 @@ package public
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -226,6 +228,100 @@ func (h *Handlers) MajorIncidents(w http.ResponseWriter, r *http.Request) {
 		data = append(data, row)
 	}
 	writeJSON(w, http.StatusOK, data)
+}
+
+// Stations returns NSW emergency service stations (RFS, FRNSW, police,
+// ambulance, SES) as a GeoJSON FeatureCollection so the map can use it
+// directly as a Mapbox/MapLibre source. Filtered client-side by category
+// toggle. ~2,800 features for all-NSW, ~600 KB JSON — fine to ship in one
+// response. Optional ?categories=rfs,police narrows the result.
+//
+// Data sourced from:
+//   - Geoscience Australia Emergency Management Facilities Database (CC-BY 4.0)
+//   - Fire and Rescue NSW station GeoRSS feed
+//
+// Attribution is required by both upstream licences and is included in the
+// response envelope.
+func (h *Handlers) Stations(w http.ResponseWriter, r *http.Request) {
+	q := `SELECT id, source, category, name, operator, address, suburb,
+	             postcode, status, lat, lng, revised_at
+	      FROM emergency_stations
+	      WHERE state = 'NSW'`
+	args := []any{}
+	if cat := r.URL.Query().Get("categories"); cat != "" {
+		parts := strings.Split(cat, ",")
+		clean := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				clean = append(clean, p)
+			}
+		}
+		if len(clean) > 0 {
+			placeholders := make([]string, len(clean))
+			for i, p := range clean {
+				args = append(args, p)
+				placeholders[i] = fmt.Sprintf("$%d", i+1)
+			}
+			q += " AND category IN (" + strings.Join(placeholders, ",") + ")"
+		}
+	}
+	q += " ORDER BY category, name"
+
+	rows, err := h.db.QueryxContext(r.Context(), q, args...)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	features := []map[string]any{}
+	for rows.Next() {
+		row := make(map[string]any)
+		if err := rows.MapScan(row); err != nil {
+			continue
+		}
+		cleanMapScan(row)
+
+		lat, _ := asFloat(row["lat"])
+		lng, _ := asFloat(row["lng"])
+		delete(row, "lat")
+		delete(row, "lng")
+
+		features = append(features, map[string]any{
+			"type":       "Feature",
+			"id":         row["id"],
+			"geometry":   map[string]any{"type": "Point", "coordinates": []float64{lng, lat}},
+			"properties": row,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"type":     "FeatureCollection",
+		"features": features,
+		"meta": map[string]any{
+			"attribution": "Stations sourced from Geoscience Australia Emergency Management Facilities Database (CC-BY 4.0) and Fire and Rescue NSW.",
+			"count":       len(features),
+		},
+	})
+}
+
+// asFloat coerces a value (which might come back as string, []byte, or float)
+// to a float64. Postgres NUMERIC columns are decoded as []byte by sqlx.
+func asFloat(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case float32:
+		return float64(x), true
+	case string:
+		f, err := strconv.ParseFloat(x, 64)
+		return f, err == nil
+	case []byte:
+		f, err := strconv.ParseFloat(string(x), 64)
+		return f, err == nil
+	}
+	return 0, false
 }
 
 // cleanMapScan converts []byte values to strings for JSON encoding.

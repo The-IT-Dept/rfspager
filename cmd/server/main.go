@@ -236,6 +236,7 @@ func main() {
 			r.Get("/agencies", publicHandlers.ListAgencies)
 			r.Get("/major-incidents", publicHandlers.MajorIncidents)
 			r.Get("/systems", publicHandlers.ListSystems)
+			r.Get("/stations", publicHandlers.Stations)
 			r.Get("/events", publicSSE.Handler)
 		})
 

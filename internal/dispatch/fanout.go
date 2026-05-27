@@ -23,10 +23,15 @@ const reconcileWindow = time.Hour
 //
 //   advisory lock → look up message + capcode + agency
 //                 → union recipients from subscriptions and alertzones
-//                 → INSERT into notifications, pre-computed title/body.
+//                 → INSERT into notifications, pre-computed title/body
+//                 → stamp messages.fanned_out_at so reconcile won't retry.
 //
 // The AFTER INSERT trigger on notifications then fires NOTIFY rfs_dispatch,
 // waking the dispatch workers.
+//
+// `fanned_out_at` is set independent of recipient count — messages with no
+// eligible Pro subscribers also count as "done" and must not be reconciled
+// again every minute.
 const fanoutSQL = `
 WITH locked AS (
     SELECT pg_try_advisory_xact_lock($1::int4, $2::int4) AS got
@@ -63,36 +68,47 @@ recipients AS (
               ST_SetSRID(ST_MakePoint(msg.lng::double precision, msg.lat::double precision), 4326)::geography,
               az.radius * 1000
             )
+),
+inserted AS (
+    INSERT INTO notifications
+        (id, type, notifiable_type, notifiable_id, data, message_id, push_required, created_at, updated_at)
+    SELECT
+        gen_random_uuid(),
+        'App\Notifications\PagerNotification',
+        'App\Models\User',
+        r.user_id,
+        json_build_object(
+            'id',         msg.id,
+            'system_id',  msg.system_id,
+            'capcode_id', msg.capcode_id,
+            'address',    msg.address,
+            'message',    msg.message,
+            'created_at', msg.created_at,
+            'title', COALESCE(
+                NULLIF(msg.agency_name, '') || ' | ' || NULLIF(msg.capcode_alias, ''),
+                'Capcode ' || msg.address
+            ),
+            'body', msg.message
+        )::text,
+        msg.id,
+        true,
+        NOW(), NOW()
+      FROM recipients r, msg
+     WHERE NOT EXISTS (
+            SELECT 1 FROM notifications n
+             WHERE n.message_id = msg.id AND n.notifiable_id = r.user_id
+           )
+    RETURNING notifiable_id
+),
+marked AS (
+    UPDATE messages
+       SET fanned_out_at = NOW()
+     WHERE id = $2
+       AND (SELECT got FROM locked)
+       AND fanned_out_at IS NULL
+    RETURNING 1
 )
-INSERT INTO notifications
-    (id, type, notifiable_type, notifiable_id, data, message_id, push_required, created_at, updated_at)
-SELECT
-    gen_random_uuid(),
-    'App\Notifications\PagerNotification',
-    'App\Models\User',
-    r.user_id,
-    json_build_object(
-        'id',         msg.id,
-        'system_id',  msg.system_id,
-        'capcode_id', msg.capcode_id,
-        'address',    msg.address,
-        'message',    msg.message,
-        'created_at', msg.created_at,
-        'title', COALESCE(
-            NULLIF(msg.agency_name, '') || ' | ' || NULLIF(msg.capcode_alias, ''),
-            'Capcode ' || msg.address
-        ),
-        'body', msg.message
-    )::text,
-    msg.id,
-    true,
-    NOW(), NOW()
-  FROM recipients r, msg
- WHERE NOT EXISTS (
-        SELECT 1 FROM notifications n
-         WHERE n.message_id = msg.id AND n.notifiable_id = r.user_id
-       )
-RETURNING notifiable_id;
+SELECT notifiable_id FROM inserted;
 `
 
 // FanoutWorker turns "a new message arrived" events into notification rows.
@@ -162,20 +178,20 @@ func (w *FanoutWorker) processMessage(ctx context.Context, messageID int64) {
 
 // reconcile catches messages that didn't trigger a NOTIFY we received
 // (typically because all pods were restarting). Runs on a slow tick; the
-// partial-index plan keeps this cheap when there's nothing to do.
+// partial-index `idx_messages_fanout_pending` keeps this cheap when there's
+// nothing to do.
 //
-// We only consider a message an "orphan" if it could plausibly have
-// recipients — i.e. it has a known capcode OR usable coords. Messages with
-// neither are unroutable by design and would re-fail the recipient-lookup
-// CTE every minute forever, polluting logs.
+// A message is considered done as soon as `fanned_out_at` is set — recipient
+// count is irrelevant. Without that flag, messages with zero eligible Pro
+// subscribers would be re-processed every minute forever.
 func (w *FanoutWorker) reconcile(ctx context.Context) {
 	const q = `
 		SELECT m.id
 		  FROM messages m
-		 WHERE m.created_at > NOW() - $1::interval
+		 WHERE m.fanned_out_at IS NULL
 		   AND m.deleted_at IS NULL
+		   AND m.created_at > NOW() - $1::interval
 		   AND (m.capcode_id IS NOT NULL OR (m.lat IS NOT NULL AND m.lng IS NOT NULL))
-		   AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.message_id = m.id)
 		 ORDER BY m.id
 		 LIMIT 500
 	`
