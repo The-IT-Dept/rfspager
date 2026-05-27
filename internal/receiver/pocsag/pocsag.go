@@ -143,6 +143,19 @@ func (d *Decoder) Feed(b bool) {
 
 func (d *Decoder) processBatch() {
 	for i, cw := range d.batch {
+		// Catch noisy idle codewords before BCH gets a chance to "correct"
+		// them into a phantom address. The idle pattern (0x7A89C197) is far
+		// from any plausible address/message codeword in Hamming space, so
+		// anything within 3 bits of idle is overwhelmingly likely to have
+		// started life as idle padding at the end of a real message.
+		// Without this guard, a 3-error idle codeword can BCH-correct into
+		// a "valid" address and the next noisy codeword gets appended as
+		// its message text — producing the OUR^j|UbL / 52r#H / :Y*X noise
+		// companions we see at end-of-burst.
+		if popcount32(cw^IdleCodeword) <= 3 {
+			d.flushPending()
+			continue
+		}
 		corrected, errors, ok := correctBCH(cw)
 		if !ok {
 			// Codeword is beyond BCH's 2-bit correction limit. Drop it
