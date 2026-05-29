@@ -478,11 +478,39 @@ export interface SystemDetail {
   }
 }
 
+export interface SystemEvent {
+  id: number
+  type: string
+  severity: "info" | "warning" | "error"
+  message: string
+  metadata: Record<string, any>
+  created_at: string
+}
+
 export const systems = {
   list: () => get<System[]>(`/systems`),
   mine: () => get<MySystem[]>(`/my-systems`),
   create: (body: CreateSystemInput) => post<MySystem>(`/systems`, body),
   get: (uuid: string) => get<SystemDetail>(`/systems/${uuid}`),
+  events: (uuid: string, limit = 200) =>
+    get<{ data: SystemEvent[] }>(`/systems/${uuid}/events?limit=${limit}`),
+  recentLogs: (uuid: string, limit = 200) =>
+    get<{ data: SystemLogLine[] }>(`/systems/${uuid}/logs/recent?limit=${limit}`),
+}
+
+export interface SystemLogLine {
+  ts: number
+  level: string
+  source: string | null
+  message: string
+  raw: Record<string, any> | null
+}
+
+/** SSE URL for the owner-only log stream. Build the full URL ourselves
+ *  because EventSource on RN takes a path; the token rides as a query
+ *  string parameter since RN's EventSource doesn't support custom headers. */
+export function systemLogStreamURL(uuid: string): string {
+  return `${getBaseUrl()}/api/v2/mobile/systems/${uuid}/logs`
 }
 
 // --- Photos ---

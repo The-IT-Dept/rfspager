@@ -85,6 +85,15 @@ func main() {
 		)
 	} else {
 		ws := wsclient.New(cfg.ServerURL, cfg.APIKey)
+
+		// From this point on, mirror every slog record to the WS as well as
+		// stdout. The hub persists them in system_logs (7-day retention) and
+		// fans them out to owner + admin viewers in real time. The WS client
+		// drops log frames if its send buffer is full, so this can't block
+		// the decode hot path.
+		base := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+		slog.SetDefault(slog.New(wsclient.NewLogShippingHandler(base, ws)))
+
 		wsDone := make(chan struct{})
 		go func() {
 			defer close(wsDone)

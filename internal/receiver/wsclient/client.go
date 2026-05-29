@@ -292,6 +292,29 @@ func (c *Client) SendSpectrum(centreHz, sampleRate uint32, bins []float32) {
 	})})
 }
 
+// LogFrame matches the server's LogPayload schema. The receiver assigns ts
+// (its own clock, unix milliseconds); the server records received_at itself.
+type LogFrame struct {
+	TS      int64          `json:"ts"`
+	Level   string         `json:"level,omitempty"`
+	Source  string         `json:"source,omitempty"`
+	Message string         `json:"message"`
+	Raw     map[string]any `json:"raw,omitempty"`
+}
+
+// SendLog ships a single log line over the WS for persistence + live fan-out
+// to owner + admin viewers. Best-effort: dropped if the send buffer is full
+// — we never want logging to block the decode hot path.
+func (c *Client) SendLog(level, source, message string, raw map[string]any) {
+	c.enqueue(Frame{Type: "log", Data: mustJSON(LogFrame{
+		TS:      time.Now().UnixMilli(),
+		Level:   level,
+		Source:  source,
+		Message: message,
+		Raw:     raw,
+	})})
+}
+
 // Welcomed blocks until the server has sent a welcome frame (or ctx done).
 func (c *Client) Welcomed(ctx context.Context) (Welcome, error) {
 	select {

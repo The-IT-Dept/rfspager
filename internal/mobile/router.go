@@ -6,9 +6,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jmoiron/sqlx"
 	"github.com/the-it-dept/rfspager/internal/iap"
+	"github.com/the-it-dept/rfspager/internal/recvhub"
 )
 
-func Router(db *sqlx.DB, jwtSecret, appleBundleID string, sseBroker *SSEBroker, iapHandler *iap.Handler) chi.Router {
+func Router(db *sqlx.DB, jwtSecret, appleBundleID string, sseBroker *SSEBroker, iapHandler *iap.Handler, hub *recvhub.Hub) chi.Router {
 	auth := NewAuthHandler(db, jwtSecret, appleBundleID)
 	h := NewHandlers(db)
 	sh := NewSystemHandlers(db)
@@ -80,6 +81,14 @@ func Router(db *sqlx.DB, jwtSecret, appleBundleID string, sseBroker *SSEBroker, 
 		r.Post("/systems", h.CreateSystem)
 		r.Get("/my-systems", h.MySystems)
 		r.Get("/systems/{uuid}", sh.GetSystem)
+		// Owner-only system history + logs. Registered here (inside the
+		// auth group) so the existing JWTUserAuth middleware covers them
+		// and chi's specificity ordering doesn't shadow GET /systems/{uuid}.
+		r.Get("/systems/{uuid}/events", SystemEvents(db))
+		r.Get("/systems/{uuid}/logs/recent", SystemLogsRecent(db, hub))
+		if hub != nil {
+			r.Get("/systems/{uuid}/logs", SystemLogSSE(db, hub))
+		}
 
 		// Photos
 		r.Get("/photos", h.ListPhotos)

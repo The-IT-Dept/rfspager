@@ -25,9 +25,18 @@ type Conn struct {
 	ws  *websocket.Conn
 	hub *Hub
 
-	sendCh   chan Frame
+	sendCh    chan Frame
 	closeOnce sync.Once
 	closed    chan struct{}
+
+	// connectedAt is when we received the hello; used to compute downtime
+	// on disconnect.
+	connectedAt time.Time
+
+	// emittedConnect tracks whether we wrote a `receiver_connected` event
+	// for this socket. Determines whether the deferred disconnect emitter
+	// fires a paired event.
+	emittedConnect bool
 
 	// OnPage is called for every well-formed page frame the client sends.
 	// The handler returns the ack status to ship back.
@@ -55,6 +64,22 @@ func (c *Conn) run(ctx context.Context, database *db.DB) {
 	defer func() {
 		_ = database.DeleteSystemConnection(context.Background(), c.SystemID, PodID)
 	}()
+	// Defer the receiver_disconnected event last so it lands even if other
+	// cleanup paths panic. Uses background context because r.Context() is
+	// already cancelled by the time defers run.
+	defer func() {
+		if !c.emittedConnect {
+			return
+		}
+		bg := context.Background()
+		uptime := time.Since(c.connectedAt).Round(time.Second)
+		EmitEvent(bg, database.Conn(), c.SystemID, EvtReceiverDisconnected, SeverityInfo,
+			"Receiver disconnected",
+			map[string]any{
+				"connected_at":      c.connectedAt,
+				"uptime_seconds":    int(uptime.Seconds()),
+			})
+	}()
 
 	// Read the first frame — must be hello.
 	hello, err := c.readHello(ctx)
@@ -77,6 +102,8 @@ func (c *Conn) run(ctx context.Context, database *db.DB) {
 		return
 	}
 
+	c.connectedAt = time.Now()
+
 	// Now that we own the row, register locally + push welcome.
 	c.hub.Register(c)
 	c.send(Frame{Type: "welcome", Data: mustJSON(WelcomePayload{
@@ -95,6 +122,26 @@ func (c *Conn) run(ctx context.Context, database *db.DB) {
 		"hostname", hello.Hostname,
 		"dongles", len(hello.Dongles),
 	)
+
+	// Event log: receiver_connected with the hardware fingerprint. The
+	// watchdog will subsequently emit receiver_online if this connect
+	// resolves a prior offline event.
+	dongleNames := make([]string, 0, len(hello.Dongles))
+	for _, d := range hello.Dongles {
+		dongleNames = append(dongleNames, d.Name)
+	}
+	EmitEvent(ctx, database.Conn(), c.SystemID, EvtReceiverConnected, SeverityInfo,
+		"Receiver connected",
+		map[string]any{
+			"version":  hello.Version,
+			"os":       hello.OS,
+			"arch":     hello.Arch,
+			"hostname": hello.Hostname,
+			"dongles":  dongleNames,
+		})
+	// Track that this socket emitted the connect event so the deferred
+	// disconnect emitter knows to fire its pair.
+	c.emittedConnect = true
 
 	// Start the write pump.
 	writePump := make(chan struct{})
@@ -186,6 +233,13 @@ func (c *Conn) handleFrame(ctx context.Context, database *db.DB, f Frame) {
 			return
 		}
 		c.hub.Spectrum.Publish(c.SystemID, sp.CentreHz, sp.SampleRate, sp.Bins)
+	case "log":
+		// Persist + fan out to live subscribers (owner / admin).
+		var lp LogPayload
+		if err := json.Unmarshal(f.Data, &lp); err != nil {
+			return
+		}
+		c.hub.Logs.Publish(ctx, c.SystemID, lp)
 	default:
 		slog.Warn("receiver sent unknown frame", "type", f.Type)
 	}

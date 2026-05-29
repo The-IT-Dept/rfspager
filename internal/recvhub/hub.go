@@ -11,6 +11,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/the-it-dept/rfspager/internal/db"
 	"github.com/the-it-dept/rfspager/internal/models"
+	"github.com/the-it-dept/rfspager/internal/notify"
 )
 
 // PingInterval is how often we expect receivers to ping. We bump
@@ -30,18 +31,25 @@ var PodID string
 type Hub struct {
 	db       *db.DB
 	listener *db.Listener
+	notifier *notify.Notifier
 
 	Spectrum *SpectrumBroker
+	Logs     *LogBroker
 
 	mu    sync.RWMutex
 	conns map[int64]*Conn // system_id → live conn on this pod
 }
+
+// SetNotifier wires a push notifier in. Optional — when nil the watchdog
+// still records online/offline events but skips the push.
+func (h *Hub) SetNotifier(n *notify.Notifier) { h.notifier = n }
 
 func New(database *db.DB, listener *db.Listener) (*Hub, error) {
 	return &Hub{
 		db:       database,
 		listener: listener,
 		Spectrum: NewSpectrumBroker(database),
+		Logs:     NewLogBroker(database.Conn()),
 		conns:    make(map[int64]*Conn),
 	}, nil
 }
@@ -55,6 +63,8 @@ func (h *Hub) Start(ctx context.Context) error {
 	}
 	go h.runConfigListener(ctx, configCh)
 	go h.runSweeper(ctx)
+	go h.runWatchdog(ctx)
+	go h.runLogRotation(ctx)
 	h.Spectrum.Start(ctx)
 	return nil
 }

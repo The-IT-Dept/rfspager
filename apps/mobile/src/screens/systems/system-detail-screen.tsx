@@ -16,7 +16,7 @@ import { Ionicons } from "@expo/vector-icons"
 import { Stack } from "expo-router"
 import moment from "moment"
 
-import { useSystem } from "../../hooks"
+import { useSystem, useSystemEvents, useSystemRecentLogs } from "../../hooks"
 import { SpectrumWaterfall } from "../../components/spectrum-waterfall"
 import { AppTheme, useAppTheme } from "../../theme"
 
@@ -215,6 +215,9 @@ export const SystemDetailScreen: FC<SystemDetailScreenProps> = function SystemDe
         </Section>
       ) : null}
 
+      {data.is_owner ? <ActivitySection styles={styles} theme={theme} uuid={data.system_id} /> : null}
+      {data.is_owner ? <LogsSection styles={styles} theme={theme} uuid={data.system_id} /> : null}
+
       {data.is_owner ? (
         <Section styles={styles} title="Lifecycle">
           {data.created_at ? (
@@ -238,6 +241,172 @@ export const SystemDetailScreen: FC<SystemDetailScreenProps> = function SystemDe
       ) : null}
     </ScrollView>
   )
+}
+
+function ActivitySection({
+  styles,
+  theme,
+  uuid,
+}: {
+  styles: StyleMap
+  theme: AppTheme
+  uuid: string
+}) {
+  const q = useSystemEvents(uuid)
+  const events = q.data?.data ?? []
+  if (q.isLoading && events.length === 0) {
+    return (
+      <Section styles={styles} title="Activity">
+        <Text style={styles.activityEmpty}>Loading…</Text>
+      </Section>
+    )
+  }
+  if (events.length === 0) {
+    return (
+      <Section styles={styles} title="Activity">
+        <Text style={styles.activityEmpty}>No activity yet.</Text>
+      </Section>
+    )
+  }
+  return (
+    <Section styles={styles} title="Activity">
+      {events.slice(0, 20).map((e, i) => (
+        <EventRow key={e.id} styles={styles} theme={theme} event={e} last={i === Math.min(events.length, 20) - 1} />
+      ))}
+    </Section>
+  )
+}
+
+function EventRow({
+  styles,
+  theme,
+  event,
+  last,
+}: {
+  styles: StyleMap
+  theme: AppTheme
+  event: { type: string; severity: string; message: string; created_at: string }
+  last: boolean
+}) {
+  const { label, color, icon } = eventVisual(event.type, event.severity, theme)
+  return (
+    <View style={[styles.eventRow, !last && styles.fieldDivider]}>
+      <View style={[styles.eventDot, { backgroundColor: color }]}>
+        <Ionicons name={icon} size={11} color="#fff" />
+      </View>
+      <View style={styles.eventBody}>
+        <Text style={styles.eventLabel}>{label}</Text>
+        <Text style={styles.eventMessage} numberOfLines={2}>
+          {event.message}
+        </Text>
+      </View>
+      <Text style={styles.eventTime}>{moment(event.created_at).fromNow(true)}</Text>
+    </View>
+  )
+}
+
+function eventVisual(
+  type: string,
+  severity: string,
+  theme: AppTheme,
+): { label: string; color: string; icon: React.ComponentProps<typeof Ionicons>["name"] } {
+  switch (type) {
+    case "receiver_connected":
+      return { label: "Connected", color: theme.colors.success, icon: "checkmark-circle" }
+    case "receiver_disconnected":
+      return { label: "Disconnected", color: theme.colors.textTertiary, icon: "log-out-outline" }
+    case "receiver_online":
+      return { label: "Back online", color: theme.colors.success, icon: "checkmark-circle" }
+    case "receiver_offline":
+      return { label: "Offline", color: theme.colors.error, icon: "alert-circle" }
+    case "receiver_version_change":
+      return { label: "Version update", color: theme.colors.interactive, icon: "arrow-up-circle-outline" }
+    case "receiver_dongle_change":
+      return { label: "Hardware change", color: theme.colors.interactive, icon: "hardware-chip-outline" }
+    case "receiver_error":
+      return { label: "Error", color: theme.colors.error, icon: "warning-outline" }
+    case "receiver_crash":
+      return { label: "Crash", color: theme.colors.error, icon: "skull-outline" }
+    default: {
+      const color =
+        severity === "error"
+          ? theme.colors.error
+          : severity === "warning"
+            ? theme.colors.warning
+            : theme.colors.textTertiary
+      return { label: type, color, icon: "ellipse" }
+    }
+  }
+}
+
+function LogsSection({
+  styles,
+  theme,
+  uuid,
+}: {
+  styles: StyleMap
+  theme: AppTheme
+  uuid: string
+}) {
+  const [streaming, setStreaming] = useState(false)
+  const q = useSystemRecentLogs(uuid, { polling: streaming })
+  const logs = q.data?.data ?? []
+
+  return (
+    <Section
+      styles={styles}
+      title="Logs"
+      right={
+        <Pressable onPress={() => setStreaming((s) => !s)} hitSlop={8} style={styles.headerAction}>
+          <Ionicons
+            name={streaming ? "pause-circle-outline" : "play-circle-outline"}
+            size={16}
+            color={theme.colors.interactive}
+          />
+          <Text style={styles.headerActionText}>{streaming ? "Pause" : "Live"}</Text>
+        </Pressable>
+      }
+    >
+      {logs.length === 0 ? (
+        <Text style={styles.activityEmpty}>
+          {q.isLoading ? "Loading…" : "No log lines in the last 7 days."}
+        </Text>
+      ) : (
+        <View style={styles.logBox}>
+          {logs.slice(-50).map((l, i) => (
+            <View key={i} style={styles.logRow}>
+              <Text style={[styles.logLevel, levelStyle(l.level, theme)]}>
+                {(l.level || "info").toUpperCase()}
+              </Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.logMessage} numberOfLines={3}>
+                  {l.message}
+                </Text>
+                <Text style={styles.logMeta}>
+                  {moment(l.ts).format("HH:mm:ss")}
+                  {l.source ? ` · ${l.source}` : ""}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+    </Section>
+  )
+}
+
+function levelStyle(level: string | null, theme: AppTheme) {
+  switch (level) {
+    case "error":
+      return { color: theme.colors.error }
+    case "warn":
+    case "warning":
+      return { color: theme.colors.warning }
+    case "debug":
+      return { color: theme.colors.textTertiary }
+    default:
+      return { color: theme.colors.textSecondary }
+  }
 }
 
 type StyleMap = ReturnType<typeof makeStyles>
@@ -547,6 +716,83 @@ const makeStyles = (theme: AppTheme) =>
       fontSize: 12,
       color: theme.colors.textSecondary,
       fontFamily: "Menlo",
+      marginTop: 2,
+    },
+    // Activity timeline
+    activityEmpty: {
+      paddingHorizontal: 16,
+      paddingVertical: 16,
+      fontSize: 13,
+      color: theme.colors.textTertiary,
+      fontStyle: "italic",
+    },
+    eventRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+    },
+    eventDot: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      alignItems: "center",
+      justifyContent: "center",
+      marginRight: 12,
+    },
+    eventBody: {
+      flex: 1,
+    },
+    eventLabel: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: theme.colors.textPrimary,
+    },
+    eventMessage: {
+      fontSize: 12,
+      color: theme.colors.textTertiary,
+      marginTop: 1,
+    },
+    eventTime: {
+      fontSize: 11,
+      color: theme.colors.textTertiary,
+      marginLeft: 10,
+      fontVariant: ["tabular-nums"],
+    },
+    // Logs
+    logBox: {
+      paddingHorizontal: 8,
+      paddingVertical: 8,
+      backgroundColor: "#0a0a0c",
+      marginHorizontal: 8,
+      marginVertical: 8,
+      borderRadius: 8,
+      maxHeight: 320,
+    },
+    logRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+      gap: 8,
+    },
+    logLevel: {
+      fontFamily: "Menlo",
+      fontSize: 10,
+      fontWeight: "700",
+      width: 44,
+      paddingTop: 2,
+    },
+    logMessage: {
+      fontFamily: "Menlo",
+      fontSize: 12,
+      color: "#e5e5e5",
+      lineHeight: 16,
+    },
+    logMeta: {
+      fontFamily: "Menlo",
+      fontSize: 10,
+      color: "#666",
       marginTop: 2,
     },
   })

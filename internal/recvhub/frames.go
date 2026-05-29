@@ -49,6 +49,17 @@ type SpectrumPayload struct {
 	Bins       []float32 `json:"bins"`
 }
 
+// LogPayload is a single log line the receiver wants persisted + fanned out
+// to subscribed clients (owner + admin). The receiver assigns `ts`; the hub
+// records `received_at` itself.
+type LogPayload struct {
+	TS      int64          `json:"ts"`              // unix milliseconds (receiver clock)
+	Level   string         `json:"level,omitempty"` // debug | info | warn | error
+	Source  string         `json:"source,omitempty"`
+	Message string         `json:"message"`
+	Raw     map[string]any `json:"raw,omitempty"`
+}
+
 // --- Server → client payloads ---
 
 type WelcomePayload struct {

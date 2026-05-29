@@ -281,6 +281,8 @@ function SystemDetail({ system }: { system: System }) {
         />
       </div>
 
+      <UptimeRibbon uuid={system.uuid} />
+
       {/* Transparency footer */}
       <div className="rounded-xl bg-white border border-gray-100 px-5 py-4 text-sm text-gray-600 leading-relaxed">
         <p className="font-semibold text-gray-900 mb-1">What you're looking at</p>
@@ -294,6 +296,132 @@ function SystemDetail({ system }: { system: System }) {
       </div>
     </div>
   );
+}
+
+interface UptimeData {
+  uuid: string;
+  window_days: number;
+  window_start: string;
+  uptime_percent: number;
+  downtime_seconds: number;
+  downtime_intervals: Array<{ from: string; to: string | null }>;
+  currently_offline: boolean;
+}
+
+function UptimeRibbon({ uuid }: { uuid: string }) {
+  const [data, setData] = useState<UptimeData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/public/systems/${uuid}/uptime`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (cancelled) return;
+        setData(j);
+      })
+      .catch(() => !cancelled && setData(null))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [uuid]);
+
+  if (loading) {
+    return (
+      <div className="rounded-xl bg-white border border-gray-100 px-5 py-4 mb-6 text-xs text-gray-400">
+        Loading uptime…
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  // Build a 168-segment array (one per hour over 7 days), each marked up/down.
+  const SEGMENTS = 168; // 24 * 7
+  const windowStart = new Date(data.window_start).getTime();
+  const windowEnd = Date.now();
+  const windowMs = windowEnd - windowStart;
+  const segMs = windowMs / SEGMENTS;
+
+  // Backend serves `null` when there are no intervals (Go nil slice). Treat as empty.
+  const intervals = data.downtime_intervals ?? [];
+  const downRanges = intervals.map((iv) => ({
+    from: new Date(iv.from).getTime(),
+    to: iv.to ? new Date(iv.to).getTime() : windowEnd,
+  }));
+
+  const segments: ("up" | "down" | "partial")[] = [];
+  for (let i = 0; i < SEGMENTS; i++) {
+    const segStart = windowStart + i * segMs;
+    const segEnd = segStart + segMs;
+    let downInSeg = 0;
+    for (const r of downRanges) {
+      const overlapStart = Math.max(segStart, r.from);
+      const overlapEnd = Math.min(segEnd, r.to);
+      if (overlapEnd > overlapStart) downInSeg += overlapEnd - overlapStart;
+    }
+    const ratio = downInSeg / segMs;
+    segments.push(ratio === 0 ? "up" : ratio >= 0.9 ? "down" : "partial");
+  }
+
+  const pct = data.uptime_percent;
+  const pctColor = pct >= 99 ? "text-emerald-600" : pct >= 95 ? "text-amber-600" : "text-[#F7241D]";
+
+  return (
+    <div className="rounded-xl bg-white border border-gray-100 px-5 py-4 mb-6">
+      <div className="flex items-end justify-between mb-3">
+        <div>
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+            Uptime · last 7 days
+          </p>
+          <p className={`${heading} text-2xl font-extrabold tabular-nums ${pctColor}`}>
+            {pct.toFixed(2)}%
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+            Downtime
+          </p>
+          <p className="text-sm font-mono text-gray-700 tabular-nums">
+            {formatDuration(data.downtime_seconds)}
+          </p>
+        </div>
+      </div>
+
+      {/* Bar */}
+      <div className="flex gap-[1px] h-7 rounded-md overflow-hidden bg-gray-100">
+        {segments.map((s, i) => {
+          const bg =
+            s === "up"
+              ? "bg-emerald-500"
+              : s === "partial"
+                ? "bg-amber-400"
+                : "bg-[#F7241D]";
+          const hr = Math.floor((i / SEGMENTS) * 168);
+          const daysAgo = Math.floor(hr / 24);
+          const title = `${daysAgo === 0 ? "today" : `${daysAgo}d ago`} · ${s === "up" ? "online" : s === "partial" ? "partial outage" : "offline"}`;
+          return (
+            <span key={i} title={title} className={`flex-1 ${bg}`} />
+          );
+        })}
+      </div>
+      <div className="flex justify-between mt-1.5 text-[10px] text-gray-400 tabular-nums">
+        <span>7 days ago</span>
+        <span>now</span>
+      </div>
+    </div>
+  );
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h < 24) return `${h}h ${m}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
 }
 
 function InfoCard({

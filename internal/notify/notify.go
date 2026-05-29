@@ -135,6 +135,36 @@ func (n *Notifier) NotifyForMessage(ctx context.Context, msg *models.Message) {
 	slog.Info("notifications sent", "message_id", msg.ID, "user_count", len(userTargets))
 }
 
+// SendDirect pushes a plain title+body notification to a single user, on
+// every push target they have. Used for transactional events like "system
+// went offline" — extra map values are merged into the push data so the
+// client can deep-link to the right screen.
+//
+// Best-effort: errors are logged but not propagated.
+func (n *Notifier) SendDirect(ctx context.Context, userID int64, title, body string, _ map[string]string) {
+	targets, err := n.db.GetPushTokensForUsers(ctx, []int64{userID})
+	if err != nil {
+		slog.Error("send-direct: get push tokens failed", "user_id", userID, "err", err)
+		return
+	}
+	for _, target := range targets {
+		switch target.PushType {
+		case "GCM":
+			if n.fcm != nil {
+				if err := n.fcm.Send(ctx, target.PushToken, title, body, 0); err != nil {
+					slog.Error("FCM send failed (direct)", "user_id", userID, "err", err)
+				}
+			}
+		case "APN":
+			if n.apn != nil {
+				if err := n.apn.Send(ctx, target.PushToken, title, body, 0); err != nil {
+					slog.Error("APN send failed (direct)", "user_id", userID, "err", err)
+				}
+			}
+		}
+	}
+}
+
 // NotifySystemApproved pushes a one-off notification to the owner when their
 // pending system request is approved. Best-effort: errors are logged, not
 // surfaced to the admin who clicked Approve.

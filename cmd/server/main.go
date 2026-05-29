@@ -154,6 +154,12 @@ func main() {
 	// system_connections table so multi-pod takeovers Just Work.
 	recvhub.PodID = podID()
 	hub, err := recvhub.New(database, listener)
+	if hub != nil {
+		// Watchdog uses the notifier to push owners on offline/online
+		// transitions. Optional — when nil the watchdog still records
+		// events, it just skips the push.
+		hub.SetNotifier(notifier)
+	}
 	if err != nil {
 		slog.Error("failed to start receiver hub", "error", err)
 		os.Exit(1)
@@ -225,7 +231,7 @@ func main() {
 			r.Mount("/v1/admin", admin.Router(database.Conn(), cfg.JWTSecret, notifier, nil))
 
 			// Mobile API
-			r.Mount("/v2/mobile", mobile.Router(database.Conn(), cfg.JWTSecret, cfg.AppleBundleID, mobileSSE, iapHandler))
+			r.Mount("/v2/mobile", mobile.Router(database.Conn(), cfg.JWTSecret, cfg.AppleBundleID, mobileSSE, iapHandler, hub))
 
 		// Public API (no auth)
 		publicHandlers := public.NewHandlers(database.Conn())
@@ -241,6 +247,7 @@ func main() {
 			r.Get("/capcodes/unknown", publicHandlers.UnknownCapcodes)
 			r.Get("/capcodes/messages", publicHandlers.CapcodeMessages)
 			r.Get("/systems/{uuid}/spectrum", public.SpectrumSSE(database.Conn(), hub))
+			r.Get("/systems/{uuid}/uptime", publicHandlers.SystemUptime)
 			r.Get("/events", publicSSE.Handler)
 		})
 

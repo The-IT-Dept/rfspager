@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -369,6 +370,110 @@ func (h *Handlers) UnknownCapcodes(w http.ResponseWriter, r *http.Request) {
 			"window_days": days,
 			"limit":       limit,
 		},
+	})
+}
+
+// SystemUptime returns the last 7 days of online/offline transitions and an
+// uptime percentage for a single receiver. Public — no log content, no IPs,
+// no metadata about hardware. Just "was the receiver up?" — same level of
+// detail as a status-page bar chart.
+func (h *Handlers) SystemUptime(w http.ResponseWriter, r *http.Request) {
+	uuid := chi.URLParam(r, "uuid")
+	if uuid == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "uuid required"})
+		return
+	}
+	var systemID int64
+	if err := h.db.GetContext(r.Context(), &systemID,
+		`SELECT id FROM systems
+		  WHERE system_id = $1 AND deleted_at IS NULL AND approved_at IS NOT NULL`, uuid); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "system not found"})
+		return
+	}
+
+	// Pull the relevant transition events from the last 7 days, oldest-first.
+	rows, err := h.db.QueryxContext(r.Context(), `
+		SELECT type, created_at
+		  FROM system_events
+		 WHERE system_id = $1
+		   AND type IN ('receiver_connected', 'receiver_disconnected', 'receiver_online', 'receiver_offline')
+		   AND created_at >= NOW() - INTERVAL '7 days'
+		 ORDER BY created_at ASC`, systemID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type ev struct {
+		Type string
+		At   time.Time
+	}
+	var evs []ev
+	for rows.Next() {
+		var e ev
+		if err := rows.Scan(&e.Type, &e.At); err == nil {
+			evs = append(evs, e)
+		}
+	}
+
+	// Walk events, accumulating downtime intervals + uptime seconds. We treat
+	// `receiver_offline` as down-start and `receiver_online` / `receiver_connected`
+	// as down-end. `receiver_disconnected` alone doesn't count as down for the
+	// public number until the 5-minute threshold fires.
+	windowStart := time.Now().Add(-7 * 24 * time.Hour)
+	totalWindow := time.Since(windowStart)
+
+	downIntervals := []map[string]any{}
+	var (
+		totalDown time.Duration
+		downStart *time.Time
+	)
+	for _, e := range evs {
+		switch e.Type {
+		case "receiver_offline":
+			if downStart == nil {
+				t := e.At
+				downStart = &t
+			}
+		case "receiver_online", "receiver_connected":
+			if downStart != nil {
+				totalDown += e.At.Sub(*downStart)
+				downIntervals = append(downIntervals, map[string]any{
+					"from": *downStart,
+					"to":   e.At,
+				})
+				downStart = nil
+			}
+		}
+	}
+	// Currently offline? Count the open interval up to now.
+	openInterval := false
+	if downStart != nil {
+		totalDown += time.Since(*downStart)
+		downIntervals = append(downIntervals, map[string]any{
+			"from": *downStart,
+			"to":   nil,
+		})
+		openInterval = true
+	}
+
+	uptimePct := 100.0
+	if totalWindow > 0 {
+		uptimePct = (1.0 - float64(totalDown)/float64(totalWindow)) * 100
+		if uptimePct < 0 {
+			uptimePct = 0
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"uuid":              uuid,
+		"window_days":       7,
+		"window_start":      windowStart,
+		"uptime_percent":    uptimePct,
+		"downtime_seconds":  int(totalDown.Seconds()),
+		"downtime_intervals": downIntervals,
+		"currently_offline": openInterval,
 	})
 }
 
