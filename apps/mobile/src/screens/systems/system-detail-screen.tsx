@@ -1,4 +1,6 @@
 import React, { FC, useState } from "react"
+import { Ionicons } from "@expo/vector-icons"
+import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect"
 import {
   ActivityIndicator,
   Alert,
@@ -12,7 +14,7 @@ import {
   useWindowDimensions,
 } from "react-native"
 import * as Clipboard from "expo-clipboard"
-import { Ionicons } from "@expo/vector-icons"
+import { AppIcon } from "../../components/app-icon/app-icon"
 import { Stack } from "expo-router"
 import moment from "moment"
 
@@ -92,7 +94,7 @@ export const SystemDetailScreen: FC<SystemDetailScreenProps> = function SystemDe
             hitSlop={8}
             style={styles.headerAction}
           >
-            <Ionicons name="expand-outline" size={16} color={theme.colors.interactive} />
+            <AppIcon sf="arrow.up.left.and.arrow.down.right" ion="expand-outline" size={16} color={theme.colors.interactive} />
             <Text style={styles.headerActionText}>Fullscreen</Text>
           </Pressable>
         }
@@ -123,7 +125,7 @@ export const SystemDetailScreen: FC<SystemDetailScreenProps> = function SystemDe
 
       {data.is_owner && data.is_pending ? (
         <View style={styles.pendingBox}>
-          <Ionicons name="hourglass-outline" size={20} color={theme.colors.warning} />
+          <AppIcon sf="hourglass" ion="hourglass-outline" size={20} color={theme.colors.warning} />
           <Text style={styles.pendingText}>
             Your request is in the admin queue. We'll send you a push when it's approved and your
             install command appears here.
@@ -143,7 +145,7 @@ export const SystemDetailScreen: FC<SystemDetailScreenProps> = function SystemDe
                 <Text style={styles.codeText} selectable>
                   {data.api_key}
                 </Text>
-                <Ionicons name="copy-outline" size={16} color={theme.colors.textTertiary} />
+                <AppIcon sf="doc.on.doc" ion="copy-outline" size={16} color={theme.colors.textTertiary} />
               </Pressable>
             ) : null}
           </View>
@@ -157,7 +159,7 @@ export const SystemDetailScreen: FC<SystemDetailScreenProps> = function SystemDe
               <Text style={[styles.codeText, styles.codeSmall]} selectable>
                 {data.install_command}
               </Text>
-              <Ionicons name="copy-outline" size={16} color={theme.colors.textTertiary} />
+              <AppIcon sf="doc.on.doc" ion="copy-outline" size={16} color={theme.colors.textTertiary} />
             </Pressable>
           </View>
 
@@ -165,7 +167,7 @@ export const SystemDetailScreen: FC<SystemDetailScreenProps> = function SystemDe
             style={styles.installAction}
             onPress={() => Share.share({ message: data.install_command! })}
           >
-            <Ionicons name="share-outline" size={16} color={theme.colors.interactive} />
+            <AppIcon sf="square.and.arrow.up" ion="share-outline" size={16} color={theme.colors.interactive} />
             <Text style={styles.installActionText}>Share command</Text>
           </Pressable>
 
@@ -480,16 +482,32 @@ function SpectrumFullscreen({
         </View>
         <Pressable
           onPress={onClose}
-          style={{
-            position: "absolute",
-            top: 50,
-            right: 20,
-            padding: 10,
-            borderRadius: 999,
-            backgroundColor: "rgba(255,255,255,0.15)",
-          }}
+          style={{ position: "absolute", top: 50, right: 20 }}
         >
-          <Ionicons name="close" size={22} color="#fff" />
+          {/* Floating over live spectrum content, so this is a real glass
+              case rather than a flat translucent fill: the system effect
+              refracts and adapts to whatever is moving underneath, which a
+              fixed rgba() cannot do. Falls back to the previous fill on
+              devices without Liquid Glass. */}
+          {isLiquidGlassAvailable() ? (
+            <GlassView
+              glassEffectStyle="clear"
+              isInteractive
+              style={{ padding: 10, borderRadius: 999 }}
+            >
+              <AppIcon sf="xmark" ion="close" size={22} color="#fff" />
+            </GlassView>
+          ) : (
+            <View
+              style={{
+                padding: 10,
+                borderRadius: 999,
+                backgroundColor: "rgba(255,255,255,0.15)",
+              }}
+            >
+              <AppIcon sf="xmark" ion="close" size={22} color="#fff" />
+            </View>
+          )}
         </Pressable>
         <Text
           style={{

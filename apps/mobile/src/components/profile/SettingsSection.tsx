@@ -1,6 +1,6 @@
 import React from "react"
 import { View, StyleSheet, TouchableOpacity, Text, Switch } from "react-native"
-import { Ionicons } from "@expo/vector-icons"
+import { AppIcon } from "../../components/app-icon/app-icon"
 import { useAppTheme, AppTheme } from "../../theme"
 
 export interface SettingItem {
@@ -72,7 +72,7 @@ export const SettingsSection: React.FC<SettingsSectionProps> = (
             )}
 
             {item.type === "navigation" && (
-              <Ionicons name="chevron-forward" size={16} color={theme.colors.textTertiary} />
+              <AppIcon sf="chevron.right" ion="chevron-forward" size={16} color={theme.colors.textTertiary} />
             )}
 
             {item.type === "info" && typeof item.value === "string" && (

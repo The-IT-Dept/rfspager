@@ -5,7 +5,7 @@ import { StyleSheet, View, TouchableOpacity, ScrollView } from "react-native"
 import { Text, ActivityIndicator } from "react-native"
 import { BannerAd } from "../../utils/admob"
 import { useCapcodesData } from "./use-capcodes-data"
-import { Ionicons } from "@expo/vector-icons"
+import { AppIcon } from "../../components/app-icon/app-icon"
 import { Stack, useRouter } from "expo-router"
 import { useAppTheme, AppTheme } from "../../theme"
 
@@ -104,8 +104,8 @@ export const CapcodesAgencyListScreen: FC =
                     </View>
                     <View style={styles.agencyRight}>
                       {hasActiveItems && <View style={styles.activeBadge} />}
-                      <Ionicons
-                        name="chevron-forward"
+                      <AppIcon
+                        sf="chevron.right" ion="chevron-forward"
                         size={16}
                         color={theme.colors.textTertiary}
                       />

@@ -4,7 +4,7 @@
  */
 import React, { useEffect, FC, useState } from "react"
 import { View, Alert, ScrollView, ActivityIndicator, Linking, Platform, Text } from "react-native"
-import { FontAwesome5, AntDesign, Ionicons } from "@expo/vector-icons"
+import { FontAwesome5, AntDesign } from "@expo/vector-icons"
 import {
   getProducts,
   purchaseSubscription,

@@ -7,7 +7,7 @@
 import React, { FC, useEffect } from "react"
 import { Text, View, ScrollView } from "react-native"
 import { useNavigation } from "expo-router"
-import { Ionicons } from "@expo/vector-icons"
+import { AppIcon } from "../../components/app-icon/app-icon"
 
 import { useAlertzones } from "../../hooks"
 import { BannerAd } from "../../utils/admob"
@@ -39,7 +39,7 @@ export const ProfileAlertzonesScreen: FC =
         <View style={styles.mainContainer}>
           <View style={styles.headerRow}>
             <View style={[styles.iconContainer, { backgroundColor: theme.colors.primary }]}>
-              <Ionicons name="location" size={10} color="white" />
+              <AppIcon sf="location.fill" ion="location" size={10} color="white" />
             </View>
             <View style={styles.headerContent}>
               <Text style={styles.sectionTitle}>Location-Based Alerts</Text>

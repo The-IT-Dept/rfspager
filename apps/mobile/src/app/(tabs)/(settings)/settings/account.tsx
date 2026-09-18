@@ -2,7 +2,7 @@ import React from "react"
 import { ScrollView, View, StyleSheet, TouchableOpacity, Alert } from "react-native"
 import { Text } from "react-native"
 import { Gravatar } from "react-native-gravatar"
-import { Ionicons } from "@expo/vector-icons"
+import { AppIcon } from "../../../../components/app-icon/app-icon"
 import { useRouter } from "expo-router"
 import { useUser, useAuthStore, useValidSubscription, useProductName } from "../../../../stores"
 import { useAppTheme, AppTheme } from "../../../../theme"
@@ -144,8 +144,8 @@ const EditableRow = ({
           </Text>
         )}
         {onPress && (
-          <Ionicons
-            name="chevron-forward"
+          <AppIcon
+            sf="chevron.right" ion="chevron-forward"
             size={18}
             color={theme.colors.textSecondary}
             style={{ marginLeft: 6 }}

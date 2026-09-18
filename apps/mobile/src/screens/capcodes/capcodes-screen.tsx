@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native"
-import { Ionicons } from "@expo/vector-icons"
+import { AppIcon } from "../../components/app-icon/app-icon"
 import { Stack, useRouter } from "expo-router"
 
 import { useAppTheme, AppTheme } from "../../theme"
@@ -200,7 +200,7 @@ function AgenciesList({
               </View>
               <View style={styles.agencyRight}>
                 {hasActive && <View style={styles.activeBadge} />}
-                <Ionicons name="chevron-forward" size={16} color={theme.colors.textTertiary} />
+                <AppIcon sf="chevron.right" ion="chevron-forward" size={16} color={theme.colors.textTertiary} />
               </View>
             </TouchableOpacity>
           )
@@ -267,7 +267,7 @@ function UnknownsList({
                   {u.message_count} {u.message_count === 1 ? "message" : "messages"} · {timeAgo(u.last_seen_at)}
                 </Text>
               </View>
-              <Ionicons name="chevron-forward" size={16} color={theme.colors.textTertiary} />
+              <AppIcon sf="chevron.right" ion="chevron-forward" size={16} color={theme.colors.textTertiary} />
             </TouchableOpacity>
           )
         })}

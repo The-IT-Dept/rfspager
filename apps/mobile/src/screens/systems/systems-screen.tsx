@@ -9,7 +9,7 @@ import {
   View,
 } from "react-native"
 import moment from "moment"
-import { Ionicons } from "@expo/vector-icons"
+import { AppIcon } from "../../components/app-icon/app-icon"
 import { useRouter } from "expo-router"
 import { useSystems } from "../../hooks"
 import type { System } from "../../services/api-client"
@@ -79,8 +79,8 @@ export const SystemsScreen: FC = function SystemsScreen() {
             <Text style={[styles.status, { color: statusColor }]}>{statusLabel}</Text>
             <Text style={styles.timestamp}>{formatLastMessage(item.last_message_at)}</Text>
           </View>
-          <Ionicons
-            name="chevron-forward"
+          <AppIcon
+            sf="chevron.right" ion="chevron-forward"
             size={16}
             color={theme.colors.textTertiary}
             style={styles.chevron}
@@ -114,9 +114,9 @@ export const SystemsScreen: FC = function SystemsScreen() {
             style={({ pressed }) => [styles.actionRow, pressed && styles.rowPressed]}
             onPress={() => router.push("/(tabs)/(stack)/systems-create" as any)}
           >
-            <Ionicons name="add-circle-outline" size={20} color={theme.colors.primary} />
+            <AppIcon sf="plus.circle" ion="add-circle-outline" size={20} color={theme.colors.primary} />
             <Text style={styles.actionText}>Register interest to host a system</Text>
-            <Ionicons name="chevron-forward" size={16} color={theme.colors.textTertiary} />
+            <AppIcon sf="chevron.right" ion="chevron-forward" size={16} color={theme.colors.textTertiary} />
           </Pressable>
         </View>
       }
