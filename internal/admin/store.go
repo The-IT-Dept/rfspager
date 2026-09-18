@@ -697,8 +697,9 @@ func (s *Store) GetBillingStats(ctx context.Context) (*BillingStats, error) {
 }
 
 // Store prices in cents, used only for the MRR estimate. These are the list
-// prices in the stores' local currency (AUD); the estimate is therefore an
-// approximation and will not match a provider dashboard reporting USD.
+// prices in AUD and must match apps/web/.../subscribe.tsx. The estimate is
+// gross: it does not deduct the 15-30% store commission, and it is in AUD, so
+// it will read higher than a provider dashboard reporting net USD.
 //
 // MRR amortises a yearly plan over twelve months. A previous version used
 // 8333 cents for the yearly row — a tenth-of-a-dollar slip that reported the
@@ -709,8 +710,8 @@ func (s *Store) GetBillingStats(ctx context.Context) (*BillingStats, error) {
 // for users in a billing grace period whose expiry has already passed — they
 // are still paying customers, so filtering on expiry here would undercount.
 const (
-	priceMonthlyCents = 999   // $9.99/month
-	priceYearlyCents  = 9999  // $99.99/year
+	priceMonthlyCents = 499  // $4.99/month
+	priceYearlyCents  = 2999 // $29.99/year
 )
 
 func (s *Store) fetchBillingStats(ctx context.Context) (*BillingStats, error) {
