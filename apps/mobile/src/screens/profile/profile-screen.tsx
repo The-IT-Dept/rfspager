@@ -139,6 +139,31 @@ export const ProfileScreen: FC = function ProfileScreen() {
     },
   ]
 
+  // Capcodes, Alert Zones and Systems used to be top-level drawer
+  // destinations. They moved under Settings when the drawer was replaced by a
+  // four-item native tab bar, so they need explicit entry points here —
+  // otherwise the routes still exist but nothing links to them.
+  const monitoringSettings: SettingItem[] = [
+    {
+      id: "capcodes",
+      title: "Capcodes",
+      type: "navigation",
+      onPress: () => router.push("/capcodes"),
+    },
+    {
+      id: "alertzones",
+      title: "Alert Zones",
+      type: "navigation",
+      onPress: () => router.push("/alertzones"),
+    },
+    {
+      id: "systems",
+      title: "Systems",
+      type: "navigation",
+      onPress: () => router.push("/systems"),
+    },
+  ]
+
   const pagerSettings: SettingItem[] = [
     {
       id: "filter-capcodes",
@@ -281,6 +306,8 @@ export const ProfileScreen: FC = function ProfileScreen() {
         }
       >
         <SettingsSection title="Account" icon={Images.account} items={accountSettings} />
+
+        <SettingsSection title="Monitoring" icon={Images.capcode} items={monitoringSettings} />
 
         <SettingsSection title="Pager" icon={Images.pager} items={pagerSettings} />
 
