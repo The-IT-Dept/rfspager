@@ -70,8 +70,22 @@ func (h *Handlers) ListAgencies(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, data)
 }
 
+// limitClause builds the tail of the feed query. Cursor mode has no OFFSET —
+// the WHERE clause already positions the reader.
+func limitClause(useCursor bool, argIdx int) string {
+	if useCursor {
+		return "LIMIT $" + strconv.Itoa(argIdx)
+	}
+	return "LIMIT $" + strconv.Itoa(argIdx) + " OFFSET $" + strconv.Itoa(argIdx+1)
+}
+
 // ListMessages returns paginated messages with capcode info.
 // Supports ?search=, ?agency_id=, ?page=, ?per_page= query params.
+//
+// For infinite scroll, prefer the keyset cursor (?before_created_at= &
+// ?before_id=) over ?page=. The feed prepends live messages as they arrive, so
+// a numeric OFFSET shifts under the reader between requests and silently
+// duplicates or skips rows. The cursor is stable regardless of inserts.
 func (h *Handlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
@@ -96,7 +110,26 @@ func (h *Handlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 		argIdx++
 	}
 
-	args = append(args, perPage+1, offset)
+	// Keyset cursor. created_at is not unique, so id is the tiebreaker and the
+	// row comparison must match the ORDER BY exactly.
+	useCursor := false
+	if bc, bi := q.Get("before_created_at"), q.Get("before_id"); bc != "" && bi != "" {
+		if ts, err := time.Parse(time.RFC3339Nano, bc); err == nil {
+			if id, err := strconv.ParseInt(bi, 10, 64); err == nil {
+				where += " AND (m.created_at, m.id) < ($" + strconv.Itoa(argIdx) +
+					", $" + strconv.Itoa(argIdx+1) + ")"
+				args = append(args, ts, id)
+				argIdx += 2
+				useCursor = true
+			}
+		}
+	}
+
+	if useCursor {
+		args = append(args, perPage+1)
+	} else {
+		args = append(args, perPage+1, offset)
+	}
 
 	rows, err := h.db.QueryxContext(r.Context(),
 		`SELECT m.id, m.address, m.message, m.created_at,
@@ -111,8 +144,8 @@ func (h *Handlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 		   LEFT JOIN agencies a ON a.id = c.agency_id
 		   LEFT JOIN systems  s ON s.id = m.system_id AND s.deleted_at IS NULL
 		  WHERE `+where+`
-		  ORDER BY m.created_at DESC
-		  LIMIT $`+strconv.Itoa(argIdx)+` OFFSET $`+strconv.Itoa(argIdx+1), args...)
+		  ORDER BY m.created_at DESC, m.id DESC
+		  `+limitClause(useCursor, argIdx), args...)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

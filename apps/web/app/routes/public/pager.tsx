@@ -81,10 +81,15 @@ export default function Pager({ loaderData }: Route.ComponentProps) {
   const [buffered, setBuffered] = useState(0);
   const [search, setSearch] = useState(searchParams.get("search") || "");
   const [agencyId, setAgencyId] = useState(searchParams.get("agency_id") || "");
-  const [page, setPage] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState<boolean>(loaderData?.messages?.has_more ?? true);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // How many rows the list may hold. Grows as the reader pages back, so a live
+  // message arriving never truncates history they have already scrolled
+  // through. Live arrivals alone stay bounded by the headroom.
+  const LIVE_HEADROOM = 300;
+  const capRef = useRef(500);
 
   // Rolling rate (messages per minute, last 60 sec)
   const arrivalsRef = useRef<number[]>([]);
@@ -111,7 +116,10 @@ export default function Pager({ loaderData }: Route.ComponentProps) {
           setBuffered((n) => n + 1);
           return;
         }
-        setMessages((prev) => [msg, ...prev].slice(0, 500));
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === msg.id)) return prev;
+          return [msg, ...prev].slice(0, capRef.current);
+        });
       } catch {}
     };
     return () => es.close();
@@ -121,17 +129,37 @@ export default function Pager({ loaderData }: Route.ComponentProps) {
     if (loaderData?.messages?.data) {
       setMessages(loaderData.messages.data);
       setHasMore(loaderData.messages.has_more ?? false);
-      setPage(1);
+      capRef.current = 500;
     }
   }, [loaderData?.messages?.data]);
 
+  // A ref mirror of the in-flight flag: the IntersectionObserver callback and
+  // the scroll fallback can both fire before a setState has landed, which would
+  // otherwise fire two identical requests for the same cursor.
+  const loadingRef = useRef(false);
+
+  // Keep a ref copy so loadMore can read the newest list without being
+  // re-created (and re-registering the observer) on every incoming message.
+  const messagesRef = useRef<Message[]>(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore) return;
+    if (loadingRef.current || !hasMore) return;
+
+    // Page from the oldest row we hold, not an offset. The feed prepends live
+    // messages, so an OFFSET would shift between requests and skip rows.
+    const oldest = messagesRef.current[messagesRef.current.length - 1];
+    if (!oldest) return;
+
+    loadingRef.current = true;
     setLoadingMore(true);
-    const nextPage = page + 1;
+
     const params = new URLSearchParams();
-    params.set("page", String(nextPage));
     params.set("per_page", "100");
+    params.set("before_created_at", new Date(oldest.created_at).toISOString());
+    params.set("before_id", String(oldest.id));
     if (search) params.set("search", search);
     if (agencyId) params.set("agency_id", agencyId);
 
@@ -139,30 +167,63 @@ export default function Pager({ loaderData }: Route.ComponentProps) {
       const res = await fetch(`/api/public/messages?${params}`);
       if (res.ok) {
         const data = await res.json();
-        setMessages((prev) => [...prev, ...(data.data || [])]);
+        const incoming: Message[] = data.data || [];
+        setMessages((prev) => {
+          const seen = new Set(prev.map((m) => m.id));
+          const merged = [...prev, ...incoming.filter((m) => !seen.has(m.id))];
+          capRef.current = merged.length + LIVE_HEADROOM;
+          return merged;
+        });
         setHasMore(data.has_more ?? false);
-        setPage(nextPage);
       }
     } catch {
-      // ignore
+      // Network blip — leave hasMore alone so the reader can retry by scrolling.
     } finally {
+      loadingRef.current = false;
       setLoadingMore(false);
     }
-  }, [page, loadingMore, hasMore, search, agencyId]);
+  }, [hasMore, search, agencyId]);
 
+  const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    const root = scrollRef.current;
+    if (!el || !root) return;
+
+    // `root` must be the scrolling element. With the default (viewport) the
+    // sentinel sits inside an overflow-y-auto container and is clipped, so it
+    // never reports as intersecting and the feed never pages.
     const obs = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) loadMore();
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadMore();
       },
-      { rootMargin: "300px" },
+      { root, rootMargin: "600px 0px" },
     );
     obs.observe(el);
-    return () => obs.disconnect();
+
+    // Fallback for cases IntersectionObserver alone handles poorly: momentum
+    // scrolling on iOS can outrun observer callbacks, and if the first page is
+    // shorter than the container nothing ever scrolls to trigger it.
+    const onScroll = () => {
+      if (root.scrollHeight - root.scrollTop - root.clientHeight < 600) loadMore();
+    };
+    root.addEventListener("scroll", onScroll, { passive: true });
+
+    return () => {
+      obs.disconnect();
+      root.removeEventListener("scroll", onScroll);
+    };
   }, [loadMore]);
+
+  // If the loaded rows do not fill the container there is nothing to scroll,
+  // so keep pulling until they do (or the feed runs out).
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root || loadingMore || !hasMore) return;
+    if (root.scrollHeight <= root.clientHeight + 1) loadMore();
+  }, [messages, loadingMore, hasMore, loadMore]);
 
   const updateParam = useCallback(
     (key: string, val: string) => {
@@ -350,7 +411,7 @@ export default function Pager({ loaderData }: Route.ComponentProps) {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
           {messages.length === 0 ? (
             <div className="px-6 py-32 text-center">
               <p className="text-gray-400 text-sm">

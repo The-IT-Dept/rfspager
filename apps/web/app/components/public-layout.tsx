@@ -73,24 +73,30 @@ export function PublicLayout() {
     location.pathname === "/capcodes";
   const { user, avatarHash, logout } = usePublicAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+
+  // Close the mobile nav on navigation so it never covers the new page.
+  useEffect(() => {
+    setNavOpen(false);
+  }, [location.pathname]);
 
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-gray-100 shadow-sm">
-        <div className="max-w-[1400px] mx-auto px-6 h-16 flex items-center justify-between">
-          <Link to="/" className="group">
-            <img src="/logo.svg" alt="RFSPager" className="h-9 group-hover:scale-105 transition-transform" />
+        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+          <Link to="/" className="group shrink-0">
+            <img src="/logo.svg" alt="RFSPager" className="h-8 sm:h-9 w-auto group-hover:scale-105 transition-transform" />
           </Link>
 
-          <nav className="flex items-center gap-1">
+          <nav className="flex items-center gap-1 min-w-0">
             {NAV_LINKS.map((link) => {
               const isActive = location.pathname === link.path;
               return (
                 <Link
                   key={link.path}
                   to={link.path}
-                  className={`px-4 py-2 text-sm font-semibold rounded-lg transition-colors ${
+                  className={`hidden md:block px-3 lg:px-4 py-2 text-sm font-semibold rounded-lg whitespace-nowrap transition-colors ${
                     isActive
                       ? "text-[#F7241D] bg-red-50"
                       : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
@@ -100,7 +106,7 @@ export function PublicLayout() {
                 </Link>
               );
             })}
-            <div className="w-px h-6 bg-gray-200 mx-2" />
+            <div className="hidden md:block w-px h-6 bg-gray-200 mx-2" />
 
             {user ? (
               <div className="relative">
@@ -157,13 +163,56 @@ export function PublicLayout() {
             ) : (
               <Link
                 to="/login"
-                className="px-5 py-2 text-sm font-bold text-white bg-[#F7241D] hover:bg-[#d91f19] rounded-lg transition-all shadow-sm hover:shadow-md"
+                className="shrink-0 px-4 sm:px-5 py-2 text-sm font-bold text-white bg-[#F7241D] hover:bg-[#d91f19] rounded-lg whitespace-nowrap transition-all shadow-sm hover:shadow-md"
               >
                 Sign In
               </Link>
             )}
+
+            {/* Mobile nav toggle — the links above are hidden below md. */}
+            <button
+              type="button"
+              onClick={() => setNavOpen((o) => !o)}
+              aria-label={navOpen ? "Close menu" : "Open menu"}
+              aria-expanded={navOpen}
+              className="md:hidden shrink-0 ml-1 p-2 -mr-1 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-50 transition-colors"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d={navOpen ? "M6 18L18 6M6 6l12 12" : "M4 7h16M4 12h16M4 17h16"}
+                />
+              </svg>
+            </button>
           </nav>
         </div>
+
+        {/* Mobile nav panel */}
+        {navOpen && (
+          <div className="md:hidden border-t border-gray-100 bg-white">
+            <nav className="px-4 py-3 flex flex-col gap-1">
+              {NAV_LINKS.map((link) => {
+                const isActive = location.pathname === link.path;
+                return (
+                  <Link
+                    key={link.path}
+                    to={link.path}
+                    onClick={() => setNavOpen(false)}
+                    className={`px-3 py-2.5 text-base font-semibold rounded-lg transition-colors ${
+                      isActive
+                        ? "text-[#F7241D] bg-red-50"
+                        : "text-gray-700 hover:text-gray-900 hover:bg-gray-50"
+                    }`}
+                  >
+                    {link.label}
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
+        )}
       </header>
 
       <main className="flex-1 flex flex-col">
