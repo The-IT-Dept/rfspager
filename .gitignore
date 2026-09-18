@@ -145,3 +145,4 @@ apps/web/.vite/
 # local build artifacts
 adapty-backfill
 migrate-spike
+.env.bak-*

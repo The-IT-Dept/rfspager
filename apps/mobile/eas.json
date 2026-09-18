@@ -8,9 +8,7 @@
       "env": {
         "EXPO_PUBLIC_API_URL": "https://v3.rfspager.app/graphql"
       },
-
       "channel": "production",
-
       "ios": {
         "autoIncrement": false
       }
@@ -18,7 +16,7 @@
     "development": {
       "node": "22.20.0",
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://192.168.15.30:8080"
+        "EXPO_PUBLIC_API_URL": "https://go.dev.blah.au"
       },
       "developmentClient": true,
       "distribution": "internal"
