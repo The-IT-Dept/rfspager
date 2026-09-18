@@ -149,9 +149,6 @@ importers:
       react-native-device-info:
         specifier: ^14.0.0
         version: 14.1.1(react-native@0.86.3(@babel/core@7.29.0)(@react-native/jest-preset@0.86.3(@babel/core@7.29.0)(react@19.2.3))(@react-native/metro-config@0.85.3(@babel/core@7.29.0))(@types/react@19.2.15)(react@19.2.3))
-      react-native-drawer-layout:
-        specifier: ^4.2.4
-        version: 4.2.4(bf7bfb4f89a0b2bedf74c8dc30e3b9d1)
       react-native-fbsdk-next:
         specifier: ^13.1.4
         version: 13.4.3(expo@57.0.24)(react-native@0.86.3(@babel/core@7.29.0)(@react-native/jest-preset@0.86.3(@babel/core@7.29.0)(react@19.2.3))(@react-native/metro-config@0.85.3(@babel/core@7.29.0))(@types/react@19.2.15)(react@19.2.3))

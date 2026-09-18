@@ -55,7 +55,6 @@
     "react-native": "0.86.3",
     "react-native-base64": "^0.2.1",
     "react-native-device-info": "^14.0.0",
-    "react-native-drawer-layout": "^4.2.4",
     "react-native-fbsdk-next": "^13.1.4",
     "react-native-geojson": "^0.1.1",
     "react-native-gesture-handler": "~2.32.0",
