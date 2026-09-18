@@ -696,6 +696,23 @@ func (s *Store) GetBillingStats(ctx context.Context) (*BillingStats, error) {
 	return val.(*BillingStats), nil
 }
 
+// Store prices in cents, used only for the MRR estimate. These are the list
+// prices in the stores' local currency (AUD); the estimate is therefore an
+// approximation and will not match a provider dashboard reporting USD.
+//
+// MRR amortises a yearly plan over twelve months. A previous version used
+// 8333 cents for the yearly row — a tenth-of-a-dollar slip that reported the
+// yearly plan as $83.33/month and inflated MRR roughly tenfold.
+//
+// The estimate keys off subscription_valid alone, deliberately. That flag is
+// reconciled against the store (see cmd/adapty-backfill), and it stays true
+// for users in a billing grace period whose expiry has already passed — they
+// are still paying customers, so filtering on expiry here would undercount.
+const (
+	priceMonthlyCents = 999   // $9.99/month
+	priceYearlyCents  = 9999  // $99.99/year
+)
+
 func (s *Store) fetchBillingStats(ctx context.Context) (*BillingStats, error) {
 	var stats BillingStats
 	err := s.db.GetContext(ctx, &stats, `
@@ -720,12 +737,14 @@ func (s *Store) fetchBillingStats(ctx context.Context) (*BillingStats, error) {
 			(SELECT COUNT(*) FROM users WHERE subscription_valid = true AND will_renew = false) AS will_not_renew,
 			(SELECT COALESCE(SUM(
 				CASE
-					WHEN subscription_product_id ILIKE '%yearly%' THEN 8333  -- ~$99.99/yr / 12
-					WHEN subscription_product_id ILIKE '%monthly%' THEN 999  -- $9.99/mo
+					WHEN subscription_product_id ILIKE '%gifted%'  THEN 0
+					WHEN subscription_product_id ILIKE '%yearly%'  THEN $1
+					WHEN subscription_product_id ILIKE '%monthly%' THEN $2
 					ELSE 0
 				END), 0)::bigint
-				FROM users WHERE subscription_valid = true) AS mrr_estimate_cents
-	`)
+				FROM users
+				WHERE subscription_valid = true) AS mrr_estimate_cents
+	`, priceYearlyCents/12, priceMonthlyCents)
 	return &stats, err
 }
 

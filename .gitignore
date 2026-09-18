@@ -141,3 +141,7 @@ apps/web/.vite/
 
 # Pre-FSL Expo mobile reference (kept locally, do not check in — 1+ GB)
 /app-old/
+
+# local build artifacts
+adapty-backfill
+migrate-spike

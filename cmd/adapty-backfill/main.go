@@ -170,15 +170,19 @@ func apply(ctx context.Context, conn *sqlx.DB, userID int64, p *patch) error {
 
 	// Update the user. Only set the platform-specific store ID column matching
 	// the patch's platform; leave the other one alone.
+	// $4 and $7 are each used both as an assigned value and inside a CASE
+	// comparison, and they land on columns of differing types (varchar vs
+	// text). Without explicit casts Postgres cannot deduce one type for the
+	// parameter and rejects the statement with 42P08.
 	q := `UPDATE users SET
 		subscription_valid       = $1,
 		subscription_expiry      = $2,
 		subscription_product_id  = $3,
-		subscription_platform    = $4,
+		subscription_platform    = $4::text,
 		will_renew               = $5,
-		cancellation_reason      = COALESCE(NULLIF($6, ''), cancellation_reason),
-		apple_original_transaction_id = CASE WHEN $4 = 'apple'  AND $7 <> '' THEN $7 ELSE apple_original_transaction_id END,
-		google_purchase_token         = CASE WHEN $4 = 'google' AND $7 <> '' THEN $7 ELSE google_purchase_token END,
+		cancellation_reason      = COALESCE(NULLIF($6::text, ''), cancellation_reason),
+		apple_original_transaction_id = CASE WHEN $4::text = 'apple'  AND $7::text <> '' THEN $7::text ELSE apple_original_transaction_id END,
+		google_purchase_token         = CASE WHEN $4::text = 'google' AND $7::text <> '' THEN $7::text ELSE google_purchase_token END,
 		last_store_sync_at       = NOW(),
 		updated_at               = NOW()
 	 WHERE id = $8`
