@@ -45,6 +45,7 @@ var (
 	dsn         = flag.String("dsn", envOr("DATABASE_URL", "postgres://127.0.0.1:5432/rfspager?sslmode=disable"), "Postgres DSN")
 	apiKey      = flag.String("adapty-key", os.Getenv("ADAPTY_SECRET_API_KEY"), "Adapty secret API key (or set $ADAPTY_SECRET_API_KEY)")
 	onlyMissing = flag.Bool("only-missing", true, "Only process users with no apple_original_transaction_id AND no google_purchase_token")
+	onlyTxn     = flag.Bool("only-transacted", false, "Only process users who have ever transacted (adapty_id, subscription_expiry or subscription_valid set). Adapty has nothing to say about anyone else, so this skips the ~83% of rows that only cost API round-trips.")
 	userIDFlag  = flag.String("user-id", "", "Only process this user (users.id integer OR users.user_id UUID)")
 	limit       = flag.Int("limit", 0, "Stop after this many users (0 = no limit)")
 	sleepMS     = flag.Int("sleep", 200, "Milliseconds to sleep between Adapty API calls (rate-limit guard)")
@@ -150,6 +151,12 @@ func selectUsers(conn *sqlx.DB) ([]userRow, error) {
 	} else if *onlyMissing {
 		q += ` AND (apple_original_transaction_id IS NULL OR apple_original_transaction_id = '')
 		       AND (google_purchase_token IS NULL OR google_purchase_token = '')`
+	}
+
+	if *onlyTxn && *userIDFlag == "" {
+		q += ` AND (adapty_id IS NOT NULL
+		         OR subscription_expiry IS NOT NULL
+		         OR subscription_valid = true)`
 	}
 
 	q += " ORDER BY id"
