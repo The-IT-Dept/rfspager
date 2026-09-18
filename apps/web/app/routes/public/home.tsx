@@ -135,10 +135,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 <Link to="/map" className="font-semibold text-gray-500 hover:text-gray-900 transition-colors">
                   View the map
                 </Link>
-                <span className="text-gray-300">·</span>
-                <Link to="/systems" className="font-semibold text-gray-500 hover:text-gray-900 transition-colors">
-                  Our receivers
-                </Link>
               </div>
             </div>
 
@@ -208,10 +204,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               </div>
 
               <Link
-                to="/systems"
+                to="/pager"
                 className="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-sm font-semibold transition-colors"
               >
-                See the live receiver status
+                Watch the live feed
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M17 8l4 4m0 0l-4 4m4-4H3" />
                 </svg>

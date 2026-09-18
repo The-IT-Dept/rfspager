@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 import type { Route } from "./+types/pager";
 
 const API_BASE = process.env.API_URL || "http://localhost:8080";
@@ -372,50 +372,48 @@ export default function Pager({ loaderData }: Route.ComponentProps) {
                       className="absolute left-0 top-0 bottom-0 w-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
                       style={{ backgroundColor: msg.capcode_colour || "#F7241D" }}
                     />
-                    <div className="flex gap-3 md:gap-5">
-                      <div className="shrink-0 w-[64px] md:w-[92px] pt-0.5">
-                        <p className="text-[11px] md:text-xs font-mono text-gray-400 tabular-nums leading-tight">
-                          {fmtTime(msg.created_at)}
-                        </p>
-                        <p className="text-[10px] text-gray-300 tabular-nums mt-0.5 hidden md:block">
-                          {ago(msg.created_at)} ago
-                        </p>
-                      </div>
-                      <div className="shrink-0 w-[120px] md:w-[160px] pt-0.5">
-                        <span
-                          className="inline-block px-2 py-0.5 rounded text-[11px] font-bold text-white uppercase tracking-wide truncate max-w-full"
-                          style={{ backgroundColor: msg.capcode_colour || "#6b7280" }}
-                        >
-                          {msg.capcode_alias || msg.address}
-                        </span>
-                        {msg.agency_name && (
-                          <p className="text-[10px] text-gray-400 mt-1 truncate hidden md:block">
-                            {msg.agency_name}
+                    <div className="flex flex-col gap-1.5 md:flex-row md:gap-5">
+                      {/* Time and capcode share one line on mobile so the message
+                          gets the full column width. `md:contents` dissolves this
+                          wrapper at md, restoring the three-column desktop row. */}
+                      <div className="flex items-center gap-2.5 md:contents">
+                        <div className="shrink-0 md:w-[92px] md:pt-0.5">
+                          <p className="text-[11px] md:text-xs font-mono text-gray-400 tabular-nums leading-tight">
+                            {fmtTime(msg.created_at)}
                           </p>
-                        )}
+                          <p className="text-[10px] text-gray-300 tabular-nums mt-0.5 hidden md:block">
+                            {ago(msg.created_at)} ago
+                          </p>
+                        </div>
+                        <div className="min-w-0 flex-1 md:flex-none md:shrink-0 md:w-[160px] md:pt-0.5">
+                          <span
+                            className="inline-block px-2 py-0.5 rounded text-[11px] font-bold text-white uppercase tracking-wide truncate max-w-full align-middle"
+                            style={{ backgroundColor: msg.capcode_colour || "#6b7280" }}
+                          >
+                            {msg.capcode_alias || msg.address}
+                          </span>
+                          {msg.agency_name && (
+                            <p className="text-[10px] text-gray-400 mt-1 truncate hidden md:block">
+                              {msg.agency_name}
+                            </p>
+                          )}
+                        </div>
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-[13px] md:text-[13.5px] font-mono text-gray-800 leading-relaxed whitespace-pre-wrap break-words">
                           {msg.message}
                         </p>
                         {msg.system_name && (
-                          <p className="text-[10px] text-gray-400 mt-1.5 flex items-center gap-1.5">
+                          <p className="text-[10px] text-gray-400 mt-1.5 flex items-center gap-1.5 min-w-0">
                             <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2 12h2m16 0h2M12 2v2m0 16v2M5.6 5.6l1.4 1.4m10 10l1.4 1.4M5.6 18.4l1.4-1.4m10-10l1.4-1.4M12 8a4 4 0 100 8 4 4 0 000-8z" />
                             </svg>
-                            <span className="text-gray-500">decoded by</span>
-                            {msg.system_uuid ? (
-                              <Link
-                                to={`/systems?uuid=${msg.system_uuid}`}
-                                className="font-semibold text-gray-500 hover:text-[#F7241D] transition-colors truncate"
-                              >
-                                {msg.system_name}
-                              </Link>
-                            ) : (
-                              <span className="font-semibold text-gray-500 truncate">
-                                {msg.system_name}
-                              </span>
-                            )}
+                            <span className="text-gray-500 whitespace-nowrap">decoded by</span>
+                            {/* Systems page gated off for now — render as plain
+                                text rather than a link to a redirect. */}
+                            <span className="font-semibold text-gray-500 truncate">
+                              {msg.system_name}
+                            </span>
                           </p>
                         )}
                       </div>

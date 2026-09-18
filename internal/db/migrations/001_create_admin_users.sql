@@ -13,8 +13,7 @@ CREATE TABLE IF NOT EXISTS admin_users (
 
 CREATE INDEX IF NOT EXISTS idx_admin_users_email ON admin_users(email);
 
--- Seed a default admin (password: changeme)
--- bcrypt hash of 'changeme'
-INSERT INTO admin_users (email, password_hash, name, role)
-VALUES ('admin@rfspager.app', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Admin', 'superadmin')
-ON CONFLICT (email) DO NOTHING;
+-- No admin is seeded here. The initial admin is created on boot from
+-- ADMIN_EMAIL / ADMIN_PASSWORD (see internal/admin). A hardcoded seed with a
+-- bcrypt hash committed to the repo would create a superadmin with a publicly
+-- known password on every environment, including production.

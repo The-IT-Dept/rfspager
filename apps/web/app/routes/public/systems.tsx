@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router";
+import { redirect, useSearchParams } from "react-router";
 import type { Route } from "./+types/systems";
 import { SpectrumWaterfall } from "~/components/spectrum-waterfall";
 
@@ -20,12 +20,13 @@ interface System {
 }
 
 export async function loader() {
-  try {
-    const res = await fetch(`${API_BASE}/api/public/systems`);
-    return { systems: res.ok ? ((await res.json()) as System[]) : [] };
-  } catch {
-    return { systems: [] };
-  }
+  // Public receiver-network page is gated off for now. Send visitors home.
+  // To re-enable: restore the commented fetch below and re-add the nav/footer
+  // links in components/public-layout.tsx and routes/public/home.tsx.
+  throw redirect("/");
+
+  // const res = await fetch(`${API_BASE}/api/public/systems`);
+  // return { systems: res.ok ? ((await res.json()) as System[]) : [] };
 }
 
 export function meta() {
@@ -62,9 +63,11 @@ function timeAgo(dateStr: string | null): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-export default function SystemsPage({ loaderData }: Route.ComponentProps) {
+export default function SystemsPage(_props: Route.ComponentProps) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const systems: System[] = loaderData?.systems || [];
+  // Loader always redirects while this page is gated, so this body never
+  // renders; keep it type-clean without reading the (never-typed) loaderData.
+  const systems: System[] = [];
   const onlineCount = systems.filter((s) => isOnline(s)).length;
 
   // Filter to only approved (non-pending) systems for the public list; we

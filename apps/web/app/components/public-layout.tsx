@@ -5,7 +5,8 @@ const NAV_LINKS = [
   { label: "Pager", path: "/pager" },
   { label: "Map", path: "/map" },
   { label: "Capcodes", path: "/capcodes" },
-  { label: "Systems", path: "/systems" },
+  // Systems (public receiver-network page) gated off for now — see
+  // routes/public/systems.tsx.
 ];
 
 interface User {
@@ -195,7 +196,6 @@ export function PublicLayout() {
                 <ul className="space-y-3 text-sm">
                   <li><Link to="/pager" className="hover:text-white transition-colors">Live Feed</Link></li>
                   <li><Link to="/map" className="hover:text-white transition-colors">Map</Link></li>
-                  <li><Link to="/systems" className="hover:text-white transition-colors">Systems</Link></li>
                 </ul>
               </div>
               <div className="md:col-span-2">
