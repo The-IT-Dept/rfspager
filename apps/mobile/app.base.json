@@ -9,14 +9,8 @@
     ],
     "version": "4.1.0",
     "icon": "./assets/images/icon.png",
-    "jsEngine": "hermes",
     "experiments": {
       "typedRoutes": true
-    },
-    "splash": {
-      "image": "./assets/images/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
     },
     "updates": {
       "fallbackToCacheTimeout": 0
@@ -157,7 +151,17 @@
           "iosAppId": "ca-app-pub-2990192963224757~4577918301"
         }
       ],
-      "expo-router"
+      "expo-router",
+      "expo-sharing",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ],
+      "expo-status-bar"
     ],
     "extra": {
       "eas": {

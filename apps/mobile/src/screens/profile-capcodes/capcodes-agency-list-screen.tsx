@@ -28,7 +28,7 @@ export const CapcodesAgencyListScreen: FC =
 
     const handleAgencyPress = useCallback(
       (agencyData: (typeof groupedData)[0]) => {
-        router.push(`/(tabs)/settings/capcode-detail?agencyId=${agencyData.agencyId}&agency=${encodeURIComponent(agencyData.agency)}`)
+        router.push(`/settings/capcode-detail?agencyId=${agencyData.agencyId}&agency=${encodeURIComponent(agencyData.agency)}`)
       },
       [router],
     )

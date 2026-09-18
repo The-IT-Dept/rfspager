@@ -129,13 +129,13 @@ export const ProfileScreen: FC = function ProfileScreen() {
       id: "my-account",
       title: "My Account",
       type: "navigation",
-      onPress: () => router.push("/(tabs)/settings/account"),
+      onPress: () => router.push("/settings/account"),
     },
     {
       id: "subscription",
       title: "Manage Subscription",
       type: "navigation",
-      onPress: () => router.push("/(tabs)/settings/subscription"),
+      onPress: () => router.push("/settings/subscription"),
     },
   ]
 
