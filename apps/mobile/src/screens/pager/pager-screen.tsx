@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
 } from "react-native"
 import { ActivityIndicator, Text } from "react-native"
+import { ScrollMarker } from "../../components/scroll-marker/scroll-marker"
 import { FontAwesome5 } from "@expo/vector-icons"
 import { Stack, useRouter } from "expo-router"
 
@@ -176,28 +177,30 @@ export const PagerScreen: FC =
             )}
           </View>
         ) : (
-          <FlatList
-            ref={flatListRef}
-            data={messages}
-            keyExtractor={(message: any) => String(message.id)}
-            showsVerticalScrollIndicator={false}
-            renderItem={renderItem}
-            ListFooterComponent={renderFooter}
-            contentContainerStyle={styles.listContainer}
-            contentInsetAdjustmentBehavior="automatic"
-            scrollEnabled={true}
-            onEndReached={() => hasNextPage && fetchNextPage()}
-            refreshControl={
-              <RefreshControl
-                tintColor={theme.colors.interactive}
-                refreshing={reloading}
-                onRefresh={() => {
-                  setReloading(true)
-                  refetch().finally(() => setReloading(false))
-                }}
-              />
-            }
-          />
+          <ScrollMarker>
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              keyExtractor={(message: any) => String(message.id)}
+              showsVerticalScrollIndicator={false}
+              renderItem={renderItem}
+              ListFooterComponent={renderFooter}
+              contentContainerStyle={styles.listContainer}
+              contentInsetAdjustmentBehavior="automatic"
+              scrollEnabled={true}
+              onEndReached={() => hasNextPage && fetchNextPage()}
+              refreshControl={
+                <RefreshControl
+                  tintColor={theme.colors.interactive}
+                  refreshing={reloading}
+                  onRefresh={() => {
+                    setReloading(true)
+                    refetch().finally(() => setReloading(false))
+                  }}
+                />
+              }
+            />
+          </ScrollMarker>
         )}
 
         <BannerAd />

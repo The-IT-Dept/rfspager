@@ -9,6 +9,7 @@ import {
   Share,
 } from "react-native"
 import { ActivityIndicator, Text } from "react-native"
+import { ScrollMarker } from "../../components/scroll-marker/scroll-marker"
 import { FontAwesome5 } from "@expo/vector-icons"
 import moment from "moment"
 import { useRouter } from "expo-router"
@@ -257,28 +258,30 @@ export const MajorIncidentsScreen: FC = function MajorIncidentsScreen() {
 
   return (
     <View style={styles.container}>
-      <FlatList
-        ref={flatListRef}
-        data={incidents}
-        keyExtractor={(incident) => String(incident.id)}
-        renderItem={renderIncident}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.listContainer}
-        contentInsetAdjustmentBehavior="automatic"
-        ListEmptyComponent={renderEmpty}
-        ListFooterComponent={renderFooter}
-        onEndReached={() => {
-          if (hasNextPage) fetchNextPage()
-        }}
-        onEndReachedThreshold={0.1}
-        refreshControl={
-          <RefreshControl
-            tintColor={theme.colors.interactive}
-            refreshing={false}
-            onRefresh={() => refetch()}
-          />
-        }
-      />
+      <ScrollMarker>
+        <FlatList
+          ref={flatListRef}
+          data={incidents}
+          keyExtractor={(incident) => String(incident.id)}
+          renderItem={renderIncident}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.listContainer}
+          contentInsetAdjustmentBehavior="automatic"
+          ListEmptyComponent={renderEmpty}
+          ListFooterComponent={renderFooter}
+          onEndReached={() => {
+            if (hasNextPage) fetchNextPage()
+          }}
+          onEndReachedThreshold={0.1}
+          refreshControl={
+            <RefreshControl
+              tintColor={theme.colors.interactive}
+              refreshing={false}
+              onRefresh={() => refetch()}
+            />
+          }
+        />
+      </ScrollMarker>
       <BannerAd />
       <ModalComponent />
       <AdDebugPanel />
