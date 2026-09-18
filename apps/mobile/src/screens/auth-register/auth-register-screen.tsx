@@ -11,11 +11,11 @@ import {
   View,
   Text,
   Platform,
-  ScrollView,
   TextInput,
   SafeAreaView,
 } from "react-native"
 import { ActivityIndicator } from "react-native"
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller"
 import { useRouter } from "expo-router"
 import * as AppleAuthentication from "expo-apple-authentication"
 import { AccessToken, LoginManager } from "react-native-fbsdk-next"
@@ -112,7 +112,7 @@ export const AuthRegisterScreen: FC = () => {
 
     return (
       <SafeAreaView style={styles.container}>
-        <ScrollView
+        <KeyboardAwareScrollView
           showsVerticalScrollIndicator={false}
           automaticallyAdjustKeyboardInsets
           keyboardShouldPersistTaps="handled"
@@ -238,7 +238,7 @@ export const AuthRegisterScreen: FC = () => {
               </View>
             </View>
           </View>
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </SafeAreaView>
     )
   }

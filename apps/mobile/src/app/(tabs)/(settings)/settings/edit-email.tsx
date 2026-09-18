@@ -1,8 +1,8 @@
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller"
 import React, { useState } from "react"
 import {
   ActivityIndicator,
   Alert,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -46,7 +46,7 @@ export default function EditEmailScreen() {
   }
 
   return (
-    <ScrollView
+    <KeyboardAwareScrollView
       contentInsetAdjustmentBehavior="automatic"
       automaticallyAdjustKeyboardInsets
       keyboardShouldPersistTaps="handled"
@@ -96,7 +96,7 @@ export default function EditEmailScreen() {
             <Text style={styles.buttonText}>Change email</Text>
           )}
         </TouchableOpacity>
-    </ScrollView>
+    </KeyboardAwareScrollView>
   )
 }
 

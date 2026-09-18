@@ -1,8 +1,8 @@
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller"
 import React, { useState } from "react"
 import {
   ActivityIndicator,
   Alert,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -49,7 +49,7 @@ export default function DeleteAccountScreen() {
   }
 
   return (
-    <ScrollView
+    <KeyboardAwareScrollView
       contentInsetAdjustmentBehavior="automatic"
       automaticallyAdjustKeyboardInsets
       keyboardShouldPersistTaps="handled"
@@ -89,7 +89,7 @@ export default function DeleteAccountScreen() {
             <Text style={styles.buttonText}>Delete my account</Text>
           )}
         </TouchableOpacity>
-    </ScrollView>
+    </KeyboardAwareScrollView>
   )
 }
 

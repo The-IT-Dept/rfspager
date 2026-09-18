@@ -2,7 +2,6 @@ import React, { FC, useState } from "react"
 import {
   Alert,
   Image,
-  ScrollView,
   View,
   TouchableOpacity,
   TextInput,
@@ -10,6 +9,7 @@ import {
 } from "react-native"
 import { useAuthStore } from "../../stores"
 import { ActivityIndicator, Text } from "react-native"
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller"
 
 import { emailValidator } from "../../utils/validators"
 import { useRouter } from "expo-router"
@@ -57,7 +57,7 @@ export const AuthForgotPasswordScreen: FC = () => {
 
     return (
       <SafeAreaView style={styles.container}>
-        <ScrollView
+        <KeyboardAwareScrollView
           showsVerticalScrollIndicator={false}
           automaticallyAdjustKeyboardInsets
           keyboardShouldPersistTaps="handled"
@@ -115,7 +115,7 @@ export const AuthForgotPasswordScreen: FC = () => {
               </View>
             </View>
           </View>
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </SafeAreaView>
     )
   }

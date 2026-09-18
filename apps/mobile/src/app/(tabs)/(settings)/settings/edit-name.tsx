@@ -1,8 +1,8 @@
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller"
 import React, { useState } from "react"
 import {
   ActivityIndicator,
   Alert,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -37,7 +37,7 @@ export default function EditNameScreen() {
   }
 
   return (
-    <ScrollView
+    <KeyboardAwareScrollView
       contentInsetAdjustmentBehavior="automatic"
       automaticallyAdjustKeyboardInsets
       keyboardShouldPersistTaps="handled"
@@ -69,7 +69,7 @@ export default function EditNameScreen() {
             <Text style={styles.buttonText}>Save</Text>
           )}
         </TouchableOpacity>
-    </ScrollView>
+    </KeyboardAwareScrollView>
   )
 }
 

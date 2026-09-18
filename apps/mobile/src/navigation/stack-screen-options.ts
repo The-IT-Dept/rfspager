@@ -4,25 +4,30 @@ import type { AppTheme } from "../theme"
 /**
  * Screen options shared by every tab's stack.
  *
- * Each tab owns its own Stack so that pushing a detail screen keeps the native
- * tab bar in place and preserves that tab's back history. Extracting the
- * options keeps the four layouts from drifting apart.
+ * Each tab owns its own Stack so pushing a detail screen keeps the native tab
+ * bar in place and preserves that tab's back history. Extracting the options
+ * keeps the four layouts from drifting apart.
+ *
+ * On iOS the header is deliberately left almost entirely alone. UINavigationBar
+ * renders Liquid Glass itself on iOS 26 and handles content scrolling beneath
+ * it. An earlier version set `headerTransparent` with transparent backgrounds
+ * on both `headerStyle` and `headerLargeStyle`, which removed the bar's
+ * background — leaving nothing for the system to apply the material to, so all
+ * that remained was the scroll-edge fade over bare content. That is what made
+ * the headers look like imitation glass rather than the real thing.
+ *
+ * `scrollEdgeEffects` is likewise left at its `automatic` default: UIKit picks
+ * the right treatment per screen, and forcing `soft` everywhere overrode that.
+ * Note that `blurEffect` must not be combined with it — react-native-screens
+ * warns the two stack into overlapping effects.
  */
 export const stackScreenOptions = (theme: AppTheme) =>
   ({
-    headerTransparent: Platform.OS === "ios",
-    headerStyle:
-      Platform.OS === "ios"
-        ? { backgroundColor: "transparent" }
-        : { backgroundColor: theme.colors.background },
     headerTintColor: theme.colors.textPrimary,
-    headerTitleStyle: { color: theme.colors.textPrimary },
     headerShadowVisible: false,
-    headerLargeStyle: { backgroundColor: "transparent" },
     contentStyle: { backgroundColor: theme.colors.background },
-    // iOS 26 Liquid Glass: scrollEdgeEffects.top renders the proper translucent
-    // header that doesn't pick up the colour of content scrolling under it.
-    // Combining this with headerBlurEffect stacks two effects (per
-    // react-native-screens docs), so it is used alone.
-    scrollEdgeEffects: { top: "soft" },
+    // Android has no Liquid Glass, so it still needs an explicit surface.
+    ...(Platform.OS === "android"
+      ? { headerStyle: { backgroundColor: theme.colors.background } }
+      : null),
   }) as const

@@ -4,7 +4,8 @@
  */
 
 import React, { FC, useState } from "react"
-import { Alert, View, TouchableOpacity, ScrollView, TextInput as RNTextInput } from "react-native"
+import { Alert, View, TouchableOpacity, TextInput as RNTextInput } from "react-native"
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller"
 import { Text } from "react-native"
 import Slider from "@react-native-community/slider"
 import MapView, { Circle, LatLng, Marker } from "react-native-maps"
@@ -63,7 +64,7 @@ export const ProfileAlertzonesCreateScreen: FC =
 
 
     return (
-      <ScrollView
+      <KeyboardAwareScrollView
         style={styles.createContainer}
         showsVerticalScrollIndicator={false}
         contentInsetAdjustmentBehavior="automatic"
@@ -179,6 +180,6 @@ export const ProfileAlertzonesCreateScreen: FC =
             <Text style={styles.discardButtonText}>Cancel</Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
+      </KeyboardAwareScrollView>
     )
   }

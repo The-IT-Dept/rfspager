@@ -1,9 +1,9 @@
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller"
 /* eslint-disable react-native/no-inline-styles */
 import React, { FC, useMemo, useState } from "react"
 import {
   Alert,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -112,7 +112,7 @@ export const CapcodeSuggestScreen: FC = function CapcodeSuggestScreen() {
         }}
       />
 
-      <ScrollView
+      <KeyboardAwareScrollView
         style={styles.scrollView}
         contentInsetAdjustmentBehavior="automatic"
         automaticallyAdjustKeyboardInsets
@@ -253,7 +253,7 @@ export const CapcodeSuggestScreen: FC = function CapcodeSuggestScreen() {
             {submitting ? "Submitting…" : "Submit suggestion"}
           </Text>
         </TouchableOpacity>
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </View>
   )
 }

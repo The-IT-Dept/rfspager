@@ -1,8 +1,8 @@
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller"
 import React, { FC, useState } from "react"
 import {
   Alert,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -61,7 +61,7 @@ export const CreateSystemScreen: FC = function CreateSystemScreen() {
   }
 
   return (
-    <ScrollView
+    <KeyboardAwareScrollView
       style={{ flex: 1, backgroundColor: theme.colors.background }}
       contentInsetAdjustmentBehavior="automatic"
       automaticallyAdjustKeyboardInsets
@@ -176,7 +176,7 @@ export const CreateSystemScreen: FC = function CreateSystemScreen() {
             />
           </View>
         )}
-    </ScrollView>
+    </KeyboardAwareScrollView>
   )
 }
 

@@ -1,8 +1,8 @@
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller"
 import React, { useState } from "react"
 import {
   ActivityIndicator,
   Alert,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -40,7 +40,7 @@ export default function ChangePasswordScreen() {
   }
 
   return (
-    <ScrollView
+    <KeyboardAwareScrollView
       contentInsetAdjustmentBehavior="automatic"
       automaticallyAdjustKeyboardInsets
       keyboardShouldPersistTaps="handled"
@@ -102,7 +102,7 @@ export default function ChangePasswordScreen() {
             <Text style={styles.buttonText}>Change password</Text>
           )}
         </TouchableOpacity>
-    </ScrollView>
+    </KeyboardAwareScrollView>
   )
 }
 

@@ -60,6 +60,7 @@
     "react-native-gesture-handler": "~2.32.0",
     "react-native-google-mobile-ads": "^15.4.0",
     "react-native-gravatar": "^1.0.2",
+    "react-native-keyboard-controller": "1.21.9",
     "react-native-keychain": "^9.1.0",
     "react-native-map-clustering": "^3.4.2",
     "react-native-map-link": "^3.5.0",

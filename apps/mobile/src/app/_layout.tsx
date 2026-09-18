@@ -1,5 +1,6 @@
 import "react-native-gesture-handler"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
+import { KeyboardProvider } from "react-native-keyboard-controller"
 import "../i18n"
 import "../utils/ignore-warnings"
 
@@ -123,7 +124,12 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <QueryClientProvider client={queryClient}>
         <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-          <RootLayoutInner />
+          {/* Drives KeyboardAwareScrollView on the input screens. The keyboard
+              position is read on the native side, so the content follows it
+              frame-for-frame instead of chasing it from JS. */}
+          <KeyboardProvider>
+            <RootLayoutInner />
+          </KeyboardProvider>
         </SafeAreaProvider>
       </QueryClientProvider>
     </GestureHandlerRootView>
