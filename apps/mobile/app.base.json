@@ -178,6 +178,7 @@
       "eas": {
         "projectId": "8cfee94d-1a51-43f4-aaae-be693fb122a6"
       }
-    }
+    },
+    "userInterfaceStyle": "automatic"
   }
 }

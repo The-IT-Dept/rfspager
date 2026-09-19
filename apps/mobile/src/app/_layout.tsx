@@ -5,6 +5,7 @@ import "../i18n"
 import "../utils/ignore-warnings"
 
 import React, { useEffect } from "react"
+import { Appearance } from "react-native"
 import { Stack } from "expo-router"
 import { StatusBar } from "expo-status-bar"
 import { useFonts } from "expo-font"
@@ -46,6 +47,16 @@ function RootLayoutInner() {
   const token = useAuthStore((s) => s.token)
   const onboarded = usePreferencesStore((s) => s.onboarded)
   const darkMode = usePreferencesStore((s) => s.darkMode)
+
+  // The app draws its own theme from this preference, but the native chrome —
+  // navigation title, tab bar labels, Liquid Glass tint — follows UIKit's trait
+  // collection. Since the splash gained a dark variant, UIUserInterfaceStyle is
+  // "Automatic", so that chrome tracked the *system* setting instead: white
+  // title and tab labels over a light app when the phone is in dark mode.
+  // Pin the native colour scheme to the app's theme so both layers agree.
+  useEffect(() => {
+    Appearance.setColorScheme(darkMode ? "dark" : "light")
+  }, [darkMode])
 
   const isAuthed = !!user && !!token
   const showOnboarding = !onboarded

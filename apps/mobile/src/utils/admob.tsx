@@ -58,10 +58,7 @@ export type BannerAdPlacement = "floating" | "accessory"
 // tab bars sit outside the window safe area reported by SafeAreaProvider.
 const NATIVE_TAB_BAR_HEIGHT = Platform.OS === "ios" ? 49 : 80
 
-export function BannerAd({
-  placement = "floating",
-  accessoryPlacement,
-}: { placement?: BannerAdPlacement; accessoryPlacement?: "regular" | "inline" } = {}) {
+export function BannerAd({ placement = "floating" }: { placement?: BannerAdPlacement } = {}) {
   const validSubscription = useValidSubscription()
   const insets = useSafeAreaInsets()
   const glassTabBar = Platform.OS === "ios" && isLiquidGlassAvailable()
@@ -85,15 +82,16 @@ export function BannerAd({
   // copy would double up and overlap the glass tab bar.
   if (placement === "floating" && glassTabBar) return null
 
-  // The accessory is a rounded glass capsule the system draws; the ad's own
-  // native view has square corners and FULL_BANNER (468pt) is wider than the
-  // capsule, so it poked out. Fill the slot, clip to a matching radius, and
-  // use the 320x50 BANNER which fits inside it.
+  // The accessory is a rounded glass capsule the system draws, measured at
+  // 322x48pt in both the regular and inline placements. The 320x50 BANNER fits
+  // the width exactly and overshoots the height by 1pt top and bottom, which
+  // the clip absorbs; capsule radius is half the slot height.
   const size = placement === "accessory" ? BannerAdSize.BANNER : BannerAdSize.FULL_BANNER
   const containerStyle: ViewStyle =
     placement === "accessory"
       ? {
-          flex: 1,
+          height: 48,
+          alignSelf: "stretch",
           alignItems: "center",
           justifyContent: "center",
           overflow: "hidden",
@@ -111,14 +109,6 @@ export function BannerAd({
   return (
     <View
       style={containerStyle}
-      onLayout={
-        __DEV__ && placement === "accessory"
-          ? (e) => {
-              const { width, height } = e.nativeEvent.layout
-              console.log(`🎯 [BannerAd] accessory slot placement=${accessoryPlacement} size=${Math.round(width)}x${Math.round(height)}`)
-            }
-          : undefined
-      }
     >
       <BannerAdAdmob
         unitId={adUnitIDBanner}
