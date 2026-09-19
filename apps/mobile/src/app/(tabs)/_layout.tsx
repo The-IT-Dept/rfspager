@@ -69,6 +69,8 @@ export default function TabsLayout() {
  */
 function AccessoryAd() {
   const placement = NativeTabs.BottomAccessory.usePlacement()
-  if (placement !== "regular") return null
-  return <BannerAd placement="accessory" />
+  // Rendered in both placements. The inline slot beside the minimised bar is
+  // shorter than a 50pt banner, so the ad is clipped to the capsule there; the
+  // measured slot sizes are logged (dev only) so the inline size can be tuned.
+  return <BannerAd placement="accessory" accessoryPlacement={placement} />
 }
