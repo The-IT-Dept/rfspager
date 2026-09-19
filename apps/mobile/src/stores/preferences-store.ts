@@ -9,7 +9,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage"
 interface PreferencesState {
   onboarded: boolean
   darkMode: boolean
-  showSearchFields: boolean
   drawerExpanded: boolean
 
   // Map
@@ -27,7 +26,6 @@ interface PreferencesState {
   toggleDarkMode: () => void
   setDarkMode: (v: boolean) => void
   toggleDrawerExpanded: () => void
-  setShowSearchFields: (v: boolean) => void
   setClusterMapIcons: (v: boolean) => void
   setMapPageSize: (v: number) => void
   setMapShowHR: (v: boolean) => void
@@ -41,7 +39,6 @@ export const usePreferencesStore = create<PreferencesState>()(
     (set) => ({
       onboarded: false,
       darkMode: false,
-      showSearchFields: false,
       drawerExpanded: false,
       clusterMapIcons: true,
       mapPageSize: 100,
@@ -54,7 +51,6 @@ export const usePreferencesStore = create<PreferencesState>()(
       toggleDarkMode: () => set((s) => ({ darkMode: !s.darkMode })),
       setDarkMode: (v) => set({ darkMode: v }),
       toggleDrawerExpanded: () => set((s) => ({ drawerExpanded: !s.drawerExpanded })),
-      setShowSearchFields: (v) => set({ showSearchFields: v }),
       setClusterMapIcons: (v) => set({ clusterMapIcons: v }),
       setMapPageSize: (v) => set({ mapPageSize: v }),
       setMapShowHR: (v) => set({ mapShowHR: v }),

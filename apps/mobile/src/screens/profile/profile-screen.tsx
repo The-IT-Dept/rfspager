@@ -31,7 +31,6 @@ export const ProfileScreen: FC = function ProfileScreen() {
   const ensureFreshUser = useAuthStore((s) => s.ensureFreshUser)
 
   const darkMode = usePreferencesStore((s) => s.darkMode)
-  const showSearchFields = usePreferencesStore((s) => s.showSearchFields)
   const pagerFilter = usePreferencesStore((s) => s.pagerFilter)
   const pagerShowUnknown = usePreferencesStore((s) => s.pagerShowUnknown)
   const mapPageSize = usePreferencesStore((s) => s.mapPageSize)
@@ -39,7 +38,6 @@ export const ProfileScreen: FC = function ProfileScreen() {
   const mapShowHR = usePreferencesStore((s) => s.mapShowHR)
   const mapShowUpdates = usePreferencesStore((s) => s.mapShowUpdates)
   const setDarkMode = usePreferencesStore((s) => s.setDarkMode)
-  const setShowSearchFields = usePreferencesStore((s) => s.setShowSearchFields)
   const setPagerFilter = usePreferencesStore((s) => s.setPagerFilter)
   const setPagerShowUnknown = usePreferencesStore((s) => s.setPagerShowUnknown)
   const setClusterMapIcons = usePreferencesStore((s) => s.setClusterMapIcons)
@@ -222,13 +220,6 @@ export const ProfileScreen: FC = function ProfileScreen() {
       type: "toggle",
       value: darkMode,
       onToggle: () => setDarkMode(!darkMode),
-    },
-    {
-      id: "search-fields",
-      title: "Show Search Fields",
-      type: "toggle",
-      value: showSearchFields,
-      onToggle: () => setShowSearchFields(!showSearchFields),
     },
   ]
 

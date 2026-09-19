@@ -27,10 +27,8 @@ export const PagerScreen: FC =
     const router = useRouter()
     const theme = useAppTheme()
 
-    const showSearchFields = usePreferencesStore((s) => s.showSearchFields)
     const pagerFilter = usePreferencesStore((s) => s.pagerFilter)
     const pagerShowUnknown = usePreferencesStore((s) => s.pagerShowUnknown)
-    const setShowSearchFields = usePreferencesStore((s) => s.setShowSearchFields)
     const setPagerFilter = usePreferencesStore((s) => s.setPagerFilter)
     const setPagerShowUnknown = usePreferencesStore((s) => s.setPagerShowUnknown)
     const validSubscription = useValidSubscription()
@@ -176,19 +174,11 @@ export const PagerScreen: FC =
     return (
       <View style={styles.container}>
         {/* Native action menu: a single glass "filter" capsule in the header
-            that opens a UIMenu. The toggles mirror Settings → Pager so the
-            common ones are one tap away from the feed. Filter toggles are Pro
-            features, gated the same way Settings gates them. */}
+            that opens a UIMenu. The toggles mirror Settings → Pager so they are
+            one tap away from the feed; both are Pro features, gated the same
+            way Settings gates them. */}
         <Stack.Toolbar placement="right">
           <Stack.Toolbar.Menu icon="line.3.horizontal.decrease.circle" accessibilityLabel="Feed options">
-            <Stack.Toolbar.MenuAction
-              icon="magnifyingglass"
-              isOn={showSearchFields}
-              unstable_keepPresented
-              onPress={() => setShowSearchFields(!showSearchFields)}
-            >
-              Show search
-            </Stack.Toolbar.MenuAction>
             <Stack.Toolbar.MenuAction
               icon="checkmark.circle"
               isOn={pagerFilter}
@@ -208,22 +198,20 @@ export const PagerScreen: FC =
           </Stack.Toolbar.Menu>
         </Stack.Toolbar>
 
-        {/* Native search, iOS 26 style: collapses to a glass magnifier button in
-            the header and expands in place when tapped. Declared here rather
-            than in the layout so it can follow the user's preference. */}
-        {showSearchFields && (
-          <Stack.SearchBar
-            placement="integratedButton"
-            placeholder="Search messages..."
-            autoCapitalize="none"
-            hideWhenScrolling={false}
-            onChangeText={(e) => {
-              const text = e.nativeEvent.text ?? ""
-              setSearch(text === "" ? null : text)
-            }}
-            onCancelButtonPress={() => setSearch(null)}
-          />
-        )}
+        {/* Native search, iOS 26 style: a glass magnifier button in the header
+            that expands into the field in place. Always present — the button
+            itself is the show/hide, so a preference for it was redundant. */}
+        <Stack.SearchBar
+          placement="integratedButton"
+          placeholder="Search messages..."
+          autoCapitalize="none"
+          hideWhenScrolling={false}
+          onChangeText={(e) => {
+            const text = e.nativeEvent.text ?? ""
+            setSearch(text === "" ? null : text)
+          }}
+          onCancelButtonPress={() => setSearch(null)}
+        />
 
           <ScrollMarker>
             <FlatList
