@@ -82,9 +82,21 @@ export function BannerAd({ placement = "floating" }: { placement?: BannerAdPlace
   // copy would double up and overlap the glass tab bar.
   if (placement === "floating" && glassTabBar) return null
 
+  // The accessory is a rounded glass capsule the system draws; the ad's own
+  // native view has square corners and FULL_BANNER (468pt) is wider than the
+  // capsule, so it poked out. Fill the slot, clip to a matching radius, and
+  // use the 320x50 BANNER which fits inside it.
+  const size = placement === "accessory" ? BannerAdSize.BANNER : BannerAdSize.FULL_BANNER
   const containerStyle: ViewStyle =
     placement === "accessory"
-      ? { alignItems: "center" as const }
+      ? {
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          overflow: "hidden",
+          borderRadius: 24,
+          borderCurve: "continuous",
+        }
       : {
           position: "absolute" as const,
           bottom: insets.bottom + NATIVE_TAB_BAR_HEIGHT,
@@ -97,7 +109,7 @@ export function BannerAd({ placement = "floating" }: { placement?: BannerAdPlace
     <View style={containerStyle}>
       <BannerAdAdmob
         unitId={adUnitIDBanner}
-        size={BannerAdSize.FULL_BANNER}
+        size={size}
         requestOptions={{ requestNonPersonalizedAdsOnly: trackingStatus === "denied" }}
         onAdLoaded={() => {
           setAdLoaded(true)

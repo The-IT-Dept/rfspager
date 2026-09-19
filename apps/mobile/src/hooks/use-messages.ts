@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
+import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { api } from "../services/api-client"
 
 export function useMessages(params: {
@@ -31,6 +31,13 @@ export function useMessages(params: {
     initialPageParam: 1,
     getNextPageParam: (lastPage) =>
       lastPage.page < lastPage.total_pages ? lastPage.page + 1 : undefined,
+    // A search or filter change produces a new query key. Without this the
+    // hook drops to isLoading with no data, the Pager swaps its list for a
+    // spinner, and the FlatList unmounts. The screen's UIScrollView is what
+    // drives the iOS 26 tab bar and header; a fresh one at offset 0 makes the
+    // bar spring back open. Keeping the previous page visible until the new
+    // one lands avoids the unmount entirely.
+    placeholderData: keepPreviousData,
   })
 }
 

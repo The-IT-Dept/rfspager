@@ -53,9 +53,22 @@ export default function TabsLayout() {
           iOS 26 so the ad is not shown twice. */}
       {Platform.OS === "ios" && isLiquidGlassAvailable() && (
         <NativeTabs.BottomAccessory>
-          <BannerAd placement="accessory" />
+          <AccessoryAd />
         </NativeTabs.BottomAccessory>
       )}
     </NativeTabs>
   )
+}
+
+/**
+ * The accessory has two placements. "regular" is the full-width capsule above
+ * the expanded tab bar; "inline" is the small slot beside the minimised bar,
+ * far too narrow for a banner. Render nothing there so the ad folds away with
+ * the bar instead of being clipped to a sliver. Must be a child of
+ * BottomAccessory: usePlacement reads that component's context.
+ */
+function AccessoryAd() {
+  const placement = NativeTabs.BottomAccessory.usePlacement()
+  if (placement !== "regular") return null
+  return <BannerAd placement="accessory" />
 }

@@ -112,13 +112,65 @@ export const PagerScreen: FC =
       ) : null
     }
 
-    if (!initialLoaded)
+
+    // The list is never unmounted. Loading and empty states render through
+    // ListEmptyComponent so the same UIScrollView survives every state change;
+    // it is the scroll view UIKit watches for the tab bar minimise and header
+    // glass, and replacing it made the chrome snap back to expanded.
+    const renderEmpty = () => {
+      if (!initialLoaded)
+        return (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={theme.colors.interactive} />
+            <Text style={styles.loadingText}>Loading messages...</Text>
+          </View>
+        )
+      if (pagerFilter && filters.length === 0)
+        return (
+      <View style={styles.emptyContainer}>
+        <FontAwesome5
+          name={"filter"}
+          size={48}
+          color={theme.colors.textDisabled}
+          style={styles.emptyIcon}
+        />
+        <Text style={styles.emptyTitle}>No Capcodes Selected</Text>
+        <Text style={styles.emptySubtitle}>
+          You have filtering enabled but no capcodes selected.
+        </Text>
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={() => router.push("/capcodes")}
+        >
+          <Text style={styles.actionButtonText}>Select Capcodes</Text>
+        </TouchableOpacity>
+      </View>
+        )
       return (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.interactive} />
-          <Text style={styles.loadingText}>Loading messages...</Text>
-        </View>
+      <View style={styles.emptyContainer}>
+        <FontAwesome5
+          name={"inbox"}
+          size={48}
+          color={theme.colors.textDisabled}
+          style={styles.emptyIcon}
+        />
+        <Text style={styles.emptyTitle}>No Messages</Text>
+        <Text style={styles.emptySubtitle}>
+          There are no messages that match your current filters.
+        </Text>
+        {pagerFilter && (
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => router.push("/capcodes")}
+          >
+            <Text style={styles.actionButtonText}>Adjust Capcodes</Text>
+          </TouchableOpacity>
+        )}
+      </View>
       )
+    }
+
+    const listData = pagerFilter && filters.length === 0 ? [] : messages
 
     return (
       <View style={styles.container}>
@@ -141,56 +193,22 @@ export const PagerScreen: FC =
           </View>
         )}
 
-        {pagerFilter && filters.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <FontAwesome5
-              name={"filter"}
-              size={48}
-              color={theme.colors.textDisabled}
-              style={styles.emptyIcon}
-            />
-            <Text style={styles.emptyTitle}>No Capcodes Selected</Text>
-            <Text style={styles.emptySubtitle}>
-              You have filtering enabled but no capcodes selected.
-            </Text>
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => router.push("/capcodes")}
-            >
-              <Text style={styles.actionButtonText}>Select Capcodes</Text>
-            </TouchableOpacity>
-          </View>
-        ) : messages.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <FontAwesome5
-              name={"inbox"}
-              size={48}
-              color={theme.colors.textDisabled}
-              style={styles.emptyIcon}
-            />
-            <Text style={styles.emptyTitle}>No Messages</Text>
-            <Text style={styles.emptySubtitle}>
-              There are no messages that match your current filters.
-            </Text>
-            {pagerFilter && (
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => router.push("/capcodes")}
-              >
-                <Text style={styles.actionButtonText}>Adjust Capcodes</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        ) : (
           <ScrollMarker>
             <FlatList
               ref={flatListRef}
-              data={messages}
+              data={listData}
               keyExtractor={(message: any) => String(message.id)}
+              ListEmptyComponent={renderEmpty}
+              // Items only ever prepend (newer pages) or append; pin the viewport
+              // so an arriving message above the fold does not scroll the list.
+              maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
               showsVerticalScrollIndicator={false}
               renderItem={renderItem}
               ListFooterComponent={renderFooter}
-              contentContainerStyle={styles.listContainer}
+              contentContainerStyle={[
+                styles.listContainer,
+                listData.length === 0 && styles.listContainerEmpty,
+              ]}
               contentInsetAdjustmentBehavior="automatic"
               scrollEnabled={true}
               onEndReached={() => hasNextPage && fetchNextPage()}
@@ -206,7 +224,6 @@ export const PagerScreen: FC =
               }
             />
           </ScrollMarker>
-        )}
 
         <BannerAd />
         <ModalComponent />
@@ -310,5 +327,10 @@ const makeStyles = (theme: AppTheme) =>
     },
     listContainer: {
       paddingBottom: 16,
+    },
+    // Lets the loading / empty views centre in the viewport when there are
+    // no rows, since they now live inside the list.
+    listContainerEmpty: {
+      flexGrow: 1,
     },
   })
