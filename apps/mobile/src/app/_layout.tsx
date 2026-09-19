@@ -122,10 +122,10 @@ function RootLayoutInner() {
           </Stack.Protected>
           <Stack.Protected guard={showApp}>
             <Stack.Screen name="(tabs)" />
-            {/* Sheet-presented screens. The tab stacks use ExperimentalStack,
-                which has no `presentation` option yet, so these sit on the
-                root stack. Group names never appear in hrefs, so moving the
-                files here left every existing link intact. */}
+            {/* Sheet-presented screens live on the root stack so they present
+                over the tab bar rather than inside a tab. Group names never
+                appear in hrefs, so moving the files here left every existing
+                link intact. */}
             <Stack.Screen
               name="settings/delete-account"
               options={{ headerShown: true, title: "Delete Account", presentation: "modal" }}

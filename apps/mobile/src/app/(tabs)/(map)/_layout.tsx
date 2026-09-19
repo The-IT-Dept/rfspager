@@ -1,11 +1,13 @@
-import { ExperimentalStack } from "expo-router"
+import { Stack } from "expo-router"
+import { useAppTheme } from "../../../theme"
+import { stackScreenOptions } from "../../../navigation/stack-screen-options"
 
-// See (pager)/_layout.tsx for why the experimental stack is used.
 export default function MapStackLayout() {
+  const theme = useAppTheme()
   return (
-    <ExperimentalStack>
+    <Stack screenOptions={stackScreenOptions(theme)}>
       {/* Title blank: the map is edge-to-edge and a title would sit over the canvas. */}
-      <ExperimentalStack.Screen name="map" options={{ title: "" }} />
-    </ExperimentalStack>
+      <Stack.Screen name="map" options={{ title: "" }} />
+    </Stack>
   )
 }

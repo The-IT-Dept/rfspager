@@ -5,8 +5,8 @@
  */
 
 import React, { FC, useEffect } from "react"
-import { Text, View, ScrollView, TouchableOpacity } from "react-native"
-import { useNavigation, useRouter } from "expo-router"
+import { Text, View, ScrollView } from "react-native"
+import { Stack, useNavigation, useRouter } from "expo-router"
 import { AppIcon } from "../../components/app-icon/app-icon"
 
 import { useAlertzones } from "../../hooks"
@@ -31,6 +31,15 @@ export const ProfileAlertzonesScreen: FC =
 
 
     return (
+      <>
+      {/* Native header item: on iOS 26 this is its own Liquid Glass capsule. */}
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Button
+          icon="plus"
+          accessibilityLabel="Create alert zone"
+          onPress={() => router.push("/alertzones/create")}
+        />
+      </Stack.Toolbar>
       <ScrollView
         style={styles.container}
         showsVerticalScrollIndicator={false}
@@ -54,18 +63,6 @@ export const ProfileAlertzonesScreen: FC =
               Alternative to capcode alerts - triggers when emergency messages match your zones
             </Text>
           </View>
-        </View>
-
-        {/* Create action. This was a "+" in the header; the experimental stack
-            has no header items yet, so it lives in the body. */}
-        <View style={styles.actionsContainer}>
-          <TouchableOpacity
-            accessibilityRole="button"
-            style={[styles.actionButtonLast, styles.saveButton]}
-            onPress={() => router.push("/alertzones/create")}
-          >
-            <Text style={styles.saveButtonText}>Create Alert Zone</Text>
-          </TouchableOpacity>
         </View>
 
         {/* Alert Zones List */}
@@ -92,8 +89,7 @@ export const ProfileAlertzonesScreen: FC =
             </View>
             <View style={styles.emptyContent}>
               <Text style={styles.emptyText}>
-                You haven't created any alert zones yet. Tap Create Alert Zone above to add your
-                first zone.
+                You haven't created any alert zones yet. Tap + above to add your first zone.
               </Text>
             </View>
           </View>
@@ -101,5 +97,6 @@ export const ProfileAlertzonesScreen: FC =
 
         <BannerAd />
       </ScrollView>
+      </>
     )
   }

@@ -5,13 +5,11 @@ import {
   StyleSheet,
   View,
   TouchableOpacity,
-  TextInput,
 } from "react-native"
 import { ActivityIndicator, Text } from "react-native"
 import { ScrollMarker } from "../../components/scroll-marker/scroll-marker"
-import { AppIcon } from "../../components/app-icon/app-icon"
 import { FontAwesome5 } from "@expo/vector-icons"
-import { useRouter } from "expo-router"
+import { Stack, useRouter } from "expo-router"
 
 import { Message } from "../../components"
 import { useValidSubscription, usePreferencesStore, useAuthStore, useSubscriptionsStore } from "../../stores"
@@ -32,6 +30,9 @@ export const PagerScreen: FC =
     const showSearchFields = usePreferencesStore((s) => s.showSearchFields)
     const pagerFilter = usePreferencesStore((s) => s.pagerFilter)
     const pagerShowUnknown = usePreferencesStore((s) => s.pagerShowUnknown)
+    const setShowSearchFields = usePreferencesStore((s) => s.setShowSearchFields)
+    const setPagerFilter = usePreferencesStore((s) => s.setPagerFilter)
+    const setPagerShowUnknown = usePreferencesStore((s) => s.setPagerShowUnknown)
     const validSubscription = useValidSubscription()
     const filters = useSubscriptionsStore((s) => s.filters)
     const upsertInstallation = useAuthStore((s) => s.upsertInstallation)
@@ -174,23 +175,54 @@ export const PagerScreen: FC =
 
     return (
       <View style={styles.container}>
-        {/* Search lives in the body: the experimental stack that gives us the
-            glass header does not support headerSearchBarOptions yet. */}
+        {/* Native action menu: a single glass "filter" capsule in the header
+            that opens a UIMenu. The toggles mirror Settings → Pager so the
+            common ones are one tap away from the feed. Filter toggles are Pro
+            features, gated the same way Settings gates them. */}
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Menu icon="line.3.horizontal.decrease.circle" accessibilityLabel="Feed options">
+            <Stack.Toolbar.MenuAction
+              icon="magnifyingglass"
+              isOn={showSearchFields}
+              unstable_keepPresented
+              onPress={() => setShowSearchFields(!showSearchFields)}
+            >
+              Show search
+            </Stack.Toolbar.MenuAction>
+            <Stack.Toolbar.MenuAction
+              icon="checkmark.circle"
+              isOn={pagerFilter}
+              unstable_keepPresented
+              onPress={() => (validSubscription ? setPagerFilter(!pagerFilter) : showModal())}
+            >
+              Only selected capcodes
+            </Stack.Toolbar.MenuAction>
+            <Stack.Toolbar.MenuAction
+              icon="questionmark.circle"
+              isOn={pagerShowUnknown}
+              unstable_keepPresented
+              onPress={() => (validSubscription ? setPagerShowUnknown(!pagerShowUnknown) : showModal())}
+            >
+              Show unknown capcodes
+            </Stack.Toolbar.MenuAction>
+          </Stack.Toolbar.Menu>
+        </Stack.Toolbar>
+
+        {/* Native search, iOS 26 style: collapses to a glass magnifier button in
+            the header and expands in place when tapped. Declared here rather
+            than in the layout so it can follow the user's preference. */}
         {showSearchFields && (
-          <View style={styles.searchContainer}>
-            <AppIcon sf="magnifyingglass" ion="search" size={16} color={theme.colors.textDisabled} style={styles.searchIcon} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search messages..."
-              placeholderTextColor={theme.colors.textDisabled}
-              autoCapitalize="none"
-              autoCorrect={false}
-              clearButtonMode="while-editing"
-              returnKeyType="search"
-              value={search ?? ""}
-              onChangeText={(text) => setSearch(text === "" ? null : text)}
-            />
-          </View>
+          <Stack.SearchBar
+            placement="integratedButton"
+            placeholder="Search messages..."
+            autoCapitalize="none"
+            hideWhenScrolling={false}
+            onChangeText={(e) => {
+              const text = e.nativeEvent.text ?? ""
+              setSearch(text === "" ? null : text)
+            }}
+            onCancelButtonPress={() => setSearch(null)}
+          />
         )}
 
           <ScrollMarker>
