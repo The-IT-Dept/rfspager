@@ -64,6 +64,11 @@
           }
         ],
         "UIBackgroundModes": []
+      },
+      "icon": {
+        "light": "./assets/images/icon.png",
+        "dark": "./assets/images/icon-dark.png",
+        "tinted": "./assets/images/icon-tinted.png"
       }
     },
     "web": {
@@ -73,7 +78,8 @@
       "versionCode": 530040100,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#800000"
+        "monochromeImage": "./assets/images/adaptive-icon-mono.png",
+        "backgroundColor": "#D9231A"
       },
       "package": "io.devlan.rfspager",
       "googleServicesFile": "./google-services.json",
@@ -156,9 +162,14 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash.png",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#F7241D",
+          "dark": {
+            "image": "./assets/images/splash-icon.png",
+            "backgroundColor": "#5A0806"
+          }
         }
       ],
       "expo-status-bar"
