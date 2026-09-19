@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react"
-import { Platform, View } from "react-native"
+import { Platform, View, type ViewStyle } from "react-native"
+import { isLiquidGlassAvailable } from "expo-glass-effect"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { BannerAd as BannerAdAdmob, BannerAdSize } from "react-native-google-mobile-ads"
@@ -40,9 +41,27 @@ console.log(`🎯 [AdMob] Environment: ${isDevelopment ? 'DEVELOPMENT' : 'PRODUC
 console.log(`🎯 [AdMob] Banner Ad Unit ID: ${adUnitIDBanner}`)
 console.log(`🎯 [AdMob] Reward Ad Unit ID: ${adUnitIDReward}`)
 
-export function BannerAd() {
+/**
+ * Where the banner is mounted.
+ *
+ * - "accessory": inside NativeTabs.BottomAccessory, the iOS 26 slot that sits
+ *   directly above the tab bar and moves with it as it minimises. One instance
+ *   for the whole tab UI, owned by the tabs layout.
+ * - "floating" (default): absolutely positioned at the bottom of a screen.
+ *   On iOS 26 this returns null, because the accessory already shows the ad
+ *   and a second one would sit over the glass tab bar. Elsewhere it clears the
+ *   native tab bar, whose height is not part of the window safe-area insets.
+ */
+export type BannerAdPlacement = "floating" | "accessory"
+
+// UITabBar is 49pt; Material 3 navigation bar is 80dp. Both platforms' native
+// tab bars sit outside the window safe area reported by SafeAreaProvider.
+const NATIVE_TAB_BAR_HEIGHT = Platform.OS === "ios" ? 49 : 80
+
+export function BannerAd({ placement = "floating" }: { placement?: BannerAdPlacement } = {}) {
   const validSubscription = useValidSubscription()
   const insets = useSafeAreaInsets()
+  const glassTabBar = Platform.OS === "ios" && isLiquidGlassAvailable()
   const [trackingStatus, setTrackingStatus] = useState<TrackingStatus>()
   const [adLoaded, setAdLoaded] = useState(false)
   const [adFailed, setAdFailed] = useState(false)
@@ -59,9 +78,23 @@ export function BannerAd() {
 
   if (validSubscription) return null
   if (adFailed) return null // Don't render anything if ad failed to load
+  // On iOS 26 the tabs layout renders the ad as a BottomAccessory; a floating
+  // copy would double up and overlap the glass tab bar.
+  if (placement === "floating" && glassTabBar) return null
+
+  const containerStyle: ViewStyle =
+    placement === "accessory"
+      ? { alignItems: "center" as const }
+      : {
+          position: "absolute" as const,
+          bottom: insets.bottom + NATIVE_TAB_BAR_HEIGHT,
+          left: 0,
+          right: 0,
+          zIndex: 10,
+        }
 
   return (
-    <View style={{ position: "absolute", bottom: insets.bottom, left: 0, right: 0, zIndex: 10 }}>
+    <View style={containerStyle}>
       <BannerAdAdmob
         unitId={adUnitIDBanner}
         size={BannerAdSize.FULL_BANNER}

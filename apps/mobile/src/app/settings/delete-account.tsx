@@ -9,8 +9,8 @@ import {
   TouchableOpacity,
 } from "react-native"
 import { useRouter } from "expo-router"
-import { useAuthStore } from "../../../../stores"
-import { useAppTheme, AppTheme } from "../../../../theme"
+import { useAuthStore } from "../../stores"
+import { useAppTheme, AppTheme } from "../../theme"
 
 export default function DeleteAccountScreen() {
   const theme = useAppTheme()

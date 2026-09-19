@@ -1,5 +1,8 @@
+import { Platform } from "react-native"
 import { NativeTabs } from "expo-router/unstable-native-tabs"
+import { isLiquidGlassAvailable } from "expo-glass-effect"
 import { useAppTheme } from "../../theme"
+import { BannerAd } from "../../utils/admob"
 
 /**
  * Native bottom tabs.
@@ -44,6 +47,15 @@ export default function TabsLayout() {
         <NativeTabs.Trigger.Icon sf="gearshape" />
         <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
+
+      {/* iOS 26 only: the accessory slot rides directly above the tab bar and
+          minimises with it. Screens' own floating BannerAd returns null on
+          iOS 26 so the ad is not shown twice. */}
+      {Platform.OS === "ios" && isLiquidGlassAvailable() && (
+        <NativeTabs.BottomAccessory>
+          <BannerAd placement="accessory" />
+        </NativeTabs.BottomAccessory>
+      )}
     </NativeTabs>
   )
 }

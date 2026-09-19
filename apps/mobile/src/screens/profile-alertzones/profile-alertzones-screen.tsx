@@ -5,8 +5,8 @@
  */
 
 import React, { FC, useEffect } from "react"
-import { Text, View, ScrollView } from "react-native"
-import { useNavigation } from "expo-router"
+import { Text, View, ScrollView, TouchableOpacity } from "react-native"
+import { useNavigation, useRouter } from "expo-router"
 import { AppIcon } from "../../components/app-icon/app-icon"
 
 import { useAlertzones } from "../../hooks"
@@ -18,6 +18,7 @@ import { useAppTheme } from "../../theme"
 export const ProfileAlertzonesScreen: FC =
   function ProfileAlertzonesScreen() {
     const navigation = useNavigation()
+    const router = useRouter()
     const theme = useAppTheme()
     const styles = makestyles(theme)
     const { data, refetch } = useAlertzones()
@@ -55,6 +56,18 @@ export const ProfileAlertzonesScreen: FC =
           </View>
         </View>
 
+        {/* Create action. This was a "+" in the header; the experimental stack
+            has no header items yet, so it lives in the body. */}
+        <View style={styles.actionsContainer}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            style={[styles.actionButtonLast, styles.saveButton]}
+            onPress={() => router.push("/alertzones/create")}
+          >
+            <Text style={styles.saveButtonText}>Create Alert Zone</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Alert Zones List */}
         {data && data.length > 0 ? (
           <View style={styles.zonesContainer}>
@@ -79,8 +92,8 @@ export const ProfileAlertzonesScreen: FC =
             </View>
             <View style={styles.emptyContent}>
               <Text style={styles.emptyText}>
-                You haven't created any alert zones yet. Tap the + button above to create your first
-                zone.
+                You haven't created any alert zones yet. Tap Create Alert Zone above to add your
+                first zone.
               </Text>
             </View>
           </View>

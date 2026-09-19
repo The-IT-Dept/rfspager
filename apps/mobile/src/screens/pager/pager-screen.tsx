@@ -5,11 +5,13 @@ import {
   StyleSheet,
   View,
   TouchableOpacity,
+  TextInput,
 } from "react-native"
 import { ActivityIndicator, Text } from "react-native"
 import { ScrollMarker } from "../../components/scroll-marker/scroll-marker"
+import { AppIcon } from "../../components/app-icon/app-icon"
 import { FontAwesome5 } from "@expo/vector-icons"
-import { Stack, useRouter } from "expo-router"
+import { useRouter } from "expo-router"
 
 import { Message } from "../../components"
 import { useValidSubscription, usePreferencesStore, useAuthStore, useSubscriptionsStore } from "../../stores"
@@ -120,21 +122,24 @@ export const PagerScreen: FC =
 
     return (
       <View style={styles.container}>
-        <Stack.Screen
-          options={{
-            headerSearchBarOptions: showSearchFields
-              ? {
-                  placeholder: "Search messages...",
-                  onChangeText: (e: any) => {
-                    const text = e?.nativeEvent?.text ?? ""
-                    setSearch(text === "" ? null : text)
-                  },
-                  onClose: () => setSearch(null),
-                  autoCapitalize: "none",
-                }
-              : undefined,
-          }}
-        />
+        {/* Search lives in the body: the experimental stack that gives us the
+            glass header does not support headerSearchBarOptions yet. */}
+        {showSearchFields && (
+          <View style={styles.searchContainer}>
+            <AppIcon sf="magnifyingglass" ion="search" size={16} color={theme.colors.textDisabled} style={styles.searchIcon} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search messages..."
+              placeholderTextColor={theme.colors.textDisabled}
+              autoCapitalize="none"
+              autoCorrect={false}
+              clearButtonMode="while-editing"
+              returnKeyType="search"
+              value={search ?? ""}
+              onChangeText={(text) => setSearch(text === "" ? null : text)}
+            />
+          </View>
+        )}
 
         {pagerFilter && filters.length === 0 ? (
           <View style={styles.emptyContainer}>

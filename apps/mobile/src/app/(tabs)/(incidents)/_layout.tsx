@@ -1,13 +1,11 @@
-import { Stack } from "expo-router"
-import { useAppTheme } from "../../../theme"
-import { stackScreenOptions } from "../../../navigation/stack-screen-options"
+import { ExperimentalStack } from "expo-router"
 
+// See (pager)/_layout.tsx for why the experimental stack is used.
 export default function IncidentsStackLayout() {
-  const theme = useAppTheme()
   return (
-    <Stack screenOptions={stackScreenOptions(theme)}>
-      <Stack.Screen name="incidents" options={{ title: "Incidents" }} />
-      <Stack.Screen name="incident/[id]" options={{ title: "Incident" }} />
-    </Stack>
+    <ExperimentalStack>
+      <ExperimentalStack.Screen name="incidents" options={{ title: "Incidents" }} />
+      <ExperimentalStack.Screen name="incident/[id]" options={{ title: "Incident" }} />
+    </ExperimentalStack>
   )
 }
