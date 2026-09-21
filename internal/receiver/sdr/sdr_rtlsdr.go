@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync/atomic"
 
 	rtl "github.com/jpoirier/gortlsdr"
 )
@@ -51,8 +50,8 @@ type device struct {
 	name  string
 }
 
-func (d *device) Index() int    { return d.index }
-func (d *device) Name() string  { return d.name }
+func (d *device) Index() int   { return d.index }
+func (d *device) Name() string { return d.name }
 
 func (d *device) Tune(hz uint32) error {
 	if err := d.dev.SetCenterFreq(int(hz)); err != nil {
@@ -96,31 +95,39 @@ func (d *device) SetPPM(ppm int) error {
 	return nil
 }
 
-func (d *device) ReadIQ(ctx context.Context, bufSize int) (<-chan []byte, error) {
+func (d *device) ReadIQ(ctx context.Context, bufSize int) (<-chan Buffer, error) {
 	if err := d.dev.ResetBuffer(); err != nil {
 		return nil, fmt.Errorf("reset buffer: %w", err)
 	}
-	// Buffer ~270ms of IQ at 1.92 MS/s to absorb GC pauses + scheduling
+	// Queue ~270ms of IQ at 1.92 MS/s to absorb GC pauses + scheduling
 	// jitter. The callback below NEVER blocks (drops on overflow) so a
-	// brief consumer stall can't back-pressure into libusb's transfer
-	// queue and stall the dongle.
-	out := make(chan []byte, 32)
-	var dropped uint64
+	// consumer stall can't back-pressure into libusb's transfer queue and
+	// stall the dongle. Drops are reported on the next buffer that does get
+	// through so the consumer can resync its decoders.
+	out := make(chan Buffer, 32)
+	var droppedTotal uint64
+	// Drops since the last successful hand-off. librtlsdr invokes the
+	// callback from its single event-handling thread, so no atomics needed.
+	pending := 0
 	cb := func(buf []byte) {
-		// gortlsdr reuses the underlying buffer; copy before handing off.
-		b := make([]byte, len(buf))
+		// gortlsdr hands us a slice aliasing libusb's transfer buffer, which
+		// is reused as soon as we return — copy before handing off.
+		b := getBuf(len(buf))
 		copy(b, buf)
 		select {
-		case out <- b:
+		case out <- Buffer{IQ: b, DroppedBefore: pending}:
+			pending = 0
 		default:
 			// Consumer is behind. Drop and keep libusb fed — better to lose
 			// 8ms of samples than to stall the USB pipe and force a full
 			// dongle re-open.
-			n := atomic.AddUint64(&dropped, 1)
-			if n%128 == 1 {
+			pending++
+			droppedTotal++
+			putBuf(b)
+			if droppedTotal == 1 || droppedTotal%128 == 0 {
 				slog.Warn("iq buffer overflow, dropping",
 					"system", "sdr",
-					"dropped_total", n,
+					"dropped_total", droppedTotal,
 				)
 			}
 		}

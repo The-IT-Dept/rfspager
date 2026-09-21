@@ -252,8 +252,11 @@ func runDongle(ctx context.Context, cfg *config.Config, centre uint32, channels 
 	}()
 
 	var (
-		work            []complex128
-		nextSpectrumAt  = time.Now()
+		work           []complex128
+		nextSpectrumAt = time.Now()
+		gaps           int       // stream gaps since the last gap log line
+		gapsDropped    int       // buffers lost across those gaps
+		nextGapLogAt   time.Time // rate-limit gap logging to one line per 10s
 	)
 	for {
 		select {
@@ -267,7 +270,27 @@ func runDongle(ctx context.Context, cfg *config.Config, centre uint32, channels 
 				return errors.New("iq stream closed")
 			}
 			lastBufNanos.Store(time.Now().UnixNano())
-			work = dsp.IQToComplex(buf, work)
+			if buf.DroppedBefore > 0 {
+				// The SDR layer shed buffers because we fell behind, so the
+				// sample stream has a hole of unknown bit-length. Finalise
+				// in-flight pages and hunt for sync again instead of
+				// decoding the misaligned remainder as garbage.
+				for _, ch := range channels {
+					ch.Gap()
+				}
+				gaps++
+				gapsDropped += buf.DroppedBefore
+				if now := time.Now(); now.After(nextGapLogAt) {
+					slog.Warn("iq stream gap; decoders resynced",
+						"gaps", gaps,
+						"dropped_buffers", gapsDropped,
+					)
+					gaps, gapsDropped = 0, 0
+					nextGapLogAt = now.Add(10 * time.Second)
+				}
+			}
+			work = dsp.IQToComplex(buf.IQ, work)
+			sdr.Recycle(buf)
 			for _, ch := range channels {
 				ch.Process(work)
 			}

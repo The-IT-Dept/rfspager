@@ -36,6 +36,9 @@ type Channel struct {
 	fm    dsp.FMDemod
 	legs  []bandLeg
 
+	mixed []complex128 // scratch: block after the mixer
+	audio []complex128 // scratch: block after FIR + decimation
+
 	out chan pocsag.Page
 }
 
@@ -52,8 +55,8 @@ func NewChannel(label string, freqHz uint32, offsetHz float64, inputRate, audioR
 	decim := int(inputRate / audioRate)
 	// 12 kHz cutoff: POCSAG with ±4.5 kHz deviation at 2400 baud occupies
 	// roughly 14–16 kHz total, so we want passband to comfortably contain
-	// that. Wider taps mean longer FIR, but 96 taps at 1.92 MS/s decimated
-	// to 38.4 kHz is still cheap (96 × 38.4k = 3.7 MMAC/s per channel).
+	// that. Only decimated outputs are computed, so 97 taps at 38.4 kHz is
+	// ~3.7 MMAC/s per channel — cheap.
 	taps := dsp.LowpassTaps(12_000, float64(inputRate), 96)
 	pages := make(chan pocsag.Page, 16)
 
@@ -79,20 +82,30 @@ func (c *Channel) Pages() <-chan pocsag.Page { return c.out }
 
 // Process consumes one buffer of complex IQ samples and runs them through
 // the per-channel pipeline. Pages are emitted on c.Pages().
+//
+// The full-rate stages run block-at-a-time; only the ~38.4 kHz audio-rate
+// stages (FM demod, slicers, decoders) run per sample.
 func (c *Channel) Process(samples []complex128) {
-	for _, s := range samples {
-		shifted := c.mixer.Mix(s)
-		audio, ready := c.fir.Push(shifted)
-		if !ready {
-			continue
-		}
-		demod := c.fm.Demod(audio)
+	c.mixed = c.mixer.MixBlock(samples, c.mixed)
+	c.audio = c.fir.ProcessBlock(c.mixed, c.audio)
+	for _, a := range c.audio {
+		demod := c.fm.Demod(a)
 		for i := range c.legs {
 			bit, gotBit := c.legs[i].slicer.Push(demod)
 			if gotBit {
 				c.legs[i].decoder.Feed(bit)
 			}
 		}
+	}
+}
+
+// Gap tells the channel the IQ stream had a discontinuity (the SDR layer
+// dropped buffers), so an unknown number of bits went missing. Every
+// decoder finalises whatever it had and re-hunts for sync; the slicers and
+// filters need no reset — they re-lock within a few symbols.
+func (c *Channel) Gap() {
+	for i := range c.legs {
+		c.legs[i].decoder.Resync()
 	}
 }
 
@@ -153,12 +166,12 @@ func (f *Forwarder) Run(ctx context.Context, ch *Channel) {
 // corrupted by noise even when the address + message survive.
 //
 // Gates (any single one disqualifies):
-//   • length ≥ 6 — short numeric/tone artefacts dropped
-//   • length > 12 must contain at least one ASCII space — real dispatch
+//   - length ≥ 6 — short numeric/tone artefacts dropped
+//   - length > 12 must contain at least one ASCII space — real dispatch
 //     text always has word boundaries; noise companions that survive
 //     BCH false-correction are dense streams of mixed glyphs without
 //     whitespace ("WHC+darp\n98E\"", "nlLXZF]EMeIu^\".WHC+darp\n9", etc).
-//   • ≥ 85% of characters in the dispatch-printable class — real messages
+//   - ≥ 85% of characters in the dispatch-printable class — real messages
 //     sit around 0.92, false-positive noise around 0.70–0.78.
 func shouldPost(alpha string) bool {
 	msg := strings.TrimSpace(alpha)

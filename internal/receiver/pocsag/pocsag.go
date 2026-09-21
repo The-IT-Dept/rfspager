@@ -141,8 +141,36 @@ func (d *Decoder) Feed(b bool) {
 	}
 }
 
-func (d *Decoder) processBatch() {
-	for i, cw := range d.batch {
+// Resync tells the decoder the incoming bit stream has a discontinuity —
+// the SDR layer dropped IQ buffers, so an unknown number of bits are simply
+// missing and every codeword boundary after this point is misaligned until
+// the next sync word. Whatever message was in flight is finalised with the
+// codewords received so far (all of which BCH-verified, so the prefix is
+// trustworthy) and released, then the decoder goes back to hunting for
+// sync. Without this, the misaligned remainder of the batch is fed through
+// BCH, and roughly half of those garbage codewords "correct" into valid-
+// looking ones: real pages grow junk tails and phantom pages appear on
+// random capcodes.
+func (d *Decoder) Resync() {
+	// Codewords are buffered until the batch completes; process the ones we
+	// already have so the message prefix they carry is not thrown away.
+	if d.state == 1 && d.cwIdx > 0 {
+		d.processCodewords(d.batch[:d.cwIdx])
+	}
+	d.flushPending()
+	d.commitStaged()
+	d.state = 0
+	d.locked = false
+	d.bitsInCW, d.cwIdx, d.bitsSeen = 0, 0, 0
+	d.reg = 0
+}
+
+func (d *Decoder) processBatch() { d.processCodewords(d.batch[:]) }
+
+// processCodewords decodes a run of codewords starting at frame 0 of a batch.
+// It may be handed a partial batch on Resync.
+func (d *Decoder) processCodewords(cws []uint32) {
+	for i, cw := range cws {
 		// Catch noisy idle codewords before BCH gets a chance to "correct"
 		// them into a phantom address. The idle pattern (0x7A89C197) is far
 		// from any plausible address/message codeword in Hamming space, so
