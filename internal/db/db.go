@@ -153,13 +153,24 @@ func (d *DB) CreateCapcode(ctx context.Context, c *models.Capcode) error {
 //     characters, which RFS and FRNSW dispatch formats never do (RFS
 //     embeds the timestamp at chars 12–20; FRNSW puts the incident type
 //     starting at char 12 — both discriminate inside the prefix).
+//
+// queryer is satisfied by both *sqlx.DB and *sqlx.Tx, so the duplicate checks
+// can run either standalone or inside the locked insert transaction.
+type queryer interface {
+	GetContext(ctx context.Context, dest any, query string, args ...any) error
+}
+
 func (d *DB) IsDuplicateMessage(ctx context.Context, address, message string, timestamp time.Time) (bool, error) {
+	return isDuplicateMessage(ctx, d.conn, address, message, timestamp)
+}
+
+func isDuplicateMessage(ctx context.Context, q queryer, address, message string, timestamp time.Time) (bool, error) {
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(message)))
 	start := timestamp.Add(-5 * time.Minute)
 	end := timestamp.Add(5 * time.Minute)
 
 	var exists bool
-	if err := d.conn.GetContext(ctx, &exists,
+	if err := q.GetContext(ctx, &exists,
 		`SELECT EXISTS(
 			SELECT 1 FROM messages
 			WHERE address = $1 AND md5 = $2
@@ -182,7 +193,7 @@ func (d *DB) IsDuplicateMessage(ctx context.Context, address, message string, ti
 	}
 	prefixStart := timestamp.Add(-30 * time.Second)
 	prefixEnd := timestamp.Add(30 * time.Second)
-	err := d.conn.GetContext(ctx, &exists,
+	err := q.GetContext(ctx, &exists,
 		`SELECT EXISTS(
 			SELECT 1 FROM messages
 			WHERE address = $1
@@ -192,16 +203,53 @@ func (d *DB) IsDuplicateMessage(ctx context.Context, address, message string, ti
 	return exists, err
 }
 
-// CreateMessage inserts a new message and returns it with its ID.
-func (d *DB) CreateMessage(ctx context.Context, msg *models.Message) error {
+// CreateMessageDeduped inserts a message unless an equivalent one already
+// exists, atomically. Reports whether the row was written.
+//
+// IsDuplicateMessage followed by CreateMessage is check-then-act: several
+// receivers hearing the same page all run the check before any of them inserts,
+// so all of them insert. Redundant receivers are deliberate, so this is the
+// normal case rather than a rare one — it accounted for 6.7% of production's
+// messages over a week with only three receivers, and each surplus row becomes
+// a surplus push once the Go fan-out is doing the notifying.
+//
+// The advisory lock is keyed on the pager address alone, not address+md5: the
+// second dedupe pass matches on message prefix, so two rows that must collide
+// can have different hashes. Locking on the address serialises exactly the
+// pages that could deduplicate against each other and nothing else — different
+// capcodes never contend.
+func (d *DB) CreateMessageDeduped(ctx context.Context, msg *models.Message) (bool, error) {
+	tx, err := d.conn.BeginTxx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Released on commit or rollback. hashtextextended gives the bigint the
+	// single-argument lock form wants.
+	if _, err := tx.ExecContext(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, msg.Address); err != nil {
+		return false, fmt.Errorf("locking address for dedupe: %w", err)
+	}
+
+	dup, err := isDuplicateMessage(ctx, tx, msg.Address, msg.Message, msg.CreatedAt)
+	if err != nil {
+		return false, err
+	}
+	if dup {
+		return false, tx.Commit()
+	}
+
 	msg.MD5 = fmt.Sprintf("%x", md5.Sum([]byte(msg.Message)))
 	msg.UpdatedAt = time.Now()
-
-	return d.conn.QueryRowContext(ctx,
+	if err := tx.QueryRowContext(ctx,
 		`INSERT INTO messages (system_id, capcode_id, address, message, md5, lat, lng, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
 		msg.SystemID, msg.CapcodeID, msg.Address, msg.Message, msg.MD5,
-		msg.Lat, msg.Lng, msg.CreatedAt, msg.UpdatedAt).Scan(&msg.ID)
+		msg.Lat, msg.Lng, msg.CreatedAt, msg.UpdatedAt).Scan(&msg.ID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 // GetSubscribedUsers returns user IDs subscribed to a given capcode, filtered to active subscribers.

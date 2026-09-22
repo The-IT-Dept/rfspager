@@ -259,9 +259,17 @@ func (h *MessageHandler) createMessage(ctx context.Context, system *models.Syste
 		msg.Lng = sql.NullString{String: matches[1], Valid: true}
 	}
 
-	if err := h.db.CreateMessage(ctx, msg); err != nil {
+	// The check above is only a cheap early exit; this is the authoritative
+	// one. Redundant receivers post the same page within milliseconds of each
+	// other, so the duplicate has usually not been committed yet when the
+	// earlier check runs.
+	created, err := h.db.CreateMessageDeduped(ctx, msg)
+	if err != nil {
 		slog.Error("failed to create message", "error", err)
 		return "error creating message", nil
+	}
+	if !created {
+		return "Duplicate message.", nil
 	}
 
 	return strconv.FormatInt(msg.ID, 10), msg
