@@ -1,10 +1,10 @@
 name: web-release
 
-# Trigger: tags shaped like `web-v1.2.3`.
+# Trigger: tags shaped like `v1.2.3`.
 on:
   push:
     tags:
-      - "web-v*"
+      - "v*"
 
 jobs:
   docker:
@@ -19,7 +19,7 @@ jobs:
       - name: Extract version
         id: meta
         run: |
-          VERSION="${GITHUB_REF_NAME#web-v}"
+          VERSION="${GITHUB_REF_NAME#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3

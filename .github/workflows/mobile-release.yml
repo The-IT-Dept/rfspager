@@ -1,6 +1,6 @@
 name: mobile-release
 
-# Trigger: tags shaped like `mobile-v1.2.3`.
+# Trigger: tags shaped like `v1.2.3`.
 # Runs LOCAL EAS builds (no EAS cloud queue) on a macOS runner, then submits
 # to the App Store + Play Store using `eas submit`.
 #
@@ -8,7 +8,7 @@ name: mobile-release
 on:
   push:
     tags:
-      - "mobile-v*"
+      - "v*"
 
   # Allow manual runs for testing the pipeline without cutting a tag.
   workflow_dispatch:

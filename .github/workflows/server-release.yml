@@ -1,11 +1,11 @@
 name: server-release
 
-# Trigger: tags shaped like `server-v1.2.3`.
+# Trigger: tags shaped like `v1.2.3`.
 # Builds and pushes a multi-arch Docker image to GHCR.
 on:
   push:
     tags:
-      - "server-v*"
+      - "v*"
 
 jobs:
   docker:
@@ -21,7 +21,7 @@ jobs:
         id: meta
         run: |
           # strip leading "server-v"
-          VERSION="${GITHUB_REF_NAME#server-v}"
+          VERSION="${GITHUB_REF_NAME#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 

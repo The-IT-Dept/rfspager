@@ -60,25 +60,20 @@ func New(db systemLookup, ghToken, ghRepo, baseURL string) *Handlers {
 }
 
 type release struct {
-	TagName    string `json:"tag_name"`
-	Draft      bool   `json:"draft"`
-	Prerelease bool   `json:"prerelease"`
-	Assets     []struct {
+	TagName string `json:"tag_name"`
+	Assets  []struct {
 		Name string `json:"name"`
 		URL  string `json:"url"`
 		Size int64  `json:"size"`
 	} `json:"assets"`
 }
 
-// tagPrefix scopes the lookup to receiver releases. This repository publishes
-// server-v*, web-v* and receiver-v* tags from release-please, and
-// /releases/latest returns whichever is newest by date regardless of component
-// — frequently a server release carrying no receiver assets at all. So we list
-// releases and take the newest one that is actually ours.
-const tagPrefix = "receiver-v"
-
-// latest resolves the newest receiver release, cached briefly. Without the
-// cache every Pi boot loop would spend the server's GitHub rate limit.
+// latest resolves the newest release, cached briefly. Without the cache every
+// Pi boot loop would spend the server's GitHub rate limit.
+//
+// The repository releases as a single unit — one vX.Y.Z tag builds the server,
+// web, receiver and mobile together — so /releases/latest is unambiguous and
+// already excludes drafts and prereleases.
 func (h *Handlers) latest(ctx context.Context) (*release, error) {
 	h.mu.Lock()
 	if h.cached != nil && time.Since(h.cachedAt) < h.cacheFor {
@@ -88,7 +83,7 @@ func (h *Handlers) latest(ctx context.Context) (*release, error) {
 	h.mu.Unlock()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=50", h.ghRepo), nil)
+		fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", h.ghRepo), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -101,29 +96,23 @@ func (h *Handlers) latest(ctx context.Context) (*release, error) {
 		return nil, fmt.Errorf("reaching github: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("no published release yet")
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("github releases: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("github releases/latest: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
-	var all []release
-	if err := json.NewDecoder(resp.Body).Decode(&all); err != nil {
-		return nil, fmt.Errorf("decoding releases: %w", err)
+	var rel release
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return nil, fmt.Errorf("decoding release: %w", err)
 	}
 
-	// The API returns newest first; take the first receiver release that is
-	// neither a draft nor a prerelease.
-	for i := range all {
-		r := &all[i]
-		if r.Draft || r.Prerelease || !strings.HasPrefix(r.TagName, tagPrefix) {
-			continue
-		}
-		h.mu.Lock()
-		h.cached, h.cachedAt = r, time.Now()
-		h.mu.Unlock()
-		return r, nil
-	}
-	return nil, fmt.Errorf("no published %s* release found", tagPrefix)
+	h.mu.Lock()
+	h.cached, h.cachedAt = &rel, time.Now()
+	h.mu.Unlock()
+	return &rel, nil
 }
 
 // apiKey accepts the same header spellings the rest of the receiver surface does.

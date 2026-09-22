@@ -1,31 +1,15 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "simple",
-  "separate-pull-requests": true,
-  "include-component-in-tag": true,
+  "include-component-in-tag": false,
   "include-v-in-tag": true,
-  "tag-separator": "-",
   "packages": {
     ".": {
-      "component": "server",
-      "release-type": "go",
-      "package-name": "rfspager-server"
-    },
-    "cmd/receiver": {
-      "component": "receiver",
-      "release-type": "go",
-      "package-name": "rfspager-receiver"
-    },
-    "apps/web": {
-      "component": "web",
-      "release-type": "node",
-      "package-name": "rfspager-web"
-    },
-    "apps/mobile": {
-      "component": "mobile",
-      "release-type": "expo",
-      "package-name": "rfspager-mobile",
-      "extra-files": ["app.json"]
+      "release-type": "simple",
+      "package-name": "rfspager",
+      "extra-files": [
+        "apps/mobile/package.json"
+      ]
     }
   }
 }
