@@ -1,0 +1,61 @@
+# Changelog
+
+## [5.1.0](https://github.com/The-IT-Dept/rfspager/compare/v5.0.0...v5.1.0) (2026-09-22)
+
+
+### Features
+
+* **adapty-backfill:** add --only-transacted scoping flag ([d7d0403](https://github.com/The-IT-Dept/rfspager/commit/d7d0403a7fbd7349d0fe340d82ab7d2146ec1fd1))
+* **admin:** billing dashboard, user detail page, IAP transaction log ([6ea3f27](https://github.com/The-IT-Dept/rfspager/commit/6ea3f271ca2d1e6249b0f7b69e5219db75ba1a8e))
+* live marketing hero, stations map layer, map + fanout fixes ([95912f6](https://github.com/The-IT-Dept/rfspager/commit/95912f6738c55c23a754ff3b8f1389da0426c439))
+* **mobile:** collapse ad debug panel behind a toggle button ([ca4c8c1](https://github.com/The-IT-Dept/rfspager/commit/ca4c8c18151b3253203dc658ac3b56df15953a7f))
+* **mobile:** editable profile, change password, change email, delete account ([11b43b4](https://github.com/The-IT-Dept/rfspager/commit/11b43b462d4ab49ed2ccad02054cf7dd5dfe02c0))
+* **mobile:** native iOS 26 search button and action menu in the Pager header ([bb849f9](https://github.com/The-IT-Dept/rfspager/commit/bb849f9eb451a788bb3334919e37d14fbf07d9f9))
+* **mobile:** native tab bar in place of the JS drawer ([c3852b3](https://github.com/The-IT-Dept/rfspager/commit/c3852b3808395dc0a8702f4820f1badf4a5cbb0a))
+* **mobile:** new "Signal" app icon and a proper splash screen ([9c5ef15](https://github.com/The-IT-Dept/rfspager/commit/9c5ef152586baa6ea338d20647ef5516beb0e976))
+* **mobile:** SF Symbols and real glass in place of web icons and flat fills ([dfdd130](https://github.com/The-IT-Dept/rfspager/commit/dfdd1307935989f6e30a0e5c1786add7883598b6))
+* public capcodes browser, suggestions, master/detail pager + systems ([260db26](https://github.com/The-IT-Dept/rfspager/commit/260db26b99552f1041c7655f3ccf53cc3777a1f6))
+* receiver observability — event timeline, log streaming, offline watchdog ([2f0490e](https://github.com/The-IT-Dept/rfspager/commit/2f0490ee0087e48800be70037bf41425d55b6f6f))
+* **receiver:** one-command install for system owners ([5fb6957](https://github.com/The-IT-Dept/rfspager/commit/5fb6957e65e2c312fe70f7af995312dbaf4ba1dc))
+* **receiver:** show the real install command in the app and admin ([785fa74](https://github.com/The-IT-Dept/rfspager/commit/785fa743c435bd318946aa15b77cf81914c4688c))
+* remove the spectrum waterfall end to end ([52aab8a](https://github.com/The-IT-Dept/rfspager/commit/52aab8ab13bdfd98d24e44a56ff04c7db80b0461))
+* RTL-SDR receiver agent, live spectrum waterfall, owner-aware system detail ([c19fae7](https://github.com/The-IT-Dept/rfspager/commit/c19fae7bebff2d5afb88cd455e9cdfa6ac071b86))
+* **server:** PATCH /api/v2/mobile/me + DELETE /api/v2/mobile/me ([b08a225](https://github.com/The-IT-Dept/rfspager/commit/b08a2255ef424b07495363a7d7a0c954d2a3a717))
+* suggestion context, system on message, keyboard fixes, approve hardening ([6531db2](https://github.com/The-IT-Dept/rfspager/commit/6531db24db07186214706e1d71be5b6432338194))
+* **web:** /account page with profile, password, email, subscription, delete ([ef47821](https://github.com/The-IT-Dept/rfspager/commit/ef4782193ba3a465d876a164daf7e66832525ef5))
+* **web:** adopt the new app icon across the site ([46134fe](https://github.com/The-IT-Dept/rfspager/commit/46134feb5cd51b28ce61e6480919c4946956a892))
+* **web:** carry over the paths the Laravel site still serves ([8d30ba4](https://github.com/The-IT-Dept/rfspager/commit/8d30ba4562d0fbf30f19d4cfec19b866e523c245))
+* **web:** rebuild the public site around real data ([4d83fc1](https://github.com/The-IT-Dept/rfspager/commit/4d83fc1124ebec9a48219bca0d2ebff17661d01f))
+
+
+### Bug Fixes
+
+* **admin:** don't reuse request context for approval push notification ([771dcc8](https://github.com/The-IT-Dept/rfspager/commit/771dcc8936cefb5341f38294a39e2c0c5c3d4269))
+* **billing:** correct MRR by 10x, repair Adapty backfill writes ([7394ab4](https://github.com/The-IT-Dept/rfspager/commit/7394ab438ab0b5b6e45f2db4af7aa1c34265f9a2))
+* **billing:** reconcile duplicate IAP ownership instead of refusing to migrate ([6fee93f](https://github.com/The-IT-Dept/rfspager/commit/6fee93f4b2e41279b6e6fcc13308f3a210572a80))
+* **billing:** use real store prices in MRR estimate ([8d94172](https://github.com/The-IT-Dept/rfspager/commit/8d94172cdda2bb2b3dfb29cf57185d384a294c71))
+* **ci:** stop the auth-store guard writing to a macOS-only path ([aebd9d4](https://github.com/The-IT-Dept/rfspager/commit/aebd9d404abc5e6e0f46ab5e1f347a05a81ba629))
+* **db:** make migrations apply against production data ([c07eda6](https://github.com/The-IT-Dept/rfspager/commit/c07eda65436a5c1c16d0967ce837627fb438a056))
+* **db:** migration 012 shifted every timestamp by ten hours ([092f452](https://github.com/The-IT-Dept/rfspager/commit/092f452b2b4be959086817561543e07732608d41))
+* harden authentication, ingress, billing and migration safety ([77c6ac7](https://github.com/The-IT-Dept/rfspager/commit/77c6ac7982a74afe111828607306879ed1e5f545))
+* **ingress:** accept real Pagermon clients so Go can take ingress over ([2375cb0](https://github.com/The-IT-Dept/rfspager/commit/2375cb0baf50ba4b83c50df7d0233742a4ff1918))
+* **mobile:** keep native chrome in step with the app theme; size accessory ad to slot ([ffcbb60](https://github.com/The-IT-Dept/rfspager/commit/ffcbb603afad515471069fd23b6f8f0c5bae5672))
+* **mobile:** keep the Pager list mounted so the tab bar stays minimised ([aa6ecbd](https://github.com/The-IT-Dept/rfspager/commit/aa6ecbd2c248259df1d4af8e5f0ec2a637e2c6d3))
+* **mobile:** let EAS cloud builds find the Firebase config files ([e377a14](https://github.com/The-IT-Dept/rfspager/commit/e377a14ccc2625abc3ca2e9a77b6cc150059f1da))
+* **mobile:** link the moved screens from Settings ([ea6a16e](https://github.com/The-IT-Dept/rfspager/commit/ea6a16e10385890e402ed184d010a76570308d4c))
+* **mobile:** real glass headers via ExperimentalStack; ad in tab-bar accessory ([f0934d8](https://github.com/The-IT-Dept/rfspager/commit/f0934d80f66a2ee615853f936bf54063910d391a))
+* **mobile:** register the content scroll view so the chrome can react to it ([4d55d58](https://github.com/The-IT-Dept/rfspager/commit/4d55d58b4ce14fe99c1e52df572d28715a16ba25))
+* **mobile:** repair nine navigations left pointing at a deleted route group ([7ae540c](https://github.com/The-IT-Dept/rfspager/commit/7ae540cb325b9a0a11fa0ba87c8e76e682af3844))
+* **mobile:** show the accessory ad in the minimised (inline) placement too ([7cea450](https://github.com/The-IT-Dept/rfspager/commit/7cea4500793f112cedc95a20bfeead9e068b1cbc))
+* **mobile:** stop overriding the native header, add keyboard avoidance ([fc9dd31](https://github.com/The-IT-Dept/rfspager/commit/fc9dd319a436d533d2184ccf8b319f65e29833a5))
+* **pocsag:** detect noisy idle codewords before BCH misinterprets them ([2d67800](https://github.com/The-IT-Dept/rfspager/commit/2d67800a5544688132f4499ceab842e1df617403))
+* prepare AGPL clients and release builds for public contribution ([efc93b4](https://github.com/The-IT-Dept/rfspager/commit/efc93b4d1c1c6f0a56560a1f2c5a63824a3727b3))
+* **receiver:** block DSP, gap-aware resync, matched-filter slicer ([a794246](https://github.com/The-IT-Dept/rfspager/commit/a794246e93e51b983ba002df9fd8fb79aaac9e85))
+* **sse:** keep one keepalive ticker per connection, not one per message ([df12464](https://github.com/The-IT-Dept/rfspager/commit/df12464e5ccd04fefea09b42a71990ac421b0cec))
+* **web+db:** pager mobile layout, gate public systems page, drop seeded admin ([5c38d30](https://github.com/The-IT-Dept/rfspager/commit/5c38d30bf6c9675518c40d7742eae5ef0c956af3))
+* **web:** repair pager infinite scroll, add feed cursor, rebuild public header ([57ebe5e](https://github.com/The-IT-Dept/rfspager/commit/57ebe5e006ded0aa74fc1d6956620082e6857d8f))
+
+
+### Performance Improvements
+
+* **mobile:** index the message feed and paginate it by cursor ([2d4b64c](https://github.com/The-IT-Dept/rfspager/commit/2d4b64cbf46bd6c59a87a8e54f7e68fa04eaa44f))
