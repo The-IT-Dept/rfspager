@@ -3,6 +3,7 @@ package iap
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,13 +14,18 @@ import (
 
 // Handler handles IAP validation endpoints called by the mobile app.
 type Handler struct {
-	db     *sqlx.DB
-	apple  *AppleClient
-	google *GoogleClient
+	db      *sqlx.DB
+	apple   *AppleClient
+	google  *GoogleClient
+	options Options
 }
 
-func NewHandler(db *sqlx.DB, apple *AppleClient, google *GoogleClient) *Handler {
-	return &Handler{db: db, apple: apple, google: google}
+func NewHandler(db *sqlx.DB, apple *AppleClient, google *GoogleClient, options ...Options) *Handler {
+	var option Options
+	if len(options) > 0 {
+		option = options[0]
+	}
+	return &Handler{db: db, apple: apple, google: google, options: option}
 }
 
 // ValidateApple handles POST /iap/apple/validate
@@ -66,7 +72,14 @@ func (h *Handler) ValidateApple(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if result.Valid {
-		h.updateSubscription(r.Context(), userID, result, "purchase", req.JWSTransaction)
+		if err := h.options.validate(result); err != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "validation failed: " + err.Error()})
+			return
+		}
+		if err := applySubscription(r.Context(), h.db, userID, result, "purchase", req.JWSTransaction); err != nil {
+			writeSubscriptionError(w, err)
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -98,16 +111,24 @@ func (h *Handler) validateAppleJWS(jwsTransaction string) (*ValidationResult, er
 		return &ValidationResult{Valid: false, Platform: "apple"}, nil
 	}
 
+	return appleTransactionResult(txn), nil
+}
+
+// appleTransactionResult is shared by the preferred verified-JWS path's
+// post-verification mapping. Store identity and environment must be preserved
+// because Options validates them before granting access.
+func appleTransactionResult(txn *AppleJWSTransactionPayload) *ValidationResult {
 	expiresAt := time.UnixMilli(txn.ExpiresDate)
 	return &ValidationResult{
 		Valid:                 expiresAt.After(time.Now()),
 		ProductID:             txn.ProductID,
 		Platform:              "apple",
+		Environment:           txn.Environment,
 		ExpiresAt:             &expiresAt,
 		TransactionID:         txn.TransactionID,
 		OriginalTransactionID: txn.OriginalTransactionID,
 		WillRenew:             true,
-	}, nil
+	}
 }
 
 // ValidateGoogle handles POST /iap/google/validate
@@ -119,8 +140,8 @@ func (h *Handler) ValidateGoogle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req GoogleValidateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PurchaseToken == "" || req.ProductID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "purchase_token and product_id required"})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PurchaseToken == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "purchase_token required"})
 		return
 	}
 
@@ -137,11 +158,14 @@ func (h *Handler) ValidateGoogle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if result.Valid {
-		// Store the purchase token for webhook lookups
-		h.db.ExecContext(r.Context(),
-			`UPDATE users SET google_purchase_token = $1 WHERE id = $2`,
-			req.PurchaseToken, userID)
-		h.updateSubscription(r.Context(), userID, result, "purchase", req.PurchaseToken)
+		if err := h.options.validate(result); err != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "validation failed: " + err.Error()})
+			return
+		}
+		if err := applySubscription(r.Context(), h.db, userID, result, "purchase", req.PurchaseToken); err != nil {
+			writeSubscriptionError(w, err)
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -176,7 +200,7 @@ func (h *Handler) Restore(w http.ResponseWriter, r *http.Request) {
 				slog.Error("restore: JWS validation failed", "error", err)
 				continue
 			}
-			if result.Valid && (bestResult == nil || result.ExpiresAt.After(*bestResult.ExpiresAt)) {
+			if result.Valid && h.options.validate(result) == nil && (bestResult == nil || laterThan(result, bestResult)) {
 				bestResult = result
 			}
 		}
@@ -188,7 +212,7 @@ func (h *Handler) Restore(w http.ResponseWriter, r *http.Request) {
 					slog.Error("restore: apple API failed", "error", err, "txn_id", txnID)
 					continue
 				}
-				if result.Valid && (bestResult == nil || result.ExpiresAt.After(*bestResult.ExpiresAt)) {
+				if result.Valid && h.options.validate(result) == nil && (bestResult == nil || laterThan(result, bestResult)) {
 					bestResult = result
 				}
 			}
@@ -200,11 +224,8 @@ func (h *Handler) Restore(w http.ResponseWriter, r *http.Request) {
 				slog.Error("restore: google validation failed", "error", err)
 				continue
 			}
-			if result.Valid {
-				h.db.ExecContext(r.Context(),
-					`UPDATE users SET google_purchase_token = $1 WHERE id = $2`,
-					purchase.PurchaseToken, userID)
-				if bestResult == nil || result.ExpiresAt.After(*bestResult.ExpiresAt) {
+			if result.Valid && h.options.validate(result) == nil {
+				if bestResult == nil || laterThan(result, bestResult) {
 					bestResult = result
 				}
 			}
@@ -212,7 +233,10 @@ func (h *Handler) Restore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if bestResult != nil {
-		h.updateSubscription(r.Context(), userID, bestResult, "restore", "")
+		if err := applySubscription(r.Context(), h.db, userID, bestResult, "restore", ""); err != nil {
+			writeSubscriptionError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"restored":   true,
 			"product_id": bestResult.ProductID,
@@ -227,43 +251,21 @@ func (h *Handler) Restore(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) updateSubscription(ctx context.Context, userID int64, result *ValidationResult, eventType string, rawPayload string) {
-	var expiresAt *time.Time
-	if result.ExpiresAt != nil {
-		expiresAt = result.ExpiresAt
+func laterThan(candidate, current *ValidationResult) bool {
+	if candidate.ExpiresAt == nil {
+		return false
 	}
-
-	_, err := h.db.ExecContext(ctx,
-		`UPDATE users SET
-			subscription_valid = $1,
-			subscription_expiry = $2,
-			subscription_product_id = $3,
-			subscription_platform = $4,
-			will_renew = $5,
-			apple_original_transaction_id = CASE WHEN $6 = 'apple' THEN $7 ELSE apple_original_transaction_id END,
-			last_store_sync_at = NOW(),
-			updated_at = NOW()
-		 WHERE id = $8`,
-		result.Valid, expiresAt, result.ProductID, result.Platform,
-		result.WillRenew, result.Platform, result.OriginalTransactionID, userID)
-	if err != nil {
-		slog.Error("failed to update subscription", "error", err, "user_id", userID)
-	}
-
-	// Append to transaction log
-	h.logTransaction(ctx, userID, result, eventType, rawPayload)
+	return current.ExpiresAt == nil || candidate.ExpiresAt.After(*current.ExpiresAt)
 }
 
-func (h *Handler) logTransaction(ctx context.Context, userID int64, result *ValidationResult, eventType string, rawPayload string) {
-	_, err := h.db.ExecContext(ctx,
-		`INSERT INTO iap_transactions (user_id, platform, transaction_id, original_transaction_id, product_id, event_type, is_valid, expires_at, will_renew, raw_payload)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		userID, result.Platform, result.TransactionID, result.OriginalTransactionID,
-		result.ProductID, eventType, result.Valid, result.ExpiresAt, result.WillRenew,
-		rawPayload)
-	if err != nil {
-		slog.Error("failed to log iap transaction", "error", err, "user_id", userID)
+func writeSubscriptionError(w http.ResponseWriter, err error) {
+	var conflict *OwnershipConflictError
+	if errors.As(err, &conflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "subscription is already linked to another account"})
+		return
 	}
+	slog.Error("subscription update failed", "error", err)
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "subscription update failed"})
 }
 
 type ctxKey string

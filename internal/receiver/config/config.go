@@ -3,6 +3,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -48,48 +50,40 @@ type Config struct {
 	// where you want guaranteed traffic without waiting for a real
 	// dispatch.
 	PostAll bool
-
-	// LegacyURL, when set, switches the receiver into "legacy mode": it
-	// skips the WebSocket transport entirely and POSTs every decoded
-	// page to the original Laravel-era endpoint at
-	//   {LegacyURL}/api/messages/{LegacySystemUUID}
-	// Used to backfeed the old rfspager.app stack while migration is in
-	// flight. The websocket-based authentication / config-push features
-	// are unavailable in this mode by design.
-	LegacyURL        string
-	LegacySystemUUID string
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		ServerURL:     getEnv("RECEIVER_SERVER_URL", "http://localhost:8080"),
-		APIKey:        strings.Trim(strings.TrimSpace(os.Getenv("RECEIVER_API_KEY")), `"'`),
-		SampleRate:    uint32(getInt("RECEIVER_SAMPLE_RATE", 1_920_000)),
-		TunerGain:     getInt("RECEIVER_TUNER_GAIN", 0),
-		CorrectionPPM: getInt("RECEIVER_PPM", 0),
-		DongleIndex:   getInt("RECEIVER_DONGLE_INDEX", -1),
-		DongleSerial:  strings.TrimSpace(os.Getenv("RECEIVER_DONGLE_SERIAL")),
+		ServerURL:       getEnv("RECEIVER_SERVER_URL", "http://localhost:8080"),
+		APIKey:          strings.Trim(strings.TrimSpace(os.Getenv("RECEIVER_API_KEY")), `"'`),
+		SampleRate:      uint32(getInt("RECEIVER_SAMPLE_RATE", 1_920_000)),
+		TunerGain:       getInt("RECEIVER_TUNER_GAIN", 0),
+		CorrectionPPM:   getInt("RECEIVER_PPM", 0),
+		DongleIndex:     getInt("RECEIVER_DONGLE_INDEX", -1),
+		DongleSerial:    strings.TrimSpace(os.Getenv("RECEIVER_DONGLE_SERIAL")),
 		DisableSpectrum: os.Getenv("RECEIVER_DISABLE_SPECTRUM") == "1",
 		PostAll:         os.Getenv("RECEIVER_POST_ALL") == "1",
-		LegacyURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("RECEIVER_LEGACY_URL")), "/"),
-		LegacySystemUUID: strings.TrimSpace(os.Getenv("RECEIVER_LEGACY_SYSTEM_UUID")),
 	}
-	// Legacy mode bypasses the WS transport entirely, so API key isn't
-	// required there — the Laravel endpoint resolves the system by UUID
-	// in the URL with no header auth.
-	if cfg.LegacyURL != "" {
-		if cfg.LegacySystemUUID == "" {
-			return nil, fmt.Errorf("RECEIVER_LEGACY_SYSTEM_UUID is required when RECEIVER_LEGACY_URL is set")
-		}
-	} else if cfg.APIKey == "" {
-		return nil, fmt.Errorf("RECEIVER_API_KEY is required (or set RECEIVER_LEGACY_URL + RECEIVER_LEGACY_SYSTEM_UUID for legacy backfeed mode)")
+	if os.Getenv("RECEIVER_LEGACY_URL") != "" || os.Getenv("RECEIVER_LEGACY_SYSTEM_UUID") != "" {
+		return nil, fmt.Errorf("legacy ingress has been removed; configure RECEIVER_SERVER_URL and a newly provisioned RECEIVER_API_KEY")
 	}
+	if cfg.APIKey == "" {
+		return nil, fmt.Errorf("RECEIVER_API_KEY is required")
+	}
+	u, err := url.Parse(cfg.ServerURL)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return nil, fmt.Errorf("invalid RECEIVER_SERVER_URL")
+	}
+	loopback := u.Hostname() == "localhost"
+	if ip := net.ParseIP(u.Hostname()); ip != nil {
+		loopback = ip.IsLoopback()
+	}
+	if u.Scheme != "https" && !(u.Scheme == "http" && loopback) {
+		return nil, fmt.Errorf("RECEIVER_SERVER_URL must use HTTPS; HTTP is allowed only on loopback")
+	}
+
 	return cfg, nil
 }
-
-// LegacyMode reports whether the receiver was configured to backfeed the
-// old Laravel-era platform instead of using the websocket transport.
-func (c *Config) LegacyMode() bool { return c.LegacyURL != "" }
 
 func getEnv(key, def string) string {
 	if v := os.Getenv(key); v != "" {

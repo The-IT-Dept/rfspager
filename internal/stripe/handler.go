@@ -2,26 +2,27 @@ package stripe
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/the-it-dept/rfspager/internal/mobile"
 	gostripe "github.com/stripe/stripe-go/v82"
 	portalsession "github.com/stripe/stripe-go/v82/billingportal/session"
 	checkoutsession "github.com/stripe/stripe-go/v82/checkout/session"
 	"github.com/stripe/stripe-go/v82/customer"
 	"github.com/stripe/stripe-go/v82/webhook"
+	"github.com/the-it-dept/rfspager/internal/mobile"
 )
 
 type Handler struct {
-	db             *sqlx.DB
-	priceMonthly   string
-	priceYearly    string
-	webhookSecret  string
-	baseURL        string
+	db            *sqlx.DB
+	priceMonthly  string
+	priceYearly   string
+	webhookSecret string
+	baseURL       string
 }
 
 func NewHandler(db *sqlx.DB, secretKey, priceMonthly, priceYearly, webhookSecret, baseURL string) *Handler {
@@ -56,10 +57,13 @@ func (h *Handler) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		PriceID string `json:"price_id"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
 
-	if req.PriceID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "price_id required"})
+	if req.PriceID == "" || (req.PriceID != h.priceMonthly && req.PriceID != h.priceYearly) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown subscription price"})
 		return
 	}
 
@@ -130,43 +134,53 @@ func (h *Handler) Prices(w http.ResponseWriter, r *http.Request) {
 
 // Webhook handles Stripe webhook events.
 func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 
-	var event gostripe.Event
-	if h.webhookSecret != "" {
-		event, err = webhook.ConstructEvent(body, r.Header.Get("Stripe-Signature"), h.webhookSecret)
-		if err != nil {
-			slog.Error("stripe webhook signature failed", "error", err)
-			http.Error(w, "invalid signature", http.StatusBadRequest)
-			return
-		}
-	} else {
-		json.Unmarshal(body, &event)
+	if h.webhookSecret == "" {
+		http.Error(w, "webhook not configured", http.StatusServiceUnavailable)
+		return
+	}
+	event, err := webhook.ConstructEvent(body, r.Header.Get("Stripe-Signature"), h.webhookSecret)
+	if err != nil {
+		slog.Warn("stripe webhook signature rejected")
+		http.Error(w, "invalid signature", http.StatusBadRequest)
+		return
 	}
 
 	slog.Info("stripe webhook", "type", event.Type)
 
 	switch event.Type {
 	case "customer.subscription.created", "customer.subscription.updated":
-		h.handleSubscriptionUpdate(r, event)
+		if err := h.handleSubscriptionUpdate(r, event); err != nil {
+			slog.Error("stripe update failed", "error", err)
+			http.Error(w, "processing failed", http.StatusInternalServerError)
+			return
+		}
 	case "customer.subscription.deleted":
-		h.handleSubscriptionDeleted(r, event)
+		if err := h.handleSubscriptionDeleted(r, event); err != nil {
+			slog.Error("stripe cancellation failed", "error", err)
+			http.Error(w, "processing failed", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *Handler) handleSubscriptionUpdate(r *http.Request, event gostripe.Event) {
+func (h *Handler) handleSubscriptionUpdate(r *http.Request, event gostripe.Event) error {
 	var sub gostripe.Subscription
 	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
 		slog.Error("stripe webhook: unmarshal sub failed", "error", err)
-		return
+		return nil
 	}
 
+	if sub.Customer == nil {
+		return nil
+	}
 	customerID := sub.Customer.ID
 	valid := sub.Status == gostripe.SubscriptionStatusActive || sub.Status == gostripe.SubscriptionStatusTrialing
 	willRenew := !sub.CancelAtPeriodEnd
@@ -174,7 +188,7 @@ func (h *Handler) handleSubscriptionUpdate(r *http.Request, event gostripe.Event
 	productID := ""
 	var expiresAt *time.Time
 	var startDate *time.Time
-	if len(sub.Items.Data) > 0 {
+	if sub.Items != nil && len(sub.Items.Data) > 0 && sub.Items.Data[0].Price != nil {
 		item := sub.Items.Data[0]
 		productID = item.Price.ID
 		if item.CurrentPeriodEnd > 0 {
@@ -187,9 +201,12 @@ func (h *Handler) handleSubscriptionUpdate(r *http.Request, event gostripe.Event
 		}
 	}
 
+	if productID == "" || (productID != h.priceMonthly && productID != h.priceYearly) {
+		return nil
+	}
 	_, err := h.db.ExecContext(r.Context(),
 		`UPDATE users SET
-			subscription_valid = $1,
+   subscription_valid = $1,
 			subscription_expiry = $2,
 			subscription_product_id = $3,
 			subscription_platform = 'stripe',
@@ -200,22 +217,27 @@ func (h *Handler) handleSubscriptionUpdate(r *http.Request, event gostripe.Event
 			stripe_subscription_end_date = $8,
 			last_store_sync_at = NOW(),
 			updated_at = NOW()
-		 WHERE stripe_id = $9`,
+		 WHERE stripe_id = $9 AND (
+ (subscription_platform = 'stripe' AND stripe_subscription_id = $5)
+ OR (subscription_platform IS NULL)
+ OR ($10 AND (last_store_sync_at IS NULL OR last_store_sync_at <= to_timestamp($11)))
+ )`,
 		valid, expiresAt, productID, willRenew,
 		sub.ID, string(sub.Status),
 		startDate, expiresAt,
-		customerID)
+		customerID, event.Type == "customer.subscription.created", event.Created)
 	if err != nil {
-		slog.Error("stripe webhook: update user failed", "error", err, "customer", customerID)
+		return fmt.Errorf("updating Stripe subscription: %w", err)
 	} else {
 		slog.Info("stripe webhook: subscription updated", "customer", customerID, "status", sub.Status, "valid", valid)
 	}
+	return nil
 }
 
-func (h *Handler) handleSubscriptionDeleted(r *http.Request, event gostripe.Event) {
+func (h *Handler) handleSubscriptionDeleted(r *http.Request, event gostripe.Event) error {
 	var sub gostripe.Subscription
-	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
-		return
+	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil || sub.Customer == nil {
+		return nil
 	}
 
 	_, err := h.db.ExecContext(r.Context(),
@@ -226,10 +248,11 @@ func (h *Handler) handleSubscriptionDeleted(r *http.Request, event gostripe.Even
 			cancellation_reason = 'stripe_canceled',
 			last_store_sync_at = NOW(),
 			updated_at = NOW()
-		 WHERE stripe_id = $1`, sub.Customer.ID)
+		 WHERE stripe_id = $1 AND subscription_platform = 'stripe' AND stripe_subscription_id = $2`, sub.Customer.ID, sub.ID)
 	if err != nil {
-		slog.Error("stripe webhook: cancel failed", "error", err)
+		return fmt.Errorf("canceling Stripe subscription: %w", err)
 	}
+	return nil
 }
 
 func (h *Handler) getOrCreateCustomer(r *http.Request, userID int64, email string) string {

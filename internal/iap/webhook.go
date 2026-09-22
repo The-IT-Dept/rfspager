@@ -1,7 +1,6 @@
 package iap
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -14,13 +13,14 @@ import (
 
 // WebhookHandler handles Apple S2S and Google RTDN notifications.
 type WebhookHandler struct {
-	db                  *sqlx.DB
-	apple               *AppleClient
-	google              *GoogleClient
-	appleBundleID       string
-	googlePackageName   string
-	pubsubAudience      string
-	pubsubServiceEmail  string
+	db                 *sqlx.DB
+	apple              *AppleClient
+	google             *GoogleClient
+	appleBundleID      string
+	googlePackageName  string
+	pubsubAudience     string
+	pubsubServiceEmail string
+	options            Options
 }
 
 // WebhookConfig carries the values needed to authenticate inbound store webhooks.
@@ -31,7 +31,11 @@ type WebhookConfig struct {
 	PubsubServiceEmail string // Optional: service-account email expected on the OIDC token
 }
 
-func NewWebhookHandler(db *sqlx.DB, apple *AppleClient, google *GoogleClient, cfg WebhookConfig) *WebhookHandler {
+func NewWebhookHandler(db *sqlx.DB, apple *AppleClient, google *GoogleClient, cfg WebhookConfig, options ...Options) *WebhookHandler {
+	var option Options
+	if len(options) > 0 {
+		option = options[0]
+	}
 	return &WebhookHandler{
 		db:                 db,
 		apple:              apple,
@@ -40,6 +44,7 @@ func NewWebhookHandler(db *sqlx.DB, apple *AppleClient, google *GoogleClient, cf
 		googlePackageName:  cfg.GooglePackageName,
 		pubsubAudience:     cfg.PubsubAudience,
 		pubsubServiceEmail: cfg.PubsubServiceEmail,
+		options:            option,
 	}
 }
 
@@ -136,38 +141,30 @@ func (h *WebhookHandler) AppleNotification(w http.ResponseWriter, r *http.Reques
 			willRenew = false
 		}
 	}
+	storeResult := &ValidationResult{
+		Valid:                 valid,
+		Platform:              "apple",
+		Environment:           txn.Environment,
+		ProductID:             txn.ProductID,
+		ExpiresAt:             &expiresAt,
+		TransactionID:         txn.TransactionID,
+		OriginalTransactionID: txn.OriginalTransactionID,
+		WillRenew:             willRenew,
+	}
+	if err := h.options.validate(storeResult); err != nil {
+		slog.Warn("apple webhook: rejected store result", "error", err)
+		http.Error(w, "unaccepted subscription", http.StatusBadRequest)
+		return
+	}
 
-	// Update user by original_transaction_id
-	result, err := h.db.ExecContext(r.Context(),
-		`UPDATE users SET
-			subscription_valid = $1,
-			subscription_expiry = $2,
-			subscription_product_id = $3,
-			subscription_platform = 'apple',
-			will_renew = $4,
-			cancellation_reason = CASE WHEN $5 = '' THEN cancellation_reason ELSE $5 END,
-			last_store_sync_at = NOW(),
-			updated_at = NOW()
-		 WHERE apple_original_transaction_id = $6`,
-		valid, expiresAt, txn.ProductID, willRenew, cancellationReason, txn.OriginalTransactionID)
+	updated, err := applyWebhookSubscription(r.Context(), h.db, storeResult,
+		"webhook:"+notif.NotificationType, string(body), cancellationReason)
 	if err != nil {
-		slog.Error("apple webhook: update user failed", "error", err)
-	} else {
-		rows, _ := result.RowsAffected()
-		slog.Info("apple webhook: user updated", "original_txn", txn.OriginalTransactionID, "valid", valid, "rows", rows)
+		slog.Error("apple webhook: applying subscription", "error", err)
+		http.Error(w, "database error", http.StatusInternalServerError)
+		return
 	}
-
-	// Log to iap_transactions
-	var userID int64
-	h.db.QueryRowContext(r.Context(),
-		`SELECT id FROM users WHERE apple_original_transaction_id = $1`, txn.OriginalTransactionID).Scan(&userID)
-	if userID > 0 {
-		h.db.ExecContext(r.Context(),
-			`INSERT INTO iap_transactions (user_id, platform, transaction_id, original_transaction_id, product_id, event_type, is_valid, expires_at, will_renew, raw_payload)
-			 VALUES ($1, 'apple', $2, $3, $4, $5, $6, $7, $8, $9)`,
-			userID, txn.TransactionID, txn.OriginalTransactionID, txn.ProductID,
-			"webhook:"+notif.NotificationType, valid, &expiresAt, willRenew, string(body))
-	}
+	slog.Info("apple webhook processed", "original_txn", txn.OriginalTransactionID, "updated_current", updated)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -255,28 +252,25 @@ func (h *WebhookHandler) GoogleNotification(w http.ResponseWriter, r *http.Reque
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	result, err := h.google.ValidatePurchase(context.Background(), purchaseToken, notification.SubscriptionNotification.SubscriptionID)
+	result, err := h.google.ValidatePurchase(r.Context(), purchaseToken, notification.SubscriptionNotification.SubscriptionID)
 	if err != nil {
 		slog.Error("google webhook: validation failed", "error", err)
 		w.WriteHeader(http.StatusOK) // Ack to avoid Pub/Sub retries on transient API errors
 		return
 	}
-
-	// Update user by google_purchase_token
-	_, err = h.db.ExecContext(r.Context(),
-		`UPDATE users SET
-			subscription_valid = $1,
-			subscription_expiry = $2,
-			subscription_product_id = $3,
-			subscription_platform = 'google',
-			will_renew = $4,
-			last_store_sync_at = NOW(),
-			updated_at = NOW()
-		 WHERE google_purchase_token = $5`,
-		result.Valid, result.ExpiresAt, result.ProductID, result.WillRenew, purchaseToken)
-	if err != nil {
-		slog.Error("google webhook: update user failed", "error", err)
+	if err := h.options.validate(result); err != nil {
+		slog.Warn("google webhook: rejected store result", "error", err)
+		http.Error(w, "unaccepted subscription", http.StatusBadRequest)
+		return
 	}
+
+	updated, err := applyWebhookSubscription(r.Context(), h.db, result, "webhook", string(body), "")
+	if err != nil {
+		slog.Error("google webhook: applying subscription", "error", err)
+		http.Error(w, "database error", http.StatusInternalServerError)
+		return
+	}
+	slog.Info("google webhook processed", "purchase_token", purchaseToken, "updated_current", updated)
 
 	w.WriteHeader(http.StatusOK)
 }

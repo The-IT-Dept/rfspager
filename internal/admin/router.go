@@ -34,6 +34,7 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, spectrumSS
 		r.Use(auth.JWTAuth)
 
 		r.Get("/auth/me", auth.Me)
+		r.Post("/auth/logout", auth.Logout)
 		r.Get("/dashboard", h.Dashboard)
 
 		// Users
@@ -153,10 +154,11 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, spectrumSS
 
 		// Admin Users (self-management)
 		r.Route("/admin-users", func(r chi.Router) {
+			r.Use(auth.RequireSuperadmin)
 			r.Get("/", h.ListAdminUsers)
 			r.Post("/", h.CreateAdminUser)
 			r.Put("/{id}", h.UpdateAdminUser)
-			r.Delete("/{id}", h.DeleteAdminUser)
+			r.With(auth.PreventSelfAdminDelete).Delete("/{id}", h.DeleteAdminUser)
 		})
 	})
 

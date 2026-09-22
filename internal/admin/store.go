@@ -82,7 +82,7 @@ func (s *Store) SeedAdmin(ctx context.Context, email, password string) error {
 
 func (s *Store) GetAdminByEmail(ctx context.Context, email string) (*AdminUser, error) {
 	var u AdminUser
-	err := s.db.GetContext(ctx, &u, `SELECT * FROM admin_users WHERE email = $1`, email)
+	err := s.db.GetContext(ctx, &u, `SELECT id, email, password_hash, name, role, active, last_login_at, created_at, updated_at, token_version FROM admin_users WHERE email = $1`, email)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func (s *Store) GetAdminByEmail(ctx context.Context, email string) (*AdminUser, 
 
 func (s *Store) GetAdminByID(ctx context.Context, id int64) (*AdminUser, error) {
 	var u AdminUser
-	err := s.db.GetContext(ctx, &u, `SELECT * FROM admin_users WHERE id = $1`, id)
+	err := s.db.GetContext(ctx, &u, `SELECT id, email, password_hash, name, role, active, last_login_at, created_at, updated_at, token_version FROM admin_users WHERE id = $1`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -104,11 +104,19 @@ func (s *Store) UpdateAdminLastLogin(ctx context.Context, id int64) error {
 	return err
 }
 
+func (s *Store) RevokeAdminSessions(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE admin_users SET token_version = token_version + 1, updated_at = NOW() WHERE id = $1`, id)
+	return err
+}
+
 func (s *Store) ListAdminUsers(ctx context.Context, p ListParams) (*PaginatedResult, error) {
 	return s.paginatedQuery(ctx, "admin_users", "*", "1=1", nil, p, []string{"email", "name"})
 }
 
 func (s *Store) CreateAdminUser(ctx context.Context, data map[string]any) (int64, error) {
+	if err := validateFields(data, adminUserInputFields); err != nil {
+		return 0, err
+	}
 	if pw, ok := data["password"].(string); ok {
 		hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
 		if err != nil {
@@ -121,6 +129,10 @@ func (s *Store) CreateAdminUser(ctx context.Context, data map[string]any) (int64
 }
 
 func (s *Store) UpdateAdminUser(ctx context.Context, id int64, data map[string]any) error {
+	if err := validateFields(data, adminUserInputFields); err != nil {
+		return err
+	}
+	passwordChanged := false
 	if pw, ok := data["password"].(string); ok && pw != "" {
 		hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
 		if err != nil {
@@ -128,10 +140,40 @@ func (s *Store) UpdateAdminUser(ctx context.Context, id int64, data map[string]a
 		}
 		data["password_hash"] = string(hash)
 		delete(data, "password")
+		passwordChanged = true
 	} else {
 		delete(data, "password")
 	}
-	return s.updateRow(ctx, "admin_users", id, data)
+	if !passwordChanged {
+		return s.updateRow(ctx, "admin_users", id, data)
+	}
+	if err := validateWritableFields("admin_users", data); err != nil {
+		return err
+	}
+	// A password change and the associated session revocation must commit as a
+	// single database operation; otherwise a write failure could leave the new
+	// password active while old sessions remain usable.
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	data["updated_at"] = time.Now()
+	sets := make([]string, 0, len(data)+1)
+	values := make([]any, 0, len(data)+1)
+	index := 1
+	for key, value := range data {
+		sets = append(sets, fmt.Sprintf(`"%s" = $%d`, key, index))
+		values = append(values, value)
+		index++
+	}
+	sets = append(sets, "token_version = token_version + 1")
+	values = append(values, id)
+	query := fmt.Sprintf("UPDATE admin_users SET %s WHERE id = $%d", strings.Join(sets, ", "), index)
+	if _, err := tx.ExecContext(ctx, query, values...); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) DeleteAdminUser(ctx context.Context, id int64) error {
@@ -165,16 +207,47 @@ func (s *Store) CreateUser(ctx context.Context, data map[string]any) (int64, err
 }
 
 func (s *Store) UpdateUser(ctx context.Context, id int64, data map[string]any) error {
+	passwordChanged := false
 	if pw, ok := data["password"].(string); ok && pw != "" {
 		hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
 		if err != nil {
 			return err
 		}
 		data["password"] = string(hash)
+		passwordChanged = true
 	} else {
 		delete(data, "password")
 	}
-	return s.updateRow(ctx, "users", id, data)
+	if !passwordChanged {
+		return s.updateRow(ctx, "users", id, data)
+	}
+	if err := validateWritableFields("users", data); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	data["updated_at"] = time.Now()
+	sets := make([]string, 0, len(data)+1)
+	values := make([]any, 0, len(data)+1)
+	index := 1
+	for key, value := range data {
+		sets = append(sets, fmt.Sprintf(`"%s" = $%d`, key, index))
+		values = append(values, value)
+		index++
+	}
+	sets = append(sets, "token_version = token_version + 1")
+	values = append(values, id)
+	query := fmt.Sprintf("UPDATE users SET %s WHERE id = $%d", strings.Join(sets, ", "), index)
+	if _, err := tx.ExecContext(ctx, query, values...); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
@@ -620,14 +693,14 @@ func (s *Store) DeleteHazardReduction(ctx context.Context, id int64) error {
 // --- Dashboard Stats ---
 
 type DashboardStats struct {
-	TotalUsers       int64 `json:"total_users" db:"total_users"`
-	PaidUsers        int64 `json:"paid_users" db:"paid_users"`
-	FreeUsers        int64 `json:"free_users" db:"free_users"`
-	TotalCapcodes    int64 `json:"total_capcodes" db:"total_capcodes"`
-	TotalMessages    int64 `json:"total_messages" db:"total_messages"`
-	TotalSystems     int64 `json:"total_systems" db:"total_systems"`
-	MessagesToday    int64 `json:"messages_today" db:"messages_today"`
-	NewUsersToday    int64 `json:"new_users_today" db:"new_users_today"`
+	TotalUsers         int64 `json:"total_users" db:"total_users"`
+	PaidUsers          int64 `json:"paid_users" db:"paid_users"`
+	FreeUsers          int64 `json:"free_users" db:"free_users"`
+	TotalCapcodes      int64 `json:"total_capcodes" db:"total_capcodes"`
+	TotalMessages      int64 `json:"total_messages" db:"total_messages"`
+	TotalSystems       int64 `json:"total_systems" db:"total_systems"`
+	MessagesToday      int64 `json:"messages_today" db:"messages_today"`
+	NewUsersToday      int64 `json:"new_users_today" db:"new_users_today"`
 	TotalInstallations int64 `json:"total_installations" db:"total_installations"`
 }
 
@@ -665,18 +738,18 @@ func (s *Store) GetDashboardStats(ctx context.Context) (*DashboardStats, error) 
 
 // BillingStats is the headline IAP/Stripe billing snapshot for the dashboard.
 type BillingStats struct {
-	ActiveTotal       int64   `json:"active_total" db:"active_total"`
-	ActiveApple       int64   `json:"active_apple" db:"active_apple"`
-	ActiveGoogle      int64   `json:"active_google" db:"active_google"`
-	ActiveStripe      int64   `json:"active_stripe" db:"active_stripe"`
-	ActiveGifted      int64   `json:"active_gifted" db:"active_gifted"`
-	NewSubs7d         int64   `json:"new_subs_7d" db:"new_subs_7d"`
-	NewSubs30d        int64   `json:"new_subs_30d" db:"new_subs_30d"`
-	Cancellations30d  int64   `json:"cancellations_30d" db:"cancellations_30d"`
-	Refunds30d        int64   `json:"refunds_30d" db:"refunds_30d"`
-	ExpiringSoon      int64   `json:"expiring_soon" db:"expiring_soon"`
-	WillNotRenew      int64   `json:"will_not_renew" db:"will_not_renew"`
-	MRREstimateCents  int64   `json:"mrr_estimate_cents" db:"mrr_estimate_cents"`
+	ActiveTotal      int64 `json:"active_total" db:"active_total"`
+	ActiveApple      int64 `json:"active_apple" db:"active_apple"`
+	ActiveGoogle     int64 `json:"active_google" db:"active_google"`
+	ActiveStripe     int64 `json:"active_stripe" db:"active_stripe"`
+	ActiveGifted     int64 `json:"active_gifted" db:"active_gifted"`
+	NewSubs7d        int64 `json:"new_subs_7d" db:"new_subs_7d"`
+	NewSubs30d       int64 `json:"new_subs_30d" db:"new_subs_30d"`
+	Cancellations30d int64 `json:"cancellations_30d" db:"cancellations_30d"`
+	Refunds30d       int64 `json:"refunds_30d" db:"refunds_30d"`
+	ExpiringSoon     int64 `json:"expiring_soon" db:"expiring_soon"`
+	WillNotRenew     int64 `json:"will_not_renew" db:"will_not_renew"`
+	MRREstimateCents int64 `json:"mrr_estimate_cents" db:"mrr_estimate_cents"`
 }
 
 // GetBillingStats computes a snapshot of active subscriptions, recent churn,
@@ -977,6 +1050,9 @@ func (s *Store) getRow(ctx context.Context, from string, id int64, selectCols st
 }
 
 func (s *Store) insertRow(ctx context.Context, table string, data map[string]any) (int64, error) {
+	if err := validateWritableFields(table, data); err != nil {
+		return 0, err
+	}
 	data["created_at"] = time.Now()
 	data["updated_at"] = time.Now()
 
@@ -1000,6 +1076,9 @@ func (s *Store) insertRow(ctx context.Context, table string, data map[string]any
 }
 
 func (s *Store) updateRow(ctx context.Context, table string, id int64, data map[string]any) error {
+	if err := validateWritableFields(table, data); err != nil {
+		return err
+	}
 	data["updated_at"] = time.Now()
 
 	sets := make([]string, 0, len(data))
@@ -1017,6 +1096,48 @@ func (s *Store) updateRow(ctx context.Context, table string, id int64, data map[
 	return err
 }
 
+var adminUserInputFields = fieldSet("email", "name", "password", "role", "active")
+
+// writableFields prevents untrusted JSON keys from becoming SQL identifiers.
+// Timestamps are assigned internally after this validation.
+var writableFields = map[string]map[string]struct{}{
+	"admin_users":      fieldSet("email", "name", "role", "active", "password_hash"),
+	"users":            fieldSet("user_id", "name", "email", "password", "email_verified_at", "adapty_id", "last_adapty_sync_at", "last_store_sync_at", "subscription_product_id", "subscription_platform", "subscription_expiry", "subscription_valid", "will_renew", "cancellation_reason", "apple_original_transaction_id", "google_purchase_token", "superuser"),
+	"capcodes":         fieldSet("address", "agency_id", "alias", "icon", "colour", "ignore"),
+	"agencies":         fieldSet("agency"),
+	"systems":          fieldSet("user_id", "system_id", "name", "api_key", "sync", "steal_capcodes", "frequency", "base_url", "lat", "lng", "suburb", "request_notes"),
+	"messages":         fieldSet("system_id", "capcode_id", "address", "message", "lat", "lng", "created_at"),
+	"subscriptions":    fieldSet("user_id", "capcode_id"),
+	"alertzones":       fieldSet("user_id", "name", "lat", "lng", "radius"),
+	"majorincidents":   fieldSet("title", "upstream_id", "category", "description", "lat", "lng", "start_at", "end_at", "geometry", "data"),
+	"hazardreductions": fieldSet("title", "upstream_id", "leadAgency", "supportingAgencies", "lga", "size", "tenure", "start_at", "end_at"),
+}
+
+func fieldSet(fields ...string) map[string]struct{} {
+	set := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		set[field] = struct{}{}
+	}
+	return set
+}
+
+func validateWritableFields(table string, data map[string]any) error {
+	allowed, ok := writableFields[table]
+	if !ok {
+		return fmt.Errorf("unsupported writable table %q", table)
+	}
+	return validateFields(data, allowed)
+}
+
+func validateFields(data map[string]any, allowed map[string]struct{}) error {
+	for field := range data {
+		if _, ok := allowed[field]; !ok {
+			return fmt.Errorf("field %q is not writable", field)
+		}
+	}
+	return nil
+}
+
 // sanitizeColumnName allows only safe characters for ORDER BY columns.
 func sanitizeColumnName(name string) string {
 	for _, ch := range name {
@@ -1030,6 +1151,10 @@ func sanitizeColumnName(name string) string {
 // cleanMapScan converts []byte values to strings and handles SQL null types for JSON serialization.
 func cleanMapScan(m map[string]any) {
 	for k, v := range m {
+		if sensitiveMapField(k) {
+			delete(m, k)
+			continue
+		}
 		switch val := v.(type) {
 		case []byte:
 			// Try to parse as JSON first
@@ -1070,5 +1195,14 @@ func cleanMapScan(m map[string]any) {
 				m[k] = nil
 			}
 		}
+	}
+}
+
+func sensitiveMapField(field string) bool {
+	switch strings.ToLower(field) {
+	case "password", "password_hash", "remember_token", "two_factor_secret", "two_factor_recovery_codes", "token_version":
+		return true
+	default:
+		return false
 	}
 }

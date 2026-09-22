@@ -41,42 +41,52 @@ func (c *GoogleClient) ValidatePurchase(ctx context.Context, purchaseToken, prod
 		return nil, fmt.Errorf("Google Play API error: %w", err)
 	}
 
-	// Parse expiry from line items
-	var expiresAt *time.Time
-	var willRenew bool
-	resolvedProductID := productID
+	return googleValidationResult(result, purchaseToken, productID)
+}
 
-	if len(result.LineItems) > 0 {
-		item := result.LineItems[0]
-		if item.ExpiryTime != "" {
-			t, err := time.Parse(time.RFC3339, item.ExpiryTime)
-			if err == nil {
-				expiresAt = &t
-			}
-		}
-		if item.AutoRenewingPlan != nil {
-			willRenew = item.AutoRenewingPlan.AutoRenewEnabled
-		}
-		if item.OfferDetails != nil && len(item.OfferDetails.BasePlanId) > 0 {
-			resolvedProductID = item.OfferDetails.BasePlanId
+func googleValidationResult(purchase *androidpublisher.SubscriptionPurchaseV2, purchaseToken, requestedProductID string) (*ValidationResult, error) {
+	if len(purchase.LineItems) == 0 || purchase.LineItems[0] == nil || purchase.LineItems[0].ProductId == "" {
+		return nil, fmt.Errorf("Google Play response contains no subscription product")
+	}
+	item := purchase.LineItems[0]
+	for _, other := range purchase.LineItems[1:] {
+		if other == nil || other.ProductId != item.ProductId {
+			return nil, fmt.Errorf("Google Play response contains conflicting subscription products")
 		}
 	}
+	if requestedProductID != "" && requestedProductID != item.ProductId {
+		return nil, fmt.Errorf("requested product %q does not match validated product %q", requestedProductID, item.ProductId)
+	}
 
-	// Check subscription state
-	// SUBSCRIPTION_STATE_ACTIVE = active
-	// SUBSCRIPTION_STATE_EXPIRED = expired
-	// SUBSCRIPTION_STATE_REVOKED = revoked
-	// SUBSCRIPTION_STATE_ON_HOLD = on hold (payment issue)
-	// SUBSCRIPTION_STATE_IN_GRACE_PERIOD = grace period
-	valid := result.SubscriptionState == "SUBSCRIPTION_STATE_ACTIVE" ||
-		result.SubscriptionState == "SUBSCRIPTION_STATE_IN_GRACE_PERIOD"
+	var expiresAt *time.Time
+	if item.ExpiryTime != "" {
+		t, err := time.Parse(time.RFC3339, item.ExpiryTime)
+		if err != nil {
+			return nil, fmt.Errorf("parsing Google Play expiry: %w", err)
+		}
+		expiresAt = &t
+	}
+	willRenew := item.AutoRenewingPlan != nil && item.AutoRenewingPlan.AutoRenewEnabled
+	valid := purchase.SubscriptionState == "SUBSCRIPTION_STATE_ACTIVE" ||
+		purchase.SubscriptionState == "SUBSCRIPTION_STATE_IN_GRACE_PERIOD"
+	environment := "Production"
+	if purchase.TestPurchase != nil {
+		environment = "Test"
+	}
+	transactionID := item.LatestSuccessfulOrderId
+	if transactionID == "" {
+		transactionID = purchase.LatestOrderId
+	}
 
 	return &ValidationResult{
 		Valid:                 valid,
-		ProductID:             resolvedProductID,
+		ProductID:             item.ProductId,
 		Platform:              "google",
+		Environment:           environment,
 		ExpiresAt:             expiresAt,
+		TransactionID:         transactionID,
 		OriginalTransactionID: purchaseToken,
+		PreviousOwnershipID:   purchase.LinkedPurchaseToken,
 		WillRenew:             willRenew,
 	}, nil
 }

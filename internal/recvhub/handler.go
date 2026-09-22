@@ -22,11 +22,7 @@ func Handler(database *db.DB, hub *Hub, onPage PageHandler) http.HandlerFunc {
 		if apiKey == "" {
 			apiKey = r.Header.Get("X-Api-Key")
 		}
-		// Also accept the key as a query param so browser-style clients that
-		// can't set headers on a WebSocket upgrade can still authenticate.
-		if apiKey == "" {
-			apiKey = r.URL.Query().Get("apikey")
-		}
+
 		if apiKey == "" {
 			http.Error(w, `{"error":"apikey required"}`, http.StatusUnauthorized)
 			return

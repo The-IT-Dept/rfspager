@@ -18,6 +18,9 @@ import (
 // audience is typically the webhook URL (e.g. https://api.example.com/api/webhooks/google),
 // matching the push subscription's "Authentication audience" setting.
 func verifyGooglePubsubOIDC(ctx context.Context, r *http.Request, audience, serviceAccountEmail string) error {
+	if audience == "" || serviceAccountEmail == "" {
+		return errors.New("Google webhook authentication is not configured")
+	}
 	auth := r.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") {
 		return errors.New("missing or malformed Authorization header")

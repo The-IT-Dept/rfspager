@@ -71,7 +71,7 @@ func (d *DB) GetSystemByID(ctx context.Context, id int64) (*models.System, error
 func (d *DB) GetSystemByAPIKey(ctx context.Context, apiKey string) (*models.System, error) {
 	var s models.System
 	err := d.conn.GetContext(ctx, &s,
-		`SELECT * FROM systems WHERE api_key = $1 AND deleted_at IS NULL`, apiKey)
+		`SELECT * FROM systems WHERE api_key = $1 AND deleted_at IS NULL AND approved_at IS NOT NULL AND user_id IS NOT NULL`, apiKey)
 	if err != nil {
 		return nil, err
 	}

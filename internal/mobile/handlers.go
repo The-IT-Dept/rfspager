@@ -1,10 +1,12 @@
 package mobile
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -15,6 +17,33 @@ import (
 
 type Handlers struct {
 	db *sqlx.DB
+}
+
+// lockInstallationTokens serializes ownership changes for the opaque provider
+// tokens supplied with an installation. Push and Expo tokens deliberately use
+// one namespace: providers may surface the same opaque token through either
+// field, and every matching active registration must be retired atomically.
+func lockInstallationTokens(ctx context.Context, tx *sqlx.Tx, tokens ...string) error {
+	keys := make([]string, 0, len(tokens))
+	seen := make(map[string]struct{}, len(tokens))
+	for _, token := range tokens {
+		if token == "" {
+			continue
+		}
+		key := "rfspager-installation-token:" + token
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, key); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func NewHandlers(db *sqlx.DB) *Handlers {
@@ -51,9 +80,15 @@ func (h *Handlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	perPage, _ := strconv.Atoi(q.Get("per_page"))
-	if page < 1 { page = 1 }
-	if perPage < 1 { perPage = 25 }
-	if perPage > 100 { perPage = 100 }
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 25
+	}
+	if perPage > 100 {
+		perPage = 100
+	}
 
 	where := "m.deleted_at IS NULL"
 	args := []any{}
@@ -191,7 +226,9 @@ func (h *Handlers) GetMessage(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) MapMessages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	if limit < 1 || limit > 500 { limit = 100 }
+	if limit < 1 || limit > 500 {
+		limit = 100
+	}
 
 	where := "m.deleted_at IS NULL AND m.lat IS NOT NULL AND m.lng IS NOT NULL"
 	args := []any{}
@@ -252,9 +289,15 @@ func (h *Handlers) ListCapcodes(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	perPage, _ := strconv.Atoi(q.Get("per_page"))
-	if page < 1 { page = 1 }
-	if perPage < 1 { perPage = 50 }
-	if perPage > 2500 { perPage = 2500 }
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 50
+	}
+	if perPage > 2500 {
+		perPage = 2500
+	}
 
 	where := "c.deleted_at IS NULL"
 	args := []any{}
@@ -288,9 +331,13 @@ func (h *Handlers) ListCapcodes(w http.ResponseWriter, r *http.Request) {
 		data = append(data, row)
 	}
 	hasMore := len(data) > perPage
-	if hasMore { data = data[:perPage] }
+	if hasMore {
+		data = data[:perPage]
+	}
 	totalPages := page
-	if hasMore { totalPages = page + 1 }
+	if hasMore {
+		totalPages = page + 1
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": data, "page": page, "per_page": perPage, "total_pages": totalPages,
 	})
@@ -325,7 +372,9 @@ func (h *Handlers) ListSubscriptions(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 	user := GetUser(r.Context())
-	var req struct{ CapcodeID int64 `json:"capcode_id"` }
+	var req struct {
+		CapcodeID int64 `json:"capcode_id"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
 
 	_, err := h.db.ExecContext(r.Context(),
@@ -356,7 +405,9 @@ func (h *Handlers) ListFilters(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) CreateFilter(w http.ResponseWriter, r *http.Request) {
 	user := GetUser(r.Context())
-	var req struct{ CapcodeID int64 `json:"capcode_id"` }
+	var req struct {
+		CapcodeID int64 `json:"capcode_id"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
 
 	h.db.ExecContext(r.Context(),
@@ -509,10 +560,10 @@ func (h *Handlers) CreateSystem(w http.ResponseWriter, r *http.Request) {
 	user := GetUser(r.Context())
 
 	var req struct {
-		Name           string `json:"name"`
-		Suburb         string `json:"suburb"`
-		Notes          string `json:"notes"`
-		AcceptedTerms  bool   `json:"accepted_terms"`
+		Name          string `json:"name"`
+		Suburb        string `json:"suburb"`
+		Notes         string `json:"notes"`
+		AcceptedTerms bool   `json:"accepted_terms"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
@@ -663,21 +714,62 @@ func (h *Handlers) UpsertInstallation(w http.ResponseWriter, r *http.Request) {
 		AppVersion string `json:"app_version"`
 		Timezone   string `json:"timezone"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || (req.PushType != "APN" && req.PushType != "GCM") || len(req.PushToken) > 4096 || len(req.ExpoToken) > 4096 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid installation"})
+		return
+	}
+	if _, err := uuid.Parse(installID); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid installation id"})
+		return
+	}
+	tx, err := h.db.BeginTxx(r.Context(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update installation"})
+		return
+	}
+	defer tx.Rollback()
+	if err := lockInstallationTokens(r.Context(), tx, req.PushToken, req.ExpoToken); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update installation"})
+		return
+	}
 
-	_, err := h.db.ExecContext(r.Context(),
+	result, err := tx.ExecContext(r.Context(),
 		`INSERT INTO installations (id, user_id, push_type, push_token, expo_token, vendor, model, version, app_id, app_name, app_version, timezone, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
 		 ON CONFLICT (id) DO UPDATE SET
-		 user_id = EXCLUDED.user_id, push_type = EXCLUDED.push_type, push_token = EXCLUDED.push_token,
+		 push_type = EXCLUDED.push_type, push_token = EXCLUDED.push_token,
 		 expo_token = EXCLUDED.expo_token, vendor = EXCLUDED.vendor, model = EXCLUDED.model,
 		 version = EXCLUDED.version, app_id = EXCLUDED.app_id, app_name = EXCLUDED.app_name,
-		 app_version = EXCLUDED.app_version, timezone = EXCLUDED.timezone, updated_at = NOW(), deleted_at = NULL`,
+		 app_version = EXCLUDED.app_version, timezone = EXCLUDED.timezone, updated_at = NOW(), deleted_at = NULL
+ WHERE installations.user_id = EXCLUDED.user_id`,
 		installID, user.ID, req.PushType, nullStr(req.PushToken), nullStr(req.ExpoToken),
 		req.Vendor, req.Model, req.Version, req.AppID, req.AppName, req.AppVersion, req.Timezone)
 	if err != nil {
 		slog.Error("upsert installation failed", "error", err)
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "could not update installation"})
+		return
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update installation"})
+		return
+	}
+	if affected == 0 {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "installation belongs to another account"})
+		return
+	}
+	// A device signing into another account gets a new per-user installation id.
+	// Retire previous registrations of its opaque provider token to avoid sending
+	// that device notifications for the previous signed-in account.
+	_, err = tx.ExecContext(r.Context(), `UPDATE installations SET deleted_at = NOW()
+ WHERE id <> $1 AND deleted_at IS NULL AND
+ (($2 <> '' AND push_type = $3 AND push_token = $2) OR ($4 <> '' AND expo_token = $4))`, installID, req.PushToken, req.PushType, req.ExpoToken)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update installation"})
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update installation"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -706,8 +798,12 @@ func (h *Handlers) ListMajorIncidents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	perPage, _ := strconv.Atoi(q.Get("per_page"))
-	if page < 1 { page = 1 }
-	if perPage < 1 { perPage = 25 }
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 25
+	}
 
 	fetchLimit := perPage + 1
 	offset := (page - 1) * perPage
@@ -723,9 +819,13 @@ func (h *Handlers) ListMajorIncidents(w http.ResponseWriter, r *http.Request) {
 		data = append(data, row)
 	}
 	hasMore := len(data) > perPage
-	if hasMore { data = data[:perPage] }
+	if hasMore {
+		data = data[:perPage]
+	}
 	totalPages := page
-	if hasMore { totalPages = page + 1 }
+	if hasMore {
+		totalPages = page + 1
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": data, "page": page, "per_page": perPage, "total_pages": totalPages,
 	})
@@ -737,8 +837,12 @@ func (h *Handlers) ListHazardReductions(w http.ResponseWriter, r *http.Request) 
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	perPage, _ := strconv.Atoi(q.Get("per_page"))
-	if page < 1 { page = 1 }
-	if perPage < 1 { perPage = 25 }
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 25
+	}
 
 	fetchLimit := perPage + 1
 	offset := (page - 1) * perPage
@@ -754,9 +858,13 @@ func (h *Handlers) ListHazardReductions(w http.ResponseWriter, r *http.Request) 
 		data = append(data, row)
 	}
 	hasMore := len(data) > perPage
-	if hasMore { data = data[:perPage] }
+	if hasMore {
+		data = data[:perPage]
+	}
 	totalPages := page
-	if hasMore { totalPages = page + 1 }
+	if hasMore {
+		totalPages = page + 1
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": data, "page": page, "per_page": perPage, "total_pages": totalPages,
 	})
@@ -768,8 +876,12 @@ func (h *Handlers) ListPhotos(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	perPage, _ := strconv.Atoi(q.Get("per_page"))
-	if page < 1 { page = 1 }
-	if perPage < 1 { perPage = 25 }
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 25
+	}
 
 	where := "p.upload_complete = true"
 	args := []any{}

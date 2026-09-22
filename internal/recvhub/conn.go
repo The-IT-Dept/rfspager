@@ -76,8 +76,8 @@ func (c *Conn) run(ctx context.Context, database *db.DB) {
 		EmitEvent(bg, database.Conn(), c.SystemID, EvtReceiverDisconnected, SeverityInfo,
 			"Receiver disconnected",
 			map[string]any{
-				"connected_at":      c.connectedAt,
-				"uptime_seconds":    int(uptime.Seconds()),
+				"connected_at":   c.connectedAt,
+				"uptime_seconds": int(uptime.Seconds()),
 			})
 	}()
 
@@ -160,6 +160,10 @@ func (c *Conn) run(ctx context.Context, database *db.DB) {
 			case <-c.closed:
 				return
 			case <-heartbeat.C:
+				if !c.stillAuthorized(ctx, database) {
+					c.closeWithReason("receiver authorization revoked")
+					return
+				}
 				ok, err := database.TouchSystemConnection(context.Background(), c.SystemID, PodID)
 				if err != nil {
 					slog.Warn("touch connection failed", "err", err)
@@ -204,11 +208,30 @@ func (c *Conn) readHello(ctx context.Context) (*HelloPayload, error) {
 	return &h, nil
 }
 
-func (c *Conn) handleFrame(ctx context.Context, database *db.DB, f Frame) {
+type systemKeyLookup interface {
+	GetSystemByAPIKey(context.Context, string) (*models.System, error)
+}
+
+func (c *Conn) stillAuthorized(ctx context.Context, database systemKeyLookup) bool {
+	if c.System == nil || !c.System.APIKey.Valid || c.System.APIKey.String == "" {
+		return false
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	current, err := database.GetSystemByAPIKey(checkCtx, c.System.APIKey.String)
+	return err == nil && current.ID == c.SystemID
+}
+
+func (c *Conn) handleFrame(ctx context.Context, database systemKeyLookup, f Frame) {
 	switch f.Type {
 	case "ping":
 		c.send(Frame{Type: "pong", ID: f.ID})
 	case "page":
+		// Approval, ownership and key rotation apply to already-open sockets too.
+		if !c.stillAuthorized(ctx, database) {
+			c.closeWithReason("receiver authorization revoked")
+			return
+		}
 		var p PagePayload
 		if err := json.Unmarshal(f.Data, &p); err != nil {
 			c.sendAck(f.ID, "err", err.Error())
@@ -282,7 +305,9 @@ func (c *Conn) sendAck(id, status, errMsg string) {
 func (c *Conn) closeWithReason(reason string) {
 	c.closeOnce.Do(func() {
 		close(c.closed)
-		_ = c.ws.Close(websocket.StatusNormalClosure, reason)
+		if c.ws != nil {
+			_ = c.ws.Close(websocket.StatusNormalClosure, reason)
+		}
 	})
 }
 

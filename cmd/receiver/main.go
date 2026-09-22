@@ -29,7 +29,6 @@ import (
 	"github.com/the-it-dept/rfspager/internal/receiver"
 	"github.com/the-it-dept/rfspager/internal/receiver/config"
 	"github.com/the-it-dept/rfspager/internal/receiver/dsp"
-	"github.com/the-it-dept/rfspager/internal/receiver/legacy"
 	"github.com/the-it-dept/rfspager/internal/receiver/sdr"
 	"github.com/the-it-dept/rfspager/internal/receiver/spectrum"
 	"github.com/the-it-dept/rfspager/internal/receiver/wsclient"
@@ -72,48 +71,35 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Pick the upstream transport. Default is the WebSocket; legacy mode
-	// switches to plain HTTP POST against the original Laravel endpoint
-	// so we can backfeed the old platform while migration is in flight.
-	var sender receiver.PageSender
-	if cfg.LegacyMode() {
-		sender = legacy.New(cfg.LegacyURL, cfg.LegacySystemUUID)
-		slog.Info("legacy mode",
-			"url", cfg.LegacyURL,
-			"system_uuid", cfg.LegacySystemUUID,
-			"note", "websocket transport disabled; pages posted to /api/messages/{uuid}",
-		)
-	} else {
-		ws := wsclient.New(cfg.ServerURL, cfg.APIKey)
+	ws := wsclient.New(cfg.ServerURL, cfg.APIKey)
 
-		// From this point on, mirror every slog record to the WS as well as
-		// stdout. The hub persists them in system_logs (7-day retention) and
-		// fans them out to owner + admin viewers in real time. The WS client
-		// drops log frames if its send buffer is full, so this can't block
-		// the decode hot path.
-		base := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
-		slog.SetDefault(slog.New(wsclient.NewLogShippingHandler(base, ws)))
+	// From this point on, mirror every slog record to the WS as well as
+	// stdout. The hub persists them in system_logs (7-day retention) and
+	// fans them out to owner + admin viewers in real time. The WS client
+	// drops log frames if its send buffer is full, so this can't block
+	// the decode hot path.
+	base := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+	slog.SetDefault(slog.New(wsclient.NewLogShippingHandler(base, ws)))
 
-		wsDone := make(chan struct{})
-		go func() {
-			defer close(wsDone)
-			if err := ws.Run(ctx); err != nil {
-				slog.Error("ws transport stopped", "err", err)
-			}
-		}()
-		welcomeCtx, welcomeCancel := context.WithTimeout(ctx, 15*time.Second)
-		defer welcomeCancel()
-		welcome, err := ws.Welcomed(welcomeCtx)
-		if err != nil {
-			slog.Error("ws welcome timed out", "key", maskKey(cfg.APIKey), "err", err)
-			os.Exit(2)
+	wsDone := make(chan struct{})
+	go func() {
+		defer close(wsDone)
+		if err := ws.Run(ctx); err != nil {
+			slog.Error("ws transport stopped", "err", err)
 		}
-		slog.Info("authenticated",
-			"system", welcome.Name,
-			"system_id", welcome.SystemUUID,
-		)
-		sender = ws
+	}()
+	welcomeCtx, welcomeCancel := context.WithTimeout(ctx, 15*time.Second)
+	defer welcomeCancel()
+	welcome, err := ws.Welcomed(welcomeCtx)
+	if err != nil {
+		slog.Error("ws welcome timed out", "key", maskKey(cfg.APIKey), "err", err)
+		os.Exit(2)
 	}
+	slog.Info("authenticated",
+		"system", welcome.Name,
+		"system_id", welcome.SystemUUID,
+	)
+	var sender receiver.PageSender = ws
 
 	// Pick dongle centre: midpoint of the lowest and highest hardcoded freqs.
 	var lo, hi uint32 = hardcodedChannels[0].freqHz, hardcodedChannels[0].freqHz
@@ -194,10 +180,9 @@ func main() {
 // Returns nil only on a clean shutdown via ctx; otherwise an error describing
 // why the SDR loop ended.
 //
-// Spectrum frames are emitted only if the upstream is a wsclient.Client —
-// legacy mode has no transport for them.
+// Spectrum frames share the authenticated WebSocket transport.
 func runDongle(ctx context.Context, cfg *config.Config, centre uint32, channels []*receiver.Channel, sender receiver.PageSender) error {
-	ws, _ := sender.(*wsclient.Client) // nil in legacy mode
+	ws, _ := sender.(*wsclient.Client) // fake PageSenders may omit spectrum in tests
 	dongleIdx, err := resolveDongleIndex(cfg)
 	if err != nil {
 		return err
@@ -296,9 +281,7 @@ func runDongle(ctx context.Context, cfg *config.Config, centre uint32, channels 
 			}
 			// Compute and send a spectrum slice at most once per
 			// spectrumInterval. Disabled via RECEIVER_DISABLE_SPECTRUM=1 for
-			// debugging USB stability on marginal hardware, and also when
-			// running in legacy mode (the old Laravel endpoint has no
-			// concept of spectrum frames).
+			// debugging USB stability on marginal hardware.
 			if ws != nil && !cfg.DisableSpectrum {
 				if now := time.Now(); now.After(nextSpectrumAt) && len(work) >= spectrum.FFTSize {
 					if bins := spectrum.Compute(work); bins != nil {

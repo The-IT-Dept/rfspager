@@ -127,7 +127,9 @@ func (c *AppleClient) GetTransactionInfo(transactionID string) (*ValidationResul
 		Valid:                 expiresAt.After(time.Now()),
 		ProductID:             txn.ProductID,
 		Platform:              "apple",
+		Environment:           txn.Environment,
 		ExpiresAt:             &expiresAt,
+		TransactionID:         txn.TransactionID,
 		OriginalTransactionID: txn.OriginalTransactionID,
 		WillRenew:             true, // Will be updated by renewal info if available
 	}, nil

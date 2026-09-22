@@ -13,7 +13,7 @@ import (
 )
 
 // PageSender is the transport contract the Forwarder uses. Implemented by
-// both wsclient.Client (modern WS) and legacy.Client (Laravel HTTP POST).
+// the authenticated wsclient.Client and in-memory test senders.
 type PageSender interface {
 	SendPage(addr, msg string, when time.Time, fn, baud int)
 }

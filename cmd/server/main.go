@@ -13,10 +13,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/golang-jwt/jwt/v4"
+	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
-	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/the-it-dept/rfspager/internal/admin"
 	"github.com/the-it-dept/rfspager/internal/config"
 	"github.com/the-it-dept/rfspager/internal/db"
@@ -24,6 +23,7 @@ import (
 	"github.com/the-it-dept/rfspager/internal/handler"
 	"github.com/the-it-dept/rfspager/internal/iap"
 	"github.com/the-it-dept/rfspager/internal/importer"
+	resetmail "github.com/the-it-dept/rfspager/internal/mail"
 	"github.com/the-it-dept/rfspager/internal/middleware"
 	"github.com/the-it-dept/rfspager/internal/mobile"
 	"github.com/the-it-dept/rfspager/internal/models"
@@ -66,8 +66,11 @@ func main() {
 
 	// Seed default admin user
 	adminStore := admin.NewStore(database.Conn())
-	if err := adminStore.SeedAdmin(context.Background(), cfg.AdminEmail, cfg.AdminPassword); err != nil {
-		slog.Error("failed to seed admin user", "error", err)
+	if cfg.AdminEmail != "" {
+		if err := adminStore.SeedAdmin(context.Background(), cfg.AdminEmail, cfg.AdminPassword); err != nil {
+			slog.Error("failed to bootstrap administrator", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	// Push notification clients
@@ -95,18 +98,30 @@ func main() {
 		slog.Error("failed to initialize Google IAP", "error", err)
 	}
 
-	iapHandler := iap.NewHandler(database.Conn(), appleIAP, googleIAP)
+	iapHandler := iap.NewHandler(database.Conn(), appleIAP, googleIAP, iap.Options{AllowedProductIDs: strings.Fields(cfg.IAPProductIDs), AppleEnvironment: cfg.AppleIAPEnvironment, GoogleEnvironment: cfg.GoogleIAPEnvironment})
 	webhookHandler := iap.NewWebhookHandler(database.Conn(), appleIAP, googleIAP, iap.WebhookConfig{
 		AppleBundleID:      cfg.AppleBundleID,
 		GooglePackageName:  cfg.GooglePlayPackage,
 		PubsubAudience:     cfg.GooglePubsubAudience,
 		PubsubServiceEmail: cfg.GooglePubsubServiceEmail,
-	})
+	}, iap.Options{AllowedProductIDs: strings.Fields(cfg.IAPProductIDs), AppleEnvironment: cfg.AppleIAPEnvironment, GoogleEnvironment: cfg.GoogleIAPEnvironment})
 
 	// Stripe
 	stripeHandler := stripehandler.NewHandler(database.Conn(),
 		cfg.StripeSecretKey, cfg.StripePriceMonthly, cfg.StripePriceYearly,
 		cfg.StripeWebhookSecret, cfg.BaseURL)
+
+	// Optional password recovery delivery. Missing SMTP keeps recovery unavailable
+	// rather than claiming to send mail.
+	var resetMailer mobile.PasswordResetMailer
+	if cfg.SMTPHost != "" {
+		resetMailer, err = resetmail.NewSMTPPasswordResetMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, cfg.SMTPMode)
+		if err != nil {
+			slog.Error("invalid SMTP configuration", "error", err)
+			os.Exit(1)
+		}
+	}
+	authOptions := mobile.AuthOptions{ResetMailer: resetMailer, ResetURL: strings.TrimRight(cfg.BaseURL, "/") + "/reset-password", FacebookAppID: cfg.FacebookAppID, FacebookAppSecret: cfg.FacebookAppSecret}
 
 	// Handlers
 	msgHandler := handler.NewMessageHandler(database)
@@ -179,10 +194,16 @@ func main() {
 
 	// Router
 	r := chi.NewRouter()
-	r.Use(chimw.Logger)
+	r.Use(middleware.RequestLog(slog.Default()))
 	r.Use(chimw.Recoverer)
-	r.Use(chimw.RealIP)
 	r.Use(chimw.RequestID)
+	r.Use(middleware.LimitBodies(1 << 20))
+	authLimit, err := middleware.AuthRateLimit(30, time.Minute, cfg.TrustedProxyCIDRs)
+	if err != nil {
+		slog.Error("invalid proxy configuration", "error", err)
+		os.Exit(1)
+	}
+	r.Use(authLimit)
 	// NOTE: chimw.Timeout is applied per-group below — streaming routes
 	// (websocket, SSE) deliberately stay off it because it cancels
 	// r.Context() after 30s and would kill long-lived connections.
@@ -201,7 +222,7 @@ func main() {
 			r.Get("/receiver/ws", recvhub.Handler(database, hub, func(ctx context.Context, sys *models.System, p recvhub.PagePayload) (string, error) {
 				return msgHandler.IngestPage(ctx, sys, p.Address, p.Message, time.Unix(p.Datetime, 0))
 			}))
-			r.With(spectrumAuth(cfg.JWTSecret)).Get("/v1/admin/systems/{id}/spectrum", hub.SpectrumSSE)
+			r.With(admin.NewJWTAuthMiddleware(database.Conn(), cfg.JWTSecret)).Get("/v1/admin/systems/{id}/spectrum", hub.SpectrumSSE)
 			// Mobile spectrum stream: JWT-auth'd WS. Lives in the streaming
 			// group so it's outside chi.Timeout — RN WebSocket can supply
 			// the Authorization header directly.
@@ -212,54 +233,41 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(chimw.Timeout(30 * time.Second))
 
-			// Pagermon-compatible ingress: system resolved by `apikey` header.
-			r.Post("/messages", msgHandler.ProcessPagermon)
-			// V1: unauthenticated, system resolved by UUID in URL
-			r.Post("/messages/{system}", msgHandler.ProcessV1)
-
-			// Receiver agent boot probe: validates apikey header, returns system details.
-			r.Get("/receiver/me", msgHandler.ReceiverMe)
-
-			// V2: authenticated with Sanctum token
-			r.Route("/v2/system", func(r chi.Router) {
-				r.Use(middleware.SanctumAuth(database))
-				r.Post("/ping", msgHandler.Ping)
-				r.Post("/multimon_message", msgHandler.MultimonMessage)
-			})
+			handler.RegisterIngress(r, msgHandler)
 
 			// Admin API
 			r.Mount("/v1/admin", admin.Router(database.Conn(), cfg.JWTSecret, notifier, nil))
 
 			// Mobile API
-			r.Mount("/v2/mobile", mobile.Router(database.Conn(), cfg.JWTSecret, cfg.AppleBundleID, mobileSSE, iapHandler, hub))
+			r.Mount("/v2/mobile", mobile.Router(database.Conn(), cfg.JWTSecret, cfg.AppleBundleID, mobileSSE, iapHandler, hub, authOptions))
 
-		// Public API (no auth)
-		publicHandlers := public.NewHandlers(database.Conn())
-		r.Route("/public", func(r chi.Router) {
-			r.Get("/stats", publicHandlers.Stats)
-			r.Get("/messages", publicHandlers.ListMessages)
-			r.Get("/messages/map", publicHandlers.MapMessages)
-			r.Get("/agencies", publicHandlers.ListAgencies)
-			r.Get("/major-incidents", publicHandlers.MajorIncidents)
-			r.Get("/systems", publicHandlers.ListSystems)
-			r.Get("/stations", publicHandlers.Stations)
-			r.Get("/capcodes", publicHandlers.ListCapcodes)
-			r.Get("/capcodes/unknown", publicHandlers.UnknownCapcodes)
-			r.Get("/capcodes/messages", publicHandlers.CapcodeMessages)
-			r.Get("/systems/{uuid}/spectrum", public.SpectrumSSE(database.Conn(), hub))
-			r.Get("/systems/{uuid}/uptime", publicHandlers.SystemUptime)
-			r.Get("/events", publicSSE.Handler)
-		})
-
-		// Stripe (authenticated checkout/portal within mobile auth)
-		if stripeHandler != nil {
-			r.Get("/public/stripe/prices", stripeHandler.Prices)
-			r.Route("/v2/mobile/stripe", func(r chi.Router) {
-				r.Use(mobile.JWTUserAuth(database.Conn(), cfg.JWTSecret))
-				r.Post("/create-checkout-session", mobile.WithStripeContext(stripeHandler.CreateCheckoutSession))
-				r.Post("/create-portal-session", mobile.WithStripeContext(stripeHandler.CreatePortalSession))
+			// Public API (no auth)
+			publicHandlers := public.NewHandlers(database.Conn())
+			r.Route("/public", func(r chi.Router) {
+				r.Get("/stats", publicHandlers.Stats)
+				r.Get("/messages", publicHandlers.ListMessages)
+				r.Get("/messages/map", publicHandlers.MapMessages)
+				r.Get("/agencies", publicHandlers.ListAgencies)
+				r.Get("/major-incidents", publicHandlers.MajorIncidents)
+				r.Get("/systems", publicHandlers.ListSystems)
+				r.Get("/stations", publicHandlers.Stations)
+				r.Get("/capcodes", publicHandlers.ListCapcodes)
+				r.Get("/capcodes/unknown", publicHandlers.UnknownCapcodes)
+				r.Get("/capcodes/messages", publicHandlers.CapcodeMessages)
+				r.Get("/systems/{uuid}/spectrum", public.SpectrumSSE(database.Conn(), hub))
+				r.Get("/systems/{uuid}/uptime", publicHandlers.SystemUptime)
+				r.Get("/events", publicSSE.Handler)
 			})
-		}
+
+			// Stripe (authenticated checkout/portal within mobile auth)
+			if stripeHandler != nil {
+				r.Get("/public/stripe/prices", stripeHandler.Prices)
+				r.Route("/v2/mobile/stripe", func(r chi.Router) {
+					r.Use(mobile.JWTUserAuth(database.Conn(), cfg.JWTSecret))
+					r.Post("/create-checkout-session", mobile.WithStripeContext(stripeHandler.CreateCheckoutSession))
+					r.Post("/create-portal-session", mobile.WithStripeContext(stripeHandler.CreatePortalSession))
+				})
+			}
 
 			// Webhooks (public, signature-verified by the handlers themselves)
 			r.Post("/webhooks/apple", webhookHandler.AppleNotification)
@@ -277,11 +285,12 @@ func main() {
 
 	// Server
 	srv := &http.Server{
-		Addr:         ":" + cfg.Port,
-		Handler:      r,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              ":" + cfg.Port,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	// Graceful shutdown
@@ -319,44 +328,6 @@ func main() {
 		slog.Warn("shutdown deadline exceeded with workers still running")
 	}
 	slog.Info("server stopped")
-}
-
-// spectrumAuth is the JWT middleware used on the spectrum SSE route. Mirrors
-// admin.AuthHandler.JWTAuthHeaderOrQuery but kept tiny / standalone so we
-// don't have to thread admin internals through the streaming route group.
-// Accepts the token in the Authorization header OR a `?token=` query param
-// (browser EventSource can't set custom headers).
-func spectrumAuth(jwtSecret string) func(http.Handler) http.Handler {
-	secret := []byte(jwtSecret)
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var tokenStr string
-			if h := r.Header.Get("Authorization"); h != "" {
-				tokenStr = strings.TrimPrefix(h, "Bearer ")
-				if tokenStr == h {
-					http.Error(w, `{"error":"invalid authorization header"}`, http.StatusUnauthorized)
-					return
-				}
-			} else {
-				tokenStr = r.URL.Query().Get("token")
-			}
-			if tokenStr == "" {
-				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-				return
-			}
-			tok, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
-				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, fmt.Errorf("unexpected signing method")
-				}
-				return secret, nil
-			})
-			if err != nil || !tok.Valid {
-				http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
 }
 
 // podID returns a stable identifier for this server process. Honors

@@ -2,12 +2,11 @@ package mobile
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 
-	"github.com/golang-jwt/jwt/v4"
 	"github.com/jmoiron/sqlx"
+	"github.com/the-it-dept/rfspager/internal/authjwt"
 )
 
 type contextKey string
@@ -25,6 +24,7 @@ type AuthUser struct {
 	WillRenew             *bool   `db:"will_renew" json:"will_renew"`
 	SubscriptionPlatform  *string `db:"subscription_platform" json:"subscription_platform"`
 	Superuser             bool    `db:"superuser" json:"-"`
+	TokenVersion          int64   `db:"token_version" json:"-"`
 }
 
 func JWTUserAuth(db *sqlx.DB, jwtSecret string) func(http.Handler) http.Handler {
@@ -42,32 +42,19 @@ func JWTUserAuth(db *sqlx.DB, jwtSecret string) func(http.Handler) http.Handler 
 				return
 			}
 
-			token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
-				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-				}
-				return []byte(jwtSecret), nil
-			})
-			if err != nil || !token.Valid {
+			claims, err := authjwt.Validate([]byte(jwtSecret), tokenStr, "rfspager-mobile", "mobile")
+			if err != nil {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
 				return
 			}
-
-			claims, ok := token.Claims.(jwt.MapClaims)
-			if !ok {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token claims"})
-				return
-			}
-
-			userID := int64(claims["sub"].(float64))
 
 			var user AuthUser
 			err = db.GetContext(r.Context(), &user,
 				`SELECT id, user_id, name, email, subscription_valid,
 				 subscription_product_id, subscription_expiry, will_renew,
-				 subscription_platform, superuser
-				 FROM users WHERE id = $1`, userID)
-			if err != nil {
+				 subscription_platform, superuser, token_version
+				 FROM users WHERE id = $1`, claims.Subject)
+			if err != nil || user.TokenVersion != claims.Version {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "user not found"})
 				return
 			}

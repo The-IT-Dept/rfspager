@@ -9,8 +9,8 @@ import (
 	"github.com/the-it-dept/rfspager/internal/recvhub"
 )
 
-func Router(db *sqlx.DB, jwtSecret, appleBundleID string, sseBroker *SSEBroker, iapHandler *iap.Handler, hub *recvhub.Hub) chi.Router {
-	auth := NewAuthHandler(db, jwtSecret, appleBundleID)
+func Router(db *sqlx.DB, jwtSecret, appleBundleID string, sseBroker *SSEBroker, iapHandler *iap.Handler, hub *recvhub.Hub, options ...AuthOptions) chi.Router {
+	auth := NewAuthHandler(db, jwtSecret, appleBundleID, options...)
 	h := NewHandlers(db)
 	sh := NewSystemHandlers(db)
 

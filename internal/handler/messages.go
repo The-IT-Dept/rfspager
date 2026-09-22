@@ -14,9 +14,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/the-it-dept/rfspager/internal/db"
-	"github.com/the-it-dept/rfspager/internal/middleware"
 	"github.com/the-it-dept/rfspager/internal/models"
 )
 
@@ -32,35 +30,6 @@ type MessageHandler struct {
 
 func NewMessageHandler(database *db.DB) *MessageHandler {
 	return &MessageHandler{db: database}
-}
-
-// ProcessV1 handles POST /api/messages/{system}
-// This is the unauthenticated v1 endpoint where {system} is the system_id UUID.
-func (h *MessageHandler) ProcessV1(w http.ResponseWriter, r *http.Request) {
-	systemID := chi.URLParam(r, "system")
-	ctx := r.Context()
-
-	system, err := h.db.GetSystemByUUID(ctx, systemID)
-	if err != nil {
-		slog.Error("system not found", "system_id", systemID, "error", err)
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "system not found"})
-		return
-	}
-
-	var ingress models.MessageIngress
-	if err := json.NewDecoder(r.Body).Decode(&ingress); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-
-	timestamp := parseTimestamp(ingress.Timestamp)
-
-	result, _ := h.createMessage(ctx, system, ingress.Address, ingress.Message, timestamp, &ingress)
-
-	// Notification fan-out happens via the AFTER INSERT trigger on messages
-	// — see internal/dispatch/fanout.go.
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": result})
 }
 
 // ProcessPagermon handles POST /api/messages — the drop-in replacement for
@@ -165,43 +134,8 @@ func decodePagermonBody(r *http.Request) (pagermonBody, error) {
 	}, nil
 }
 
-// MultimonMessage handles POST /api/v2/system/multimon_message
-// This is the authenticated v2 endpoint.
-func (h *MessageHandler) MultimonMessage(w http.ResponseWriter, r *http.Request) {
-	system := middleware.GetSystem(r.Context())
-	if system == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
-	}
-
-	var ingress models.MultimonIngress
-	if err := json.NewDecoder(r.Body).Decode(&ingress); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-
-	// Parse timestamp and convert to UTC
-	t, err := time.Parse(time.RFC3339, ingress.Timestamp)
-	if err != nil {
-		// Try other common formats
-		t, err = time.Parse("2006-01-02 15:04:05", ingress.Timestamp)
-		if err != nil {
-			t = time.Now()
-		}
-	}
-	timestamp := clampFuture(t.UTC())
-
-	ctx := r.Context()
-	result, _ := h.createMessage(ctx, system, ingress.Address, ingress.Alpha, timestamp, nil)
-
-	// Notification fan-out happens via the AFTER INSERT trigger on messages
-	// — see internal/dispatch/fanout.go.
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": result})
-}
-
 // IngestPage processes a decoded page from a receiver agent over the websocket
-// transport. Same write path as ProcessPagermon / MultimonMessage but no HTTP
+// transport. Same write path as ProcessPagermon but no HTTP
 // concerns. Returns an ack status — "ok" if accepted, "dup" if deduped against
 // a recent message, "err" otherwise.
 func (h *MessageHandler) IngestPage(ctx context.Context, system *models.System, address, message string, timestamp time.Time) (string, error) {
@@ -254,21 +188,6 @@ func (h *MessageHandler) ReceiverMe(w http.ResponseWriter, r *http.Request) {
 		out["lng"] = system.Lng.Float64
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-// Ping handles POST /api/v2/system/ping
-func (h *MessageHandler) Ping(w http.ResponseWriter, r *http.Request) {
-	system := middleware.GetSystem(r.Context())
-	if system == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
-	}
-
-	_ = h.db.CreateSystemCheckin(r.Context(), system.ID, r.RemoteAddr, nil)
-
-	writeJSON(w, http.StatusOK, map[string]string{
-		"status": fmt.Sprintf("Hello, %s (%s)!", system.Name, system.SystemID),
-	})
 }
 
 func (h *MessageHandler) createMessage(ctx context.Context, system *models.System, address, message string, timestamp time.Time, ingress *models.MessageIngress) (string, *models.Message) {
