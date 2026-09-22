@@ -29,6 +29,7 @@ import (
 	"github.com/the-it-dept/rfspager/internal/receiver"
 	"github.com/the-it-dept/rfspager/internal/receiver/config"
 	"github.com/the-it-dept/rfspager/internal/receiver/dsp"
+	"github.com/the-it-dept/rfspager/internal/receiver/legacy"
 	"github.com/the-it-dept/rfspager/internal/receiver/sdr"
 	"github.com/the-it-dept/rfspager/internal/receiver/wsclient"
 )
@@ -67,35 +68,96 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	ws := wsclient.New(cfg.ServerURL, cfg.APIKey)
+	// Build one transport per configured endpoint. The first ws endpoint is
+	// primary: it supplies the welcome (identity) and carries shipped logs.
+	// Additional ws endpoints and every legacy endpoint only receive pages.
+	var (
+		senders   []receiver.NamedSender
+		primaryWS *wsclient.Client
+		primaryEP string
+	)
+	for _, ep := range cfg.Endpoints {
+		switch ep.Mode {
+		case "ws":
+			c := wsclient.New(ep.URL, ep.APIKey)
+			if primaryWS == nil {
+				primaryWS, primaryEP = c, ep.Name
+			}
+			senders = append(senders, receiver.NamedSender{Name: ep.Name, Sender: c})
+		case "legacy":
+			senders = append(senders, receiver.NamedSender{
+				Name:   ep.Name,
+				Sender: legacy.New(ep.URL, ep.SystemUUID),
+			})
+		}
+	}
 
-	// From this point on, mirror every slog record to the WS as well as
-	// stdout. The hub persists them in system_logs (7-day retention) and
-	// fans them out to owner + admin viewers in real time. The WS client
-	// drops log frames if its send buffer is full, so this can't block
-	// the decode hot path.
+	// Mirror every slog record to the primary WS as well as stdout. The hub
+	// persists them in system_logs (7-day retention) and fans them out to owner
+	// + admin viewers in real time. The WS client drops log frames if its send
+	// buffer is full, so this can't block the decode hot path. A legacy-only
+	// receiver has nowhere to ship logs, so it just writes to stdout.
 	base := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
-	slog.SetDefault(slog.New(wsclient.NewLogShippingHandler(base, ws)))
+	if primaryWS != nil {
+		slog.SetDefault(slog.New(wsclient.NewLogShippingHandler(base, primaryWS)))
+	} else {
+		slog.SetDefault(slog.New(base))
+	}
+
+	for i, ep := range cfg.Endpoints {
+		slog.Info("endpoint configured",
+			"name", ep.Name, "mode", ep.Mode, "url", ep.URL,
+			"primary", ep.Mode == "ws" && ep.Name == primaryEP && i >= 0,
+		)
+	}
 
 	wsDone := make(chan struct{})
-	go func() {
-		defer close(wsDone)
-		if err := ws.Run(ctx); err != nil {
-			slog.Error("ws transport stopped", "err", err)
-		}
-	}()
-	welcomeCtx, welcomeCancel := context.WithTimeout(ctx, 15*time.Second)
-	defer welcomeCancel()
-	welcome, err := ws.Welcomed(welcomeCtx)
-	if err != nil {
-		slog.Error("ws welcome timed out", "key", maskKey(cfg.APIKey), "err", err)
-		os.Exit(2)
+	if primaryWS != nil {
+		go func() {
+			defer close(wsDone)
+			if err := primaryWS.Run(ctx); err != nil {
+				slog.Error("ws transport stopped", "err", err)
+			}
+		}()
+	} else {
+		close(wsDone)
 	}
-	slog.Info("authenticated",
-		"system", welcome.Name,
-		"system_id", welcome.SystemUUID,
-	)
-	var sender receiver.PageSender = ws
+
+	// Secondary ws endpoints get their own transport goroutine; a failure on one
+	// must not stop the others or the receiver.
+	for _, ns := range senders {
+		c, ok := ns.Sender.(*wsclient.Client)
+		if !ok || c == primaryWS {
+			continue
+		}
+		name := ns.Name
+		go func() {
+			if err := c.Run(ctx); err != nil {
+				slog.Error("ws transport stopped", "endpoint", name, "err", err)
+			}
+		}()
+	}
+
+	if primaryWS != nil {
+		welcomeCtx, welcomeCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer welcomeCancel()
+		welcome, err := primaryWS.Welcomed(welcomeCtx)
+		if err != nil {
+			slog.Error("ws welcome timed out", "endpoint", primaryEP, "err", err)
+			os.Exit(2)
+		}
+		slog.Info("authenticated",
+			"endpoint", primaryEP,
+			"system", welcome.Name,
+			"system_id", welcome.SystemUUID,
+		)
+	} else {
+		slog.Info("no ws endpoint configured; running legacy-only")
+	}
+
+	multi := receiver.NewMultiSender(senders)
+	slog.Info("page fan-out ready", "endpoints", multi.Names())
+	var sender receiver.PageSender = multi
 
 	// Pick dongle centre: midpoint of the lowest and highest hardcoded freqs.
 	var lo, hi uint32 = hardcodedChannels[0].freqHz, hardcodedChannels[0].freqHz
