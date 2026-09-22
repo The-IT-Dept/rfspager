@@ -1,11 +1,14 @@
 const assert = require("node:assert/strict")
 const { spawnSync } = require("node:child_process")
-const { mkdirSync, rmSync } = require("node:fs")
+const { mkdtempSync, rmSync } = require("node:fs")
+const { tmpdir } = require("node:os")
 const { join } = require("node:path")
 
-const output = "/private/tmp/rfspager-session-guard-test"
-rmSync(output, { recursive: true, force: true })
-mkdirSync(output, { recursive: true })
+// tmpdir() rather than a literal path: /private/tmp only exists on macOS, where
+// /tmp symlinks into it, so a hardcoded one fails with EACCES on Linux CI.
+// mkdtemp also stops two concurrent runs sharing a directory.
+const output = mkdtempSync(join(tmpdir(), "rfspager-session-guard-"))
+process.on("exit", () => rmSync(output, { recursive: true, force: true }))
 
 const compile = spawnSync(
   process.platform === "win32" ? "pnpm.cmd" : "pnpm",
@@ -52,4 +55,5 @@ async function delayedUpsertDoesNotSendForANewerSession() {
 
 delayedUpsertDoesNotSendForANewerSession()
   .then(() => console.log("auth-store account-switch regression passed"))
-  .finally(() => rmSync(output, { recursive: true, force: true }))
+  // cleanup is handled by the exit hook, which also covers the failure paths
+  // that never reach this chain
