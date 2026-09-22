@@ -1,4 +1,6 @@
 import { Link, Outlet, useLocation, useNavigate } from "react-router";
+
+import { BrandLockup } from "~/components/brand";
 import { useEffect, useState, useMemo } from "react";
 
 const NAV_LINKS = [
@@ -96,7 +98,11 @@ export function PublicLayout() {
       <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-gray-100 shadow-sm">
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
           <Link to="/" className="group shrink-0">
-            <img src="/logo.svg" alt="RFSPager" className="h-8 sm:h-9 w-auto group-hover:scale-105 transition-transform" />
+            <BrandLockup
+              className="gap-2 group-hover:scale-105 transition-transform"
+              markClassName="h-7 sm:h-8 w-auto text-[#ff1003]"
+              wordmarkClassName="h-6 sm:h-7 w-auto"
+            />
           </Link>
 
           <nav className="flex items-center gap-1 min-w-0">
@@ -241,7 +247,10 @@ export function PublicLayout() {
             <div className="grid grid-cols-1 md:grid-cols-12 gap-12">
               <div className="md:col-span-5">
                 <div className="mb-5">
-                  <img src="/logo.svg" alt="RFSPager" className="h-9" />
+                  <BrandLockup
+                    markClassName="h-8 w-auto text-[#ff1003]"
+                    wordmarkClassName="h-7 w-auto brightness-0 invert"
+                  />
                 </div>
                 <p className="text-sm leading-relaxed max-w-sm">
                   Real-time access to NSW PSN Emergency Services pager messages.

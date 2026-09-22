@@ -44,6 +44,12 @@ export function meta() {
       content:
         "Real-time access to NSW PSN pager messages. Run on our own receiver network. Built for firefighters, volunteers, and communities.",
     },
+    { property: "og:type", content: "website" },
+    { property: "og:image", content: "/og-image.png" },
+    { property: "og:image:width", content: "1200" },
+    { property: "og:image:height", content: "630" },
+    { name: "twitter:card", content: "summary_large_image" },
+    { name: "twitter:image", content: "/og-image.png" },
   ];
 }
 

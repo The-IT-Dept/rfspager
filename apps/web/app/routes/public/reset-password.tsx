@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BrandLockup } from "~/components/brand";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
 const heading = "font-[family-name:var(--font-heading)]";
@@ -47,7 +48,7 @@ export default function ResetPassword() {
     <div className="flex-1 flex items-center justify-center py-16 px-4 bg-gray-50">
       <div className="w-full max-w-[400px]">
         <div className="text-center mb-8">
-          <Link to="/" className="inline-block mb-6"><img src="/logo.svg" alt="RFSPager" className="h-14 mx-auto" /></Link>
+          <Link to="/" className="inline-block mb-6"><BrandLockup className="justify-center" markClassName="h-12 w-auto text-[#ff1003]" wordmarkClassName="h-10 w-auto" /></Link>
           <h1 className={`${heading} text-2xl font-extrabold text-gray-900 mb-2`}>Choose a new password</h1>
           <p className="text-sm text-gray-500">Use a new password to secure your RFSPager account.</p>
         </div>

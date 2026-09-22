@@ -1,4 +1,5 @@
 import { Link, useLocation, useNavigate } from "react-router";
+import { BrandLockup } from "~/components/brand";
 import { useAuth } from "~/lib/auth";
 import {
   Sidebar,
@@ -107,7 +108,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       <Sidebar variant="inset">
         <SidebarHeader>
           <Link to="/admin" className="flex items-center px-2 py-1">
-            <img src="/logo.svg" alt="RFSPager" className="h-6" />
+            <BrandLockup
+              markClassName="h-6 w-auto text-[#ff1003]"
+              wordmarkClassName="h-5 w-auto"
+            />
           </Link>
         </SidebarHeader>
 

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BrandLockup } from "~/components/brand";
 import { useNavigate } from "react-router";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -33,7 +34,7 @@ export default function LoginPage() {
     <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-red-50 to-orange-50 dark:from-neutral-950 dark:to-neutral-900">
       <Card className="w-full max-w-sm shadow-lg">
         <CardHeader className="text-center space-y-4">
-          <img src="/logo.svg" alt="RFSPager" className="h-10 mx-auto" />
+          <BrandLockup className="justify-center" markClassName="h-9 w-auto text-[#ff1003]" wordmarkClassName="h-8 w-auto" />
           <CardDescription>Sign in to the admin panel</CardDescription>
         </CardHeader>
         <CardContent>

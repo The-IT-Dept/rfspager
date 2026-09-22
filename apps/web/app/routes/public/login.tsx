@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BrandLockup } from "~/components/brand";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
 const heading = "font-[family-name:var(--font-heading)]";
@@ -44,7 +45,7 @@ export default function Login() {
       <div className="w-full max-w-[400px]">
         <div className="text-center mb-8">
           <Link to="/" className="inline-block mb-6">
-            <img src="/logo.svg" alt="RFSPager" className="h-14 mx-auto" />
+            <BrandLockup className="justify-center" markClassName="h-12 w-auto text-[#ff1003]" wordmarkClassName="h-10 w-auto" />
           </Link>
           <h1 className={`${heading} text-2xl font-extrabold text-gray-900 mb-2`}>Welcome back</h1>
           <p className="text-sm text-gray-500">Sign in to access your RFSPager account</p>

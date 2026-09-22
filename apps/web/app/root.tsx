@@ -13,6 +13,12 @@ import { TooltipProvider } from "./components/ui/tooltip";
 import "./app.css";
 
 export const links: Route.LinksFunction = () => [
+  // Declared rather than left to convention, so the app icon is what shows up
+  // in tabs, bookmarks and on an iOS home screen.
+  { rel: "icon", href: "/favicon.svg", type: "image/svg+xml" },
+  { rel: "icon", href: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+  { rel: "icon", href: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+  { rel: "apple-touch-icon", href: "/apple-touch-icon.png", sizes: "180x180" },
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
   {
     rel: "preconnect",
