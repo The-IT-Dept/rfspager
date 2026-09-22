@@ -183,7 +183,10 @@ export const PagerScreen: FC =
               icon="checkmark.circle"
               isOn={pagerFilter}
               unstable_keepPresented
-              onPress={() => (validSubscription ? setPagerFilter(!pagerFilter) : showModal())}
+              onPress={() => {
+                console.log("[pager-menu] filter tapped", { validSubscription, pagerFilter })
+                validSubscription ? setPagerFilter(!pagerFilter) : showModal()
+              }}
             >
               Only selected capcodes
             </Stack.Toolbar.MenuAction>
@@ -191,7 +194,10 @@ export const PagerScreen: FC =
               icon="questionmark.circle"
               isOn={pagerShowUnknown}
               unstable_keepPresented
-              onPress={() => (validSubscription ? setPagerShowUnknown(!pagerShowUnknown) : showModal())}
+              onPress={() => {
+                console.log("[pager-menu] unknown tapped", { validSubscription, pagerShowUnknown })
+                validSubscription ? setPagerShowUnknown(!pagerShowUnknown) : showModal()
+              }}
             >
               Show unknown capcodes
             </Stack.Toolbar.MenuAction>
