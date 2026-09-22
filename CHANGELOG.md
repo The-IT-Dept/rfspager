@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.2.1](https://github.com/The-IT-Dept/rfspager/compare/v5.2.0...v5.2.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **receiver:** endpoints file wins over the legacy environment variables ([d1787d5](https://github.com/The-IT-Dept/rfspager/commit/d1787d5eb0f0ea746fbae888b72ad8eb8bea4afa))
+* **receiver:** log legacy post failures instead of discarding them ([285c7a4](https://github.com/The-IT-Dept/rfspager/commit/285c7a4494bbfaaca210bcd8181604d8c51173ed))
+
 ## [5.2.0](https://github.com/The-IT-Dept/rfspager/compare/v5.1.0...v5.2.0) (2026-09-22)
 
 
