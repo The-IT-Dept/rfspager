@@ -67,6 +67,9 @@ func createRepresentativeLegacySchema(t *testing.T, d *DB) {
 			id BIGSERIAL PRIMARY KEY, user_id UUID NOT NULL UNIQUE,
 			name VARCHAR(255), email VARCHAR(255) NOT NULL UNIQUE,
 			password VARCHAR(255) NOT NULL, subscription_valid BOOLEAN NOT NULL DEFAULT false,
+			-- Laravel's create_users_table ships these two as well; 023 reads
+			-- them when auditing released ownership claims.
+			subscription_expiry TIMESTAMP NULL, subscription_product_id VARCHAR(255) NULL,
 			created_at TIMESTAMP NULL, updated_at TIMESTAMP NULL
 		);
 		CREATE TABLE systems (
@@ -243,16 +246,65 @@ func TestApplyMigrationsSerializesConcurrentAttempts(t *testing.T) {
 	}
 }
 
-func TestIAPOwnershipMigrationRejectsExistingDuplicateBindings(t *testing.T) {
+// Production reaches 023 with one person holding several accounts that all
+// restored the same subscription, so the duplicates are not contested. The
+// migration de-duplicates the pointer and must leave every entitlement alone.
+// iapOwnershipFixture is the slice of the real schema that migration 023
+// touches: the user pointers it de-duplicates, the installations it ranks by,
+// and the audit table it writes released claims to.
+const iapOwnershipFixture = `
+	CREATE TABLE users (
+		id BIGSERIAL PRIMARY KEY,
+		apple_original_transaction_id TEXT,
+		google_purchase_token TEXT,
+		subscription_valid BOOLEAN NOT NULL DEFAULT false,
+		subscription_expiry TIMESTAMPTZ,
+		subscription_product_id TEXT,
+		last_store_sync_at TIMESTAMPTZ,
+		updated_at TIMESTAMPTZ
+	);
+	CREATE TABLE installations (
+		id BIGSERIAL PRIMARY KEY,
+		user_id BIGINT NOT NULL,
+		updated_at TIMESTAMPTZ,
+		deleted_at TIMESTAMPTZ
+	);
+	CREATE TABLE iap_transactions (
+		id BIGSERIAL PRIMARY KEY,
+		user_id BIGINT NOT NULL,
+		platform VARCHAR(16) NOT NULL,
+		transaction_id VARCHAR(255),
+		original_transaction_id VARCHAR(255),
+		product_id VARCHAR(255) NOT NULL,
+		event_type VARCHAR(64) NOT NULL,
+		is_valid BOOLEAN NOT NULL,
+		expires_at TIMESTAMPTZ,
+		will_renew BOOLEAN,
+		environment VARCHAR(32),
+		raw_payload TEXT,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+`
+
+func TestIAPOwnershipMigrationReconcilesDuplicateBindingsWithoutRevokingAccess(t *testing.T) {
 	d := testMigrationDB(t)
 	resetMigrationDB(t, d)
-	if _, err := d.conn.ExecContext(context.Background(), `
-		CREATE TABLE users (
-			id BIGSERIAL PRIMARY KEY,
-			apple_original_transaction_id TEXT,
-			google_purchase_token TEXT
-		);
-		INSERT INTO users (apple_original_transaction_id) VALUES ('duplicate-apple'), ('duplicate-apple');
+	if _, err := d.conn.ExecContext(context.Background(), iapOwnershipFixture+`
+		-- Three accounts sharing one Apple subscription. Only 102 has a live
+		-- install, so it is the account actually in use and must win.
+		INSERT INTO users (id, apple_original_transaction_id, subscription_valid, subscription_expiry, subscription_product_id)
+		VALUES (101, 'duplicate-apple', true, NOW() + INTERVAL '30 days', 'monthly'),
+		       (102, 'duplicate-apple', true, NOW() + INTERVAL '30 days', 'monthly'),
+		       (103, 'duplicate-apple', true, NOW() + INTERVAL '30 days', 'monthly');
+		INSERT INTO installations (user_id, updated_at, deleted_at) VALUES (102, NOW(), NULL);
+		-- A soft-deleted install must not win it for 103.
+		INSERT INTO installations (user_id, updated_at, deleted_at) VALUES (103, NOW(), NOW());
+
+		-- Two accounts sharing a Google token, neither with an install: the
+		-- oldest id is the deterministic tie-break.
+		INSERT INTO users (id, google_purchase_token, subscription_valid, subscription_expiry, subscription_product_id)
+		VALUES (201, 'duplicate-google', true, NOW() + INTERVAL '10 days', 'yearly'),
+		       (202, 'duplicate-google', true, NOW() + INTERVAL '10 days', 'yearly');
 	`); err != nil {
 		t.Fatalf("create duplicate ownership fixture: %v", err)
 	}
@@ -261,38 +313,74 @@ func TestIAPOwnershipMigrationRejectsExistingDuplicateBindings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read IAP ownership migration: %v", err)
 	}
-	_, err = d.conn.ExecContext(context.Background(), string(migration))
-	if err == nil || !strings.Contains(err.Error(), "duplicate Apple subscription ownership") {
-		t.Fatalf("duplicate ownership migration error = %v", err)
+	if _, err := d.conn.ExecContext(context.Background(), string(migration)); err != nil {
+		t.Fatalf("apply IAP ownership migration: %v", err)
 	}
 
-	var uniqueIndexExists bool
-	if err := d.conn.GetContext(context.Background(), &uniqueIndexExists,
-		`SELECT to_regclass('public.users_apple_original_transaction_id_unique') IS NOT NULL`); err != nil {
-		t.Fatalf("check ownership index after preflight failure: %v", err)
+	// The account with the live install keeps the Apple binding; the others lose
+	// only the pointer.
+	for id, wantOwner := range map[int64]bool{101: false, 102: true, 103: false} {
+		var holds bool
+		if err := d.conn.GetContext(context.Background(), &holds,
+			`SELECT apple_original_transaction_id IS NOT NULL FROM users WHERE id = $1`, id); err != nil {
+			t.Fatalf("read apple binding for %d: %v", id, err)
+		}
+		if holds != wantOwner {
+			t.Errorf("user %d holds apple binding = %v, want %v", id, holds, wantOwner)
+		}
 	}
-	if uniqueIndexExists {
-		t.Fatal("preflight failure left a partial ownership index behind")
+	var googleOwner int64
+	if err := d.conn.GetContext(context.Background(), &googleOwner,
+		`SELECT id FROM users WHERE google_purchase_token IS NOT NULL`); err != nil {
+		t.Fatalf("read google owner: %v", err)
 	}
-	var ledgerExists bool
-	if err := d.conn.GetContext(context.Background(), &ledgerExists,
-		`SELECT to_regclass('public.iap_subscription_ownership') IS NOT NULL`); err != nil {
-		t.Fatalf("check ownership ledger after preflight failure: %v", err)
+	if googleOwner != 201 {
+		t.Errorf("google owner = %d, want 201 (oldest id wins the tie-break)", googleOwner)
 	}
-	if ledgerExists {
-		t.Fatal("preflight failure left an ownership ledger behind")
+
+	// The whole point: no one is downgraded.
+	var stillValid int
+	if err := d.conn.GetContext(context.Background(), &stillValid,
+		`SELECT COUNT(*) FROM users WHERE subscription_valid`); err != nil {
+		t.Fatalf("count valid subscriptions: %v", err)
+	}
+	if stillValid != 5 {
+		t.Errorf("users still subscription_valid = %d, want 5 (reconciliation must not revoke access)", stillValid)
+	}
+
+	// One ledger row per identifier, pointing at the winner.
+	var ledger int
+	if err := d.conn.GetContext(context.Background(), &ledger,
+		`SELECT COUNT(*) FROM iap_subscription_ownership`); err != nil {
+		t.Fatalf("count ledger rows: %v", err)
+	}
+	if ledger != 2 {
+		t.Errorf("ledger rows = %d, want 2", ledger)
+	}
+	var appleLedgerOwner int64
+	if err := d.conn.GetContext(context.Background(), &appleLedgerOwner,
+		`SELECT user_id FROM iap_subscription_ownership WHERE platform = 'apple'`); err != nil {
+		t.Fatalf("read apple ledger owner: %v", err)
+	}
+	if appleLedgerOwner != 102 {
+		t.Errorf("apple ledger owner = %d, want 102", appleLedgerOwner)
+	}
+
+	// Support needs to know which accounts gave up a claim.
+	var released int
+	if err := d.conn.GetContext(context.Background(), &released,
+		`SELECT COUNT(*) FROM iap_transactions WHERE event_type = 'reconcile:ownership_released'`); err != nil {
+		t.Fatalf("count released-claim audit rows: %v", err)
+	}
+	if released != 3 {
+		t.Errorf("released-claim audit rows = %d, want 3 (users 101, 103, 202)", released)
 	}
 }
 
 func TestIAPOwnershipMigrationBackfillsCurrentBindings(t *testing.T) {
 	d := testMigrationDB(t)
 	resetMigrationDB(t, d)
-	if _, err := d.conn.ExecContext(context.Background(), `
-		CREATE TABLE users (
-			id BIGSERIAL PRIMARY KEY,
-			apple_original_transaction_id TEXT,
-			google_purchase_token TEXT
-		);
+	if _, err := d.conn.ExecContext(context.Background(), iapOwnershipFixture+`
 		INSERT INTO users (apple_original_transaction_id) VALUES ('apple-existing');
 		INSERT INTO users (google_purchase_token) VALUES ('google-existing');
 	`); err != nil {
