@@ -1,9 +1,31 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SlidersHorizontal } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
+
+import { AgencyList, FilterRow } from "~/components/pager/agency-list";
+import { SearchField } from "~/components/pager/search-field";
+import { ago } from "~/components/pager/time";
+import type { Agency } from "~/components/pager/types";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "~/components/ui/sheet";
 import type { Route } from "./+types/capcodes";
 
 const API_BASE = process.env.API_URL || "http://localhost:8080";
 const heading = "font-[family-name:var(--font-heading)]";
+
+// The backend caps a page at 2500 and NSW has ~1,630 capcodes, so one trip
+// fetches the lot and filtering is instant on the client. `has_more` is
+// honoured below in case the catalogue ever outgrows that.
+const CATALOGUE_PAGE = 2500;
+const UNKNOWN_DAYS = 30;
+const UNKNOWN_LIMIT = 300;
+const CHUNK = 120;
 
 interface Capcode {
   id: number;
@@ -15,12 +37,6 @@ interface Capcode {
   agency_name: string | null;
 }
 
-interface Agency {
-  id: number;
-  name: string;
-  capcode_count: number;
-}
-
 interface UnknownRow {
   capcode_id: number | null;
   address: string;
@@ -30,40 +46,30 @@ interface UnknownRow {
   last_seen_at: string;
 }
 
-interface LoaderData {
-  capcodes: { data: Capcode[]; has_more: boolean };
-  agencies: Agency[];
-  unknown: { data: UnknownRow[] };
+export async function loader() {
+  const [cp, ag, unk] = await Promise.all([
+    fetch(`${API_BASE}/api/public/capcodes?page=1&per_page=${CATALOGUE_PAGE}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null),
+    fetch(`${API_BASE}/api/public/agencies`)
+      .then((r) => (r.ok ? r.json() : []))
+      .catch(() => []),
+    fetch(`${API_BASE}/api/public/capcodes/unknown?days=${UNKNOWN_DAYS}&limit=${UNKNOWN_LIMIT}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null),
+  ]);
+  return {
+    capcodes: (cp?.data ?? []) as Capcode[],
+    hasMore: Boolean(cp?.has_more),
+    agencies: (Array.isArray(ag) ? ag : []) as Agency[],
+    unknown: (unk?.data ?? []) as UnknownRow[],
+  };
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const url = new URL(request.url);
-  const params = new URLSearchParams();
-  // We fetch up to 2500 capcodes at once — total NSW count is ~1500 and the
-  // backend caps at 2500, so a single trip is fine and beats infinite scroll.
-  params.set("page", "1");
-  params.set("per_page", "2500");
-  if (url.searchParams.get("search")) params.set("search", url.searchParams.get("search")!);
-  if (url.searchParams.get("agency_id")) params.set("agency_id", url.searchParams.get("agency_id")!);
-
-  try {
-    const [cpRes, agRes, unkRes] = await Promise.all([
-      fetch(`${API_BASE}/api/public/capcodes?${params}`),
-      fetch(`${API_BASE}/api/public/agencies`),
-      fetch(`${API_BASE}/api/public/capcodes/unknown?days=30&limit=300`),
-    ]);
-    return {
-      capcodes: cpRes.ok ? await cpRes.json() : { data: [], has_more: false },
-      agencies: agRes.ok ? await agRes.json() : [],
-      unknown: unkRes.ok ? await unkRes.json() : { data: [] },
-    } satisfies LoaderData;
-  } catch {
-    return {
-      capcodes: { data: [], has_more: false },
-      agencies: [],
-      unknown: { data: [] },
-    } satisfies LoaderData;
-  }
+// Search and scope live in the URL for sharing, but the whole catalogue is
+// already in memory, so a change of query string must not re-run the loader.
+export function shouldRevalidate({ currentUrl, nextUrl }: { currentUrl: URL; nextUrl: URL }) {
+  return currentUrl.pathname !== nextUrl.pathname;
 }
 
 export function meta() {
@@ -71,485 +77,288 @@ export function meta() {
     { title: "Capcodes — RFSPager" },
     {
       name: "description",
-      content:
-        "Browse every NSW PSN capcode RFSPager decodes. Help us label unknown addresses by submitting a suggestion.",
+      content: "Every NSW PSN capcode RFSPager has identified, and the addresses we have heard but not named yet.",
     },
   ];
 }
 
-type Scope =
-  | { kind: "all" }
-  | { kind: "agency"; id: number; name: string }
-  | { kind: "unknown" };
+type Scope = { kind: "all" } | { kind: "agency"; id: number } | { kind: "unknown" };
 
 export default function CapcodesPage({ loaderData }: Route.ComponentProps) {
+  const { capcodes, hasMore, agencies, unknown } = loaderData;
   const [searchParams, setSearchParams] = useSearchParams();
-  const [search, setSearch] = useState(searchParams.get("search") || "");
-  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [scope, setScope] = useState<Scope>(() => {
-    const tab = searchParams.get("tab");
-    const aid = searchParams.get("agency_id");
-    if (tab === "unknown") return { kind: "unknown" };
-    if (aid) {
-      const a = loaderData.agencies.find((x: Agency) => String(x.id) === aid);
-      if (a) return { kind: "agency", id: a.id, name: a.name };
-    }
+
+  const scope: Scope = useMemo(() => {
+    if (searchParams.get("tab") === "unknown") return { kind: "unknown" };
+    const aid = Number(searchParams.get("agency_id"));
+    if (aid && agencies.some((a) => a.id === aid)) return { kind: "agency", id: aid };
     return { kind: "all" };
-  });
+  }, [searchParams, agencies]);
+  const activeAgency = scope.kind === "agency" ? agencies.find((a) => a.id === scope.id) ?? null : null;
 
-  const [suggestTarget, setSuggestTarget] = useState<{
-    capcode_id: number | null;
-    address: string;
-    alias: string | null;
-    agency_name: string | null;
-  } | null>(null);
-
-  // Persist scope to URL so it survives reload + sharing.
+  const [search, setSearch] = useState(searchParams.get("search") ?? "");
   useEffect(() => {
-    const p = new URLSearchParams(searchParams);
-    p.delete("tab");
-    p.delete("agency_id");
-    if (scope.kind === "unknown") p.set("tab", "unknown");
-    if (scope.kind === "agency") p.set("agency_id", String(scope.id));
-    setSearchParams(p, { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope]);
-
-  const onSearch = (v: string) => {
-    setSearch(v);
-    if (debounce.current) clearTimeout(debounce.current);
-    debounce.current = setTimeout(() => {
-      const p = new URLSearchParams(searchParams);
-      if (v) p.set("search", v);
-      else p.delete("search");
-      setSearchParams(p, { replace: true });
+    const t = setTimeout(() => {
+      setSearchParams(
+        (prev) => {
+          const p = new URLSearchParams(prev);
+          if (search.trim()) p.set("search", search.trim());
+          else p.delete("search");
+          return p;
+        },
+        { replace: true, preventScrollReset: true },
+      );
     }, 300);
+    return () => clearTimeout(t);
+  }, [search, setSearchParams]);
+
+  const setScope = (next: Scope) => {
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.delete("tab");
+        p.delete("agency_id");
+        if (next.kind === "unknown") p.set("tab", "unknown");
+        if (next.kind === "agency") p.set("agency_id", String(next.id));
+        return p;
+      },
+      { replace: true },
+    );
+    setSheetOpen(false);
   };
 
-  const capcodes: Capcode[] = loaderData.capcodes.data;
-  const agencies: Agency[] = loaderData.agencies;
-  const unknown: UnknownRow[] = loaderData.unknown.data;
+  const term = search.trim().toLowerCase();
 
-  const sortedAgencies = useMemo(
-    () => [...agencies].sort((a: Agency, b: Agency) => b.capcode_count - a.capcode_count),
-    [agencies],
-  );
-
-  // Client-side filter by current scope + search.
   const filteredCapcodes = useMemo(() => {
     let list = capcodes;
-    if (scope.kind === "agency") {
-      list = list.filter((c) => c.agency_id === scope.id);
-    }
-    if (search.trim()) {
-      const s = search.trim().toLowerCase();
+    if (scope.kind === "agency") list = list.filter((c) => c.agency_id === scope.id);
+    if (term) {
       list = list.filter(
         (c) =>
-          (c.alias ?? "").toLowerCase().includes(s) ||
-          c.address.toLowerCase().includes(s) ||
-          (c.agency_name ?? "").toLowerCase().includes(s),
+          (c.alias ?? "").toLowerCase().includes(term) ||
+          c.address.toLowerCase().includes(term) ||
+          (c.agency_name ?? "").toLowerCase().includes(term),
       );
     }
-    // Aliased first, then unaliased; both alphabetical.
     return [...list].sort((a, b) => {
-      const aH = !!(a.alias && a.alias.trim());
-      const bH = !!(b.alias && b.alias.trim());
+      const aH = Boolean(a.alias?.trim());
+      const bH = Boolean(b.alias?.trim());
       if (aH !== bH) return aH ? -1 : 1;
-      return (a.alias || a.address).localeCompare(b.alias || b.address);
+      return (a.alias || a.address).localeCompare(b.alias || b.address, "en-AU", { numeric: true });
     });
-  }, [capcodes, scope, search]);
+  }, [capcodes, scope, term]);
 
-  const filteredUnknowns = useMemo(() => {
-    if (!search.trim()) return unknown;
-    const s = search.trim().toLowerCase();
+  const filteredUnknown = useMemo(() => {
+    if (!term) return unknown;
     return unknown.filter(
-      (u) =>
-        u.address.toLowerCase().includes(s) ||
-        (u.agency_name ?? "").toLowerCase().includes(s),
+      (u) => u.address.toLowerCase().includes(term) || (u.agency_name ?? "").toLowerCase().includes(term),
     );
-  }, [unknown, search]);
+  }, [unknown, term]);
 
-  const scopeTitle =
-    scope.kind === "all"
-      ? "All capcodes"
-      : scope.kind === "unknown"
-        ? "Unknown capcodes"
-        : scope.name;
-  const scopeCount = scope.kind === "unknown" ? filteredUnknowns.length : filteredCapcodes.length;
-  const scopeTotal =
-    scope.kind === "all"
-      ? capcodes.length
-      : scope.kind === "agency"
-        ? capcodes.filter((c) => c.agency_id === scope.id).length
-        : unknown.length;
+  // Render in chunks; "Show more" is the reader's intent, not a scroll trap.
+  const [shown, setShown] = useState(CHUNK);
+  useEffect(() => setShown(CHUNK), [scope, term]);
+
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [target, setTarget] = useState<SuggestTarget | null>(null);
+
+  const unknownCount = unknown.length >= UNKNOWN_LIMIT ? `${UNKNOWN_LIMIT}+` : unknown.length;
+  const scopeTitle = scope.kind === "all" ? "All capcodes" : scope.kind === "unknown" ? "Unknown addresses" : activeAgency!.name;
+
+  const filterPanel = (className: string) => (
+    <AgencyList
+      agencies={agencies}
+      activeId={scope.kind === "agency" ? String(scope.id) : scope.kind === "all" ? "" : "unknown"}
+      onSelect={(id) => setScope(id ? { kind: "agency", id: Number(id) } : { kind: "all" })}
+      allLabel="All capcodes"
+      className={className}
+    >
+      <FilterRow
+        label="Unknown addresses"
+        count={unknownCount}
+        active={scope.kind === "unknown"}
+        onClick={() => setScope({ kind: "unknown" })}
+      />
+      <div className="my-2 border-t border-gray-100" role="presentation" />
+    </AgencyList>
+  );
+
+  const list = scope.kind === "unknown" ? filteredUnknown : filteredCapcodes;
+  const total = scope.kind === "unknown" ? unknown.length : scope.kind === "agency" ? activeAgency!.capcode_count : capcodes.length;
 
   return (
-    <div className="flex flex-1 overflow-hidden bg-gray-50 h-[calc(100dvh-4rem)]">
-      {/* ——— Sidebar ——— */}
-      <aside className="w-72 lg:w-80 bg-white border-r border-gray-200 flex flex-col shrink-0 hidden md:flex">
-        <div className="px-5 py-4 border-b border-gray-100">
-          <h1 className={`${heading} text-xl font-extrabold text-gray-900 tracking-tight`}>
-            Capcodes
-          </h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {capcodes.length} total · {unknown.length} unknown
-          </p>
-        </div>
+    <div className="flex-1 bg-gray-50">
+      <div className="mx-auto max-w-[1400px] md:flex md:items-start">
+        <aside className="sticky top-16 hidden h-[calc(100dvh-4rem)] w-72 shrink-0 flex-col border-r border-gray-200 bg-white md:flex lg:w-80">
+          <div className="px-6 pb-5 pt-7">
+            <h1 className={`${heading} text-2xl font-extrabold tracking-tight text-gray-900`}>Capcodes</h1>
+            <p className="mt-2 text-sm leading-relaxed text-gray-500">
+              Every pager address we have put a name to, and the ones we have heard but not identified yet.
+            </p>
+          </div>
+          <div className="px-4 pb-3">
+            <SearchField value={search} onChange={setSearch} onClear={() => setSearch("")} placeholder="Search alias, address or agency" />
+          </div>
+          {filterPanel("min-h-0 flex-1 space-y-px overflow-y-auto px-3 pb-6 pt-1")}
+        </aside>
 
-        {/* Quick scopes */}
-        <div className="px-3 py-3 border-b border-gray-100 space-y-1">
-          <ScopeRow
-            label="All capcodes"
-            count={capcodes.length}
-            active={scope.kind === "all"}
-            onClick={() => setScope({ kind: "all" })}
-            tint="#111827"
-          />
-          <ScopeRow
-            label="Unknown"
-            count={unknown.length}
-            active={scope.kind === "unknown"}
-            onClick={() => setScope({ kind: "unknown" })}
-            tint="#F7241D"
-            highlight
-          />
-        </div>
+        <section className="min-w-0 flex-1 bg-white md:max-w-4xl md:border-r md:border-gray-200">
+          <div className="sticky top-16 z-20 flex h-14 items-center gap-2 border-b border-gray-200 bg-white/95 px-4 backdrop-blur md:hidden">
+            <SearchField value={search} onChange={setSearch} onClear={() => setSearch("")} placeholder="Search capcodes" className="flex-1" />
+            <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+              <SheetTrigger
+                className={`inline-flex h-10 max-w-[10rem] shrink-0 items-center gap-1.5 rounded-lg border px-3 text-sm font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#F7241D]/40 ${
+                  scope.kind !== "all"
+                    ? "border-red-100 bg-red-50 text-[#F7241D]"
+                    : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                <SlidersHorizontal className="size-4 shrink-0" />
+                <span className="truncate">{scope.kind === "all" ? "Filter" : scopeTitle}</span>
+              </SheetTrigger>
+              <SheetContent side="bottom" className="gap-0 rounded-t-2xl p-0">
+                <SheetHeader className="border-b border-gray-100 px-5 py-4">
+                  <SheetTitle className={`${heading} text-base font-bold text-gray-900`}>Show</SheetTitle>
+                </SheetHeader>
+                {filterPanel("max-h-[60dvh] space-y-px overflow-y-auto px-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-2")}
+              </SheetContent>
+            </Sheet>
+          </div>
 
-        {/* Agency list */}
-        <div className="px-5 pt-3 pb-1.5">
-          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-            By agency
-          </p>
-        </div>
-        <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-px">
-          {sortedAgencies.map((a) => {
-            const active = scope.kind === "agency" && scope.id === a.id;
-            return (
-              <ScopeRow
-                key={a.id}
-                label={a.name}
-                count={a.capcode_count}
-                active={active}
-                onClick={() => setScope({ kind: "agency", id: a.id, name: a.name })}
-              />
-            );
-          })}
-        </div>
-      </aside>
-
-      {/* ——— Main pane ——— */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-4 md:px-6 py-4">
-          <div className="flex flex-col md:flex-row md:items-end gap-3 md:gap-6">
-            <div className="flex-1 min-w-0">
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">
-                {scope.kind === "unknown"
-                  ? "Help us identify"
-                  : scope.kind === "agency"
-                    ? "Agency"
-                    : "Catalogue"}
+          <div className="border-b border-gray-200 px-4 py-4 sm:px-6">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <h2 className={`${heading} text-xl font-extrabold tracking-tight text-gray-900`}>{scopeTitle}</h2>
+              <p className="text-sm tabular-nums text-gray-500">
+                {term
+                  ? `${list.length.toLocaleString()} of ${total.toLocaleString()} match “${search.trim()}”`
+                  : scope.kind === "unknown"
+                    ? `${unknownCount} heard in the last ${UNKNOWN_DAYS} days`
+                    : `${total.toLocaleString()} capcodes`}
               </p>
-              <h2
-                className={`${heading} text-2xl md:text-3xl font-extrabold text-gray-900 leading-tight tracking-tight truncate`}
-              >
-                {scopeTitle}
-              </h2>
             </div>
-
-            <div className="flex items-center gap-6 shrink-0">
-              <div>
-                <p
-                  className={`${heading} text-2xl md:text-3xl font-extrabold text-gray-900 leading-none tabular-nums`}
-                >
-                  {scopeCount.toLocaleString()}
-                </p>
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-1">
-                  Showing{search && scopeCount !== scopeTotal ? ` of ${scopeTotal}` : ""}
-                </p>
-              </div>
-            </div>
+            {scope.kind === "unknown" ? (
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-gray-500">
+                These addresses turned up in recent pages but we don't have a name for them. If you recognise one, a
+                brigade, a unit, a station, tell us. Every suggestion is checked by an admin before it goes live.
+              </p>
+            ) : hasMore ? (
+              <p className="mt-2 text-sm text-amber-800">
+                Showing the first {CATALOGUE_PAGE.toLocaleString()}. Pick an agency to narrow the list.
+              </p>
+            ) : null}
           </div>
 
-          {/* Search */}
-          <div className="mt-4 relative max-w-md">
-            <svg
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-              />
-            </svg>
-            <input
-              type="text"
-              placeholder={
-                scope.kind === "unknown"
-                  ? "Search address…"
-                  : "Search alias, address, agency…"
-              }
-              value={search}
-              onChange={(e) => onSearch(e.target.value)}
-              className="w-full pl-9 pr-9 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#F7241D]/15 focus:border-[#F7241D] outline-none transition-all"
-            />
-            {search && (
-              <button
-                onClick={() => onSearch("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
-            )}
-          </div>
-        </header>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-6">
-          {scope.kind === "unknown" ? (
-            <UnknownGrid
-              rows={filteredUnknowns}
-              onSuggest={(row) =>
-                setSuggestTarget({
-                  capcode_id: row.capcode_id,
-                  address: row.address,
-                  alias: row.alias,
-                  agency_name: row.agency_name,
-                })
-              }
-              searchActive={!!search.trim()}
-            />
+          {list.length === 0 ? (
+            <div className="px-6 py-28 text-center">
+              <p className={`${heading} text-lg font-bold text-gray-900`}>
+                {term ? `Nothing matches “${search.trim()}”` : scope.kind === "unknown" ? "Every recent address has a name." : "No capcodes here yet."}
+              </p>
+              {term && (
+                <button type="button" onClick={() => setSearch("")} className="mt-4 text-sm font-semibold text-[#F7241D] hover:underline">
+                  Clear the search
+                </button>
+              )}
+            </div>
+          ) : scope.kind === "unknown" ? (
+            <ul>
+              {(list as UnknownRow[]).slice(0, shown).map((row) => (
+                <UnknownItem key={`${row.capcode_id ?? "x"}-${row.address}`} row={row} onSuggest={() => setTarget({ capcode_id: row.capcode_id, address: row.address, alias: row.alias, agency_name: row.agency_name })} />
+              ))}
+            </ul>
           ) : (
-            <CapcodeGrid
-              items={filteredCapcodes}
-              onSuggest={(c) =>
-                setSuggestTarget({
-                  capcode_id: c.id,
-                  address: c.address,
-                  alias: c.alias,
-                  agency_name: c.agency_name,
-                })
-              }
-              searchActive={!!search.trim()}
-              showAgency={scope.kind !== "agency"}
-            />
+            <ul>
+              {(list as Capcode[]).slice(0, shown).map((c) => (
+                <CapcodeItem key={c.id} c={c} showAgency={scope.kind !== "agency"} onSuggest={() => setTarget({ capcode_id: c.id, address: c.address, alias: c.alias, agency_name: c.agency_name })} />
+              ))}
+            </ul>
           )}
-        </div>
+
+          {list.length > shown && (
+            <div className="px-4 py-6 text-center sm:px-6">
+              <button
+                type="button"
+                onClick={() => setShown((n) => n + CHUNK)}
+                className="inline-flex h-10 items-center rounded-lg border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-700 outline-none transition-colors hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-[#F7241D]/40"
+              >
+                Show {Math.min(CHUNK, list.length - shown)} more
+              </button>
+              <p className="mt-2 text-xs text-gray-400">
+                {shown.toLocaleString()} of {list.length.toLocaleString()}
+              </p>
+            </div>
+          )}
+        </section>
       </div>
 
-      {suggestTarget && (
-        <SuggestModal
-          target={suggestTarget}
-          agencies={agencies}
-          onClose={() => setSuggestTarget(null)}
-        />
-      )}
+      <SuggestDialog target={target} agencies={agencies} onClose={() => setTarget(null)} />
     </div>
   );
 }
 
-function ScopeRow({
-  label,
-  count,
-  active,
-  onClick,
-  tint,
-  highlight,
-}: {
-  label: string;
-  count: number;
-  active: boolean;
-  onClick: () => void;
-  tint?: string;
-  highlight?: boolean;
-}) {
+function CapcodeItem({ c, showAgency, onSuggest }: { c: Capcode; showAgency: boolean; onSuggest: () => void }) {
+  const labelled = Boolean(c.alias?.trim());
   return (
-    <button
-      onClick={onClick}
-      className={`w-full text-left px-3 py-2 rounded-md flex items-center gap-3 transition-colors group ${
-        active
-          ? "bg-gray-900 text-white"
-          : highlight
-            ? "hover:bg-red-50 text-gray-800"
-            : "hover:bg-gray-50 text-gray-700"
-      }`}
-    >
-      {tint && (
-        <span
-          className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? "opacity-100" : "opacity-70"}`}
-          style={{ backgroundColor: tint }}
-        />
-      )}
-      <span className={`text-sm font-medium flex-1 truncate ${active ? "" : ""}`}>{label}</span>
-      <span
-        className={`text-[11px] tabular-nums ${
-          active ? "text-white/70" : "text-gray-400 group-hover:text-gray-500"
+    <li className="relative flex items-center gap-4 border-b border-gray-100 px-4 py-2.5 sm:px-6 md:gap-5">
+      <span aria-hidden className="absolute inset-y-0 left-0 w-[3px]" style={{ backgroundColor: c.colour || "#d1d5db" }} />
+      <span className="w-[4.5rem] shrink-0 font-mono text-[13px] tabular-nums text-gray-500">{c.address}</span>
+      <div className="min-w-0 flex-1">
+        <p className={`${heading} truncate text-[15px] font-bold ${labelled ? "text-gray-900" : "font-medium text-gray-400"}`}>
+          {labelled ? c.alias : "No name yet"}
+        </p>
+        {showAgency && c.agency_name && <p className="truncate text-xs text-gray-500">{c.agency_name}</p>}
+      </div>
+      <button
+        type="button"
+        onClick={onSuggest}
+        className={`shrink-0 rounded-md px-2 py-1 text-xs font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[#F7241D]/40 ${
+          labelled ? "text-gray-500 hover:bg-gray-100 hover:text-gray-900" : "text-[#F7241D] hover:bg-red-50"
         }`}
       >
-        {count.toLocaleString()}
-      </span>
-    </button>
+        {labelled ? "Suggest a change" : "Help identify"}
+      </button>
+    </li>
   );
 }
 
-function CapcodeGrid({
-  items,
-  onSuggest,
-  searchActive,
-  showAgency,
-}: {
-  items: Capcode[];
-  onSuggest: (c: Capcode) => void;
-  searchActive: boolean;
-  showAgency: boolean;
-}) {
-  if (items.length === 0) {
-    return (
-      <div className="text-center py-32 text-sm text-gray-400">
-        {searchActive ? "No capcodes match your search." : "No capcodes here yet."}
-      </div>
-    );
-  }
+function UnknownItem({ row, onSuggest }: { row: UnknownRow; onSuggest: () => void }) {
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => setNow(Date.now()), []);
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
-      {items.map((c) => {
-        const labelled = c.alias && c.alias.trim() !== "";
-        return (
-          <div
-            key={c.id}
-            className="group bg-white border border-gray-100 rounded-xl p-4 hover:border-gray-300 hover:shadow-sm transition-all flex flex-col"
-          >
-            <div className="flex items-start justify-between gap-2 mb-3">
-              <span
-                className="inline-block px-2 py-0.5 rounded text-[10px] font-bold text-white uppercase tracking-wide font-mono"
-                style={{ backgroundColor: c.colour || "#6b7280" }}
-              >
-                {c.address}
-              </span>
-              <button
-                onClick={() => onSuggest(c)}
-                className="text-[10px] font-bold uppercase tracking-wider text-gray-400 hover:text-[#F7241D] opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Suggest a change"
-              >
-                Suggest
-              </button>
-            </div>
-            <p
-              className={`text-sm font-semibold leading-snug mb-1 break-words ${
-                labelled ? "text-gray-900" : "text-gray-400 italic"
-              }`}
-            >
-              {labelled ? c.alias : "Unknown — no alias yet"}
-            </p>
-            {showAgency && c.agency_name && (
-              <p className="text-[11px] text-gray-400 mt-auto truncate">{c.agency_name}</p>
-            )}
-          </div>
-        );
-      })}
-    </div>
+    <li className="relative flex items-center gap-4 border-b border-gray-100 px-4 py-2.5 sm:px-6 md:gap-5">
+      <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-gray-300" />
+      <span className="w-[4.5rem] shrink-0 font-mono text-[13px] tabular-nums text-gray-700">{row.address}</span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[15px] text-gray-700">
+          {row.agency_name ? (
+            <>
+              <span className={`${heading} font-bold text-gray-900`}>{row.agency_name}</span>
+              <span className="text-gray-400"> no alias</span>
+            </>
+          ) : (
+            <span className="text-gray-500">No agency yet</span>
+          )}
+        </p>
+        <p className="truncate text-xs text-gray-500" suppressHydrationWarning>
+          {row.message_count.toLocaleString()} {row.message_count === 1 ? "page" : "pages"}
+          {now ? `, last ${ago(row.last_seen_at, now)}` : ""}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onSuggest}
+        className="shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-[#F7241D] outline-none hover:bg-red-50 focus-visible:ring-2 focus-visible:ring-[#F7241D]/40"
+      >
+        Help identify
+      </button>
+    </li>
   );
 }
 
-function UnknownGrid({
-  rows,
-  onSuggest,
-  searchActive,
-}: {
-  rows: UnknownRow[];
-  onSuggest: (r: UnknownRow) => void;
-  searchActive: boolean;
-}) {
-  if (rows.length === 0) {
-    return (
-      <div className="text-center py-32">
-        <p className="text-base font-semibold text-gray-900 mb-1">
-          {searchActive ? "Nothing matches" : "All clear."}
-        </p>
-        <p className="text-sm text-gray-400">
-          {searchActive
-            ? "Try a different search."
-            : "No unlabelled capcodes from the last 30 days."}
-        </p>
-      </div>
-    );
-  }
-  return (
-    <>
-      <div className="mb-5 rounded-xl bg-amber-50 border border-amber-100 px-4 py-3">
-        <p className="text-sm text-amber-900 leading-relaxed">
-          These addresses appeared in recent pager messages but we don't have a
-          name for them yet. If you recognise one — a brigade, a unit, a
-          station — drop a suggestion. Admins review and merge.
-        </p>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-        {rows.map((row) => (
-          <div
-            key={`${row.capcode_id ?? "x"}-${row.address}`}
-            className="bg-white border border-gray-100 rounded-xl p-4 flex flex-col"
-          >
-            <div className="flex items-start justify-between gap-2 mb-3">
-              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold text-white uppercase tracking-wide bg-gray-500 font-mono">
-                {row.address}
-              </span>
-              <span className="text-[10px] font-bold text-gray-400 tabular-nums">
-                {row.message_count} msgs
-              </span>
-            </div>
-            <p className="text-sm text-gray-700 mb-1 leading-snug">
-              {row.agency_name ? (
-                <>
-                  <span className="font-semibold text-gray-900">{row.agency_name}</span>
-                  <span className="text-gray-400 italic"> — no alias set</span>
-                </>
-              ) : (
-                <span className="italic text-gray-500">Unmatched address</span>
-              )}
-            </p>
-            <p className="text-[11px] text-gray-400 mb-3">last seen {timeAgo(row.last_seen_at)}</p>
-            <button
-              onClick={() => onSuggest(row)}
-              className="mt-auto px-3 py-2 rounded-lg bg-[#F7241D] hover:bg-[#d91f19] text-white text-xs font-bold uppercase tracking-wider transition-colors"
-            >
-              Help identify
-            </button>
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
-
-function timeAgo(dateStr: string): string {
-  const mins = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
-// Shorter form used in the recent-pages list inside the modal.
-function relTime(dateStr: string): string {
-  const d = new Date(dateStr);
-  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
-  return d.toLocaleDateString("en-AU", { day: "2-digit", month: "short" });
+interface SuggestTarget {
+  capcode_id: number | null;
+  address: string;
+  alias: string | null;
+  agency_name: string | null;
 }
 
 interface RecentMessage {
@@ -560,20 +369,17 @@ interface RecentMessage {
   system_name: string | null;
 }
 
-function SuggestModal({
-  target,
-  agencies,
-  onClose,
-}: {
-  target: {
-    capcode_id: number | null;
-    address: string;
-    alias: string | null;
-    agency_name: string | null;
-  };
-  agencies: Agency[];
-  onClose: () => void;
-}) {
+function SuggestDialog({ target, agencies, onClose }: { target: SuggestTarget | null; agencies: Agency[]; onClose: () => void }) {
+  return (
+    <Dialog open={target !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
+        {target && <SuggestForm key={target.address} target={target} agencies={agencies} onClose={onClose} />}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SuggestForm({ target, agencies, onClose }: { target: SuggestTarget; agencies: Agency[]; onClose: () => void }) {
   const [alias, setAlias] = useState(target.alias ?? "");
   const [agency, setAgency] = useState(target.agency_name ?? "");
   const [note, setNote] = useState("");
@@ -581,250 +387,149 @@ function SuggestModal({
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recent, setRecent] = useState<RecentMessage[] | null>(null);
-  const [recentLoading, setRecentLoading] = useState(true);
+  const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  const [now, setNow] = useState(0);
 
-  // Fetch recent pages for this address so the suggester (and the reviewer
-  // reading their note later) has context for what kind of unit this is.
+  useEffect(() => {
+    setNow(Date.now());
+    const read = () => setSignedIn(Boolean(localStorage.getItem("rfspager_token")));
+    read();
+    window.addEventListener("rfspager:auth", read);
+    return () => window.removeEventListener("rfspager:auth", read);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    setRecentLoading(true);
-    fetch(`/api/public/capcodes/messages?address=${encodeURIComponent(target.address)}&limit=8`)
+    fetch(`/api/public/capcodes/messages?address=${encodeURIComponent(target.address)}&limit=6`)
       .then((r) => (r.ok ? r.json() : { data: [] }))
-      .then((j) => {
-        if (cancelled) return;
-        setRecent(j.data ?? []);
-      })
-      .catch(() => !cancelled && setRecent([]))
-      .finally(() => !cancelled && setRecentLoading(false));
+      .then((j) => !cancelled && setRecent(j.data ?? []))
+      .catch(() => !cancelled && setRecent([]));
     return () => {
       cancelled = true;
     };
   }, [target.address]);
 
   const isAmendment = target.capcode_id != null;
-  const tokenAvailable =
-    typeof window !== "undefined" && !!localStorage.getItem("rfspager_token");
 
-  const submit = async () => {
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setError(null);
-    if (!alias && !agency && !note) {
-      setError("Provide an alias, agency, or note.");
+    if (!alias.trim() && !agency.trim() && !note.trim()) {
+      setError("Give us at least one of a name, an agency or a note.");
+      return;
+    }
+    const token = localStorage.getItem("rfspager_token");
+    if (!token) {
+      setSignedIn(false);
       return;
     }
     setSubmitting(true);
     try {
-      const token = localStorage.getItem("rfspager_token");
       const res = await fetch("/api/v2/mobile/capcode-suggestions", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          capcode_id: target.capcode_id,
-          address: target.address,
-          alias,
-          agency,
-          note,
-        }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ capcode_id: target.capcode_id, address: target.address, alias: alias.trim(), agency: agency.trim(), note: note.trim() }),
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        throw new Error(j.error || `HTTP ${res.status}`);
+        throw new Error(j.error || `The server said ${res.status}.`);
       }
       setDone(true);
-    } catch (e: any) {
-      setError(e.message || "Failed to submit");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't send that. Try again in a moment.");
     } finally {
       setSubmitting(false);
     }
   };
 
+  const inputClass =
+    "h-10 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-[#F7241D] focus:bg-white focus:ring-2 focus:ring-[#F7241D]/15";
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in-0 duration-150">
-      <div className="absolute inset-0" onClick={onClose} />
-      <div className="relative bg-white w-full md:w-[480px] md:rounded-2xl rounded-t-2xl shadow-2xl max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom-4 duration-200">
-        <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white">
-          <div>
-            <p className="text-[10px] font-bold text-[#F7241D] uppercase tracking-[0.15em] mb-1">
-              {isAmendment ? "Amend capcode" : "Identify capcode"}
-            </p>
-            <h2 className={`${heading} text-xl font-extrabold text-gray-900`}>
-              {target.address}
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-700 text-2xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100"
-          >
-            ×
+    <>
+      <DialogHeader>
+        <DialogTitle className={`${heading} text-xl font-extrabold tracking-tight`}>
+          {isAmendment ? "Suggest a change" : "Help identify"} <span className="font-mono text-base font-semibold text-gray-500">{target.address}</span>
+        </DialogTitle>
+        <DialogDescription>
+          {isAmendment && (target.alias || target.agency_name)
+            ? `Currently ${target.alias || "unnamed"}${target.agency_name ? `, ${target.agency_name}` : ""}.`
+            : "An admin checks every suggestion before it goes live."}
+        </DialogDescription>
+      </DialogHeader>
+
+      {recent && recent.length > 0 && (
+        <div className="rounded-lg border border-gray-200 bg-gray-50">
+          <p className="border-b border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600">Recent pages to this address</p>
+          <ul className="max-h-40 divide-y divide-gray-200 overflow-y-auto">
+            {recent.map((m) => (
+              <li key={m.id} className="px-3 py-2">
+                <p className="line-clamp-2 whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-gray-800">{m.message}</p>
+                <p className="mt-0.5 text-[11px] text-gray-500" suppressHydrationWarning>
+                  {now ? ago(m.created_at, now) : ""}
+                  {m.system_name ? `, decoded by ${m.system_name}` : ""}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {signedIn === false ? (
+        <div className="space-y-3 pt-2 text-sm text-gray-600">
+          <p>Sign in to send a suggestion, so we can follow up if we have a question.</p>
+          <Link to={`/login?next=${encodeURIComponent("/capcodes")}`} className="inline-flex h-10 items-center rounded-lg bg-[#F7241D] px-4 text-sm font-semibold text-white hover:bg-[#d91f19]">
+            Sign in
+          </Link>
+        </div>
+      ) : done ? (
+        <div className="space-y-3 pt-2">
+          <p className={`${heading} font-bold text-gray-900`}>Sent. Thank you.</p>
+          <p className="text-sm text-gray-600">An admin will review it. You can suggest more from this page.</p>
+          <button type="button" onClick={onClose} className="inline-flex h-10 items-center rounded-lg bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-gray-800">
+            Done
           </button>
         </div>
-
-        {!tokenAvailable ? (
-          <div className="p-6 text-center space-y-3">
-            <p className="text-sm text-gray-700">
-              Sign in to submit a suggestion. Admins review every change before
-              it goes live.
-            </p>
-            <Link
-              to="/login"
-              className="inline-block px-5 py-2.5 rounded-lg bg-[#F7241D] hover:bg-[#d91f19] text-white text-sm font-bold transition-colors"
-            >
-              Sign in
-            </Link>
+      ) : (
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label htmlFor="sg-agency" className="mb-1.5 block text-sm font-semibold text-gray-800">
+              Agency
+            </label>
+            <input id="sg-agency" list="agencies-list" value={agency} onChange={(e) => setAgency(e.target.value)} placeholder="Pick from the list if it's there" className={inputClass} />
+            <datalist id="agencies-list">
+              {agencies.map((a) => (
+                <option key={a.id} value={a.name} />
+              ))}
+            </datalist>
           </div>
-        ) : done ? (
-          <div className="p-8 text-center space-y-3">
-            <div className="mx-auto w-14 h-14 rounded-full bg-emerald-50 flex items-center justify-center">
-              <svg className="w-7 h-7 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <p className="font-bold text-gray-900">Submitted. Thanks.</p>
-            <p className="text-sm text-gray-500 max-w-sm mx-auto">
-              An admin will review your suggestion. You can submit more from this page.
+          <div>
+            <label htmlFor="sg-alias" className="mb-1.5 block text-sm font-semibold text-gray-800">
+              Name
+            </label>
+            <input id="sg-alias" value={alias} onChange={(e) => setAlias(e.target.value)} placeholder="e.g. Cooma Fire Brigade" className={inputClass} />
+          </div>
+          <div>
+            <label htmlFor="sg-note" className="mb-1.5 block text-sm font-semibold text-gray-800">
+              How do you know?
+            </label>
+            <textarea id="sg-note" value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Station number, brigade, anything that helps us verify." className={`${inputClass} h-auto resize-none py-2`} />
+          </div>
+          {error && (
+            <p role="alert" className="text-sm text-red-700">
+              {error}
             </p>
-            <button
-              onClick={onClose}
-              className="mt-4 px-5 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm font-semibold text-gray-700"
-            >
-              Done
+          )}
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={onClose} className="h-10 rounded-lg px-4 text-sm font-semibold text-gray-700 hover:bg-gray-100">
+              Cancel
+            </button>
+            <button type="submit" disabled={submitting} className="h-10 rounded-lg bg-[#F7241D] px-4 text-sm font-semibold text-white hover:bg-[#d91f19] disabled:opacity-60">
+              {submitting ? "Sending…" : "Send suggestion"}
             </button>
           </div>
-        ) : (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              submit();
-            }}
-            className="p-6 space-y-5"
-          >
-            {isAmendment && (target.alias || target.agency_name) && (
-              <div className="rounded-lg bg-gray-50 border border-gray-100 p-3 text-xs">
-                <p className="text-gray-400 uppercase tracking-wider font-bold mb-1">Currently</p>
-                <p className="text-gray-700">
-                  {target.alias || <span className="italic text-gray-400">no alias</span>}
-                  {target.agency_name && <span className="text-gray-400"> · {target.agency_name}</span>}
-                </p>
-              </div>
-            )}
-
-            {/* Recent pages for context */}
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">
-                Recent pages
-              </p>
-              {recentLoading ? (
-                <p className="text-[11px] text-gray-400 italic">Loading recent pages…</p>
-              ) : !recent || recent.length === 0 ? (
-                <p className="text-[11px] text-gray-400 italic">
-                  No recent pages on file for this address.
-                </p>
-              ) : (
-                <div className="rounded-lg border border-gray-100 bg-gray-50 max-h-44 overflow-y-auto divide-y divide-gray-100">
-                  {recent.map((m) => (
-                    <div key={m.id} className="px-3 py-2 text-[11px]">
-                      <div className="flex items-center justify-between gap-2 text-gray-400 font-mono mb-0.5">
-                        <span className="tabular-nums">{relTime(m.created_at)}</span>
-                        {m.system_name && (
-                          <span className="truncate">via {m.system_name}</span>
-                        )}
-                      </div>
-                      <p className="text-gray-700 font-mono leading-snug whitespace-pre-wrap break-words line-clamp-2">
-                        {m.message}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Agency first — having the right agency makes a much
-                bigger difference to data quality than the alias. */}
-            <Field
-              label="Agency"
-              hint="Pick from the list when you can — keeps agency names consistent."
-            >
-              <input
-                type="text"
-                value={agency}
-                onChange={(e) => setAgency(e.target.value)}
-                placeholder="Start typing — e.g. NSW Rural…"
-                list="agencies-list"
-                className="w-full px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#F7241D]/15 focus:border-[#F7241D] outline-none"
-              />
-              <datalist id="agencies-list">
-                {agencies.map((a) => (
-                  <option key={a.id} value={a.name} />
-                ))}
-              </datalist>
-            </Field>
-
-            <Field label="Alias">
-              <input
-                type="text"
-                value={alias}
-                onChange={(e) => setAlias(e.target.value)}
-                placeholder="e.g. Cooma Fire Brigade"
-                className="w-full px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#F7241D]/15 focus:border-[#F7241D] outline-none"
-              />
-            </Field>
-
-            <Field
-              label="Note for the reviewer"
-              hint="How do you know this? Source, station number, brigade, anything that'll help us verify."
-            >
-              <textarea
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                rows={3}
-                placeholder="e.g. Spent 8 years there — this address pages our truck."
-                className="w-full px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#F7241D]/15 focus:border-[#F7241D] outline-none resize-none"
-              />
-            </Field>
-
-            {error && <p className="text-xs text-[#F7241D] font-medium">{error}</p>}
-
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex-1 px-4 py-2.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm font-semibold text-gray-700"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={submitting}
-                className="flex-1 px-4 py-2.5 rounded-lg bg-[#F7241D] hover:bg-[#d91f19] disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold text-white"
-              >
-                {submitting ? "Submitting…" : "Submit suggestion"}
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1.5 block">
-        {label}
-      </span>
-      {children}
-      {hint && <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">{hint}</p>}
-    </label>
+        </form>
+      )}
+    </>
   );
 }

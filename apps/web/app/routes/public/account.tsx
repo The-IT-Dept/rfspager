@@ -25,7 +25,7 @@ import {
 const heading = "font-[family-name:var(--font-heading)]";
 
 export function meta() {
-  return [{ title: "My Account — RFSPager" }];
+  return [{ title: "Account — RFSPager" }];
 }
 
 export default function AccountRoute() {
@@ -47,9 +47,11 @@ export default function AccountRoute() {
 
   if (loading) {
     return (
-      <div className="max-w-3xl mx-auto px-6 py-12">
-        <div className="h-8 w-48 bg-gray-100 rounded animate-pulse mb-8" />
-        <div className="h-64 bg-gray-100 rounded-2xl animate-pulse" />
+      <div className="flex-1 bg-gray-50">
+        <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6 md:py-16" aria-busy>
+          <div className="h-9 w-40 animate-pulse rounded bg-gray-200 motion-reduce:animate-none" />
+          <div className="mt-10 h-56 animate-pulse rounded-xl border border-gray-200 bg-white motion-reduce:animate-none" />
+        </div>
       </div>
     );
   }
@@ -57,19 +59,21 @@ export default function AccountRoute() {
   if (!user) return null;
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-12 space-y-8">
-      <header>
-        <h1 className={`${heading} text-3xl font-extrabold text-gray-900 mb-2`}>My Account</h1>
-        <p className="text-sm text-gray-500">
-          Manage your profile, password and subscription.
-        </p>
-      </header>
+    <div className="flex-1 bg-gray-50">
+      <div className="mx-auto max-w-3xl space-y-6 px-4 py-12 sm:px-6 md:py-16">
+        <header className="pb-2">
+          <h1 className={`${heading} text-3xl font-extrabold tracking-tight text-gray-900`}>Account</h1>
+          <p className="mt-2 text-sm text-gray-500">
+            Signed in as <span className="font-medium text-gray-700">{user.email}</span>. The same account works in the app.
+          </p>
+        </header>
 
-      <ProfileSection user={user} onUpdated={setUser} />
-      <EmailSection user={user} onUpdated={setUser} />
-      <PasswordSection />
-      <SubscriptionSection user={user} />
-      <DangerSection onDeleted={() => navigate("/")} />
+        <ProfileSection user={user} onUpdated={setUser} />
+        <EmailSection user={user} onUpdated={setUser} />
+        <PasswordSection />
+        <SubscriptionSection user={user} />
+        <DangerSection onDeleted={() => navigate("/")} />
+      </div>
     </div>
   );
 }
@@ -335,7 +339,7 @@ function SubscriptionSection({ user }: { user: CustomerUser }) {
   const platformLabel =
     platform === "apple" ? "Apple App Store" :
     platform === "google" ? "Google Play" :
-    platform === "stripe" ? "Stripe (web)" :
+    platform === "stripe" ? "Card, on this site" :
     platform || "—";
 
   return (
@@ -344,11 +348,11 @@ function SubscriptionSection({ user }: { user: CustomerUser }) {
         <div>
           <CardTitle>Subscription</CardTitle>
           <CardDescription>
-            Manage your subscription in the store where you purchased it.
+            Manage or cancel it where you subscribed: the App Store, Google Play, or by card on this site.
           </CardDescription>
         </div>
         {user.subscription_valid ? (
-          <Badge className="bg-[#F7241D]">Pro</Badge>
+          <Badge className="bg-[#F7241D] text-white">Pro</Badge>
         ) : (
           <Badge variant="secondary">Free</Badge>
         )}
@@ -459,7 +463,7 @@ function DangerSection({ onDeleted }: { onDeleted: () => void }) {
 
       <CardContent className="border-t pt-4 mt-2">
         <p className="text-xs text-gray-400">
-          Need help instead? <Link to="mailto:hello@rfspager.app" className="text-[#F7241D] hover:underline">Contact support</Link>.
+          Need help instead? <a href="mailto:hello@rfspager.app" className="font-semibold text-[#F7241D] hover:underline">hello@rfspager.app</a>
         </p>
       </CardContent>
     </Card>

@@ -1,10 +1,15 @@
+import { Layers } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
+
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "~/components/ui/sheet";
 import type { Route } from "./+types/map";
 
 const API_BASE = process.env.API_URL || "http://localhost:8080";
 const heading = "font-[family-name:var(--font-heading)]";
 
 const MAX_LIVE_MARKERS = 300;
+// How many located pages the loader asks for; surfaced in the layer note.
+const MESSAGE_LIMIT = 200;
 
 // Free vector style from OpenFreeMap (built on OpenStreetMap data, no token).
 // Swap to "bright", "liberty" or "dark" for a different look.
@@ -28,7 +33,7 @@ export async function loader() {
   try {
     const [incRes, msgRes, stationsRes] = await Promise.all([
       fetch(`${API_BASE}/api/public/major-incidents`),
-      fetch(`${API_BASE}/api/public/messages/map?limit=200`),
+      fetch(`${API_BASE}/api/public/messages/map?limit=${MESSAGE_LIMIT}`),
       fetch(`${API_BASE}/api/public/stations`),
     ]);
     return {
@@ -254,6 +259,7 @@ interface MapProps {
   filters: Filters;
   flyTo: { lng: number; lat: number; zoom?: number } | null;
   onConnectedChange: (c: boolean) => void;
+  onLiveCount: (n: number) => void;
 }
 
 function stationPopupHTML(p: StationFeature["properties"]): string {
@@ -288,9 +294,14 @@ function MapComponent({
   filters,
   flyTo,
   onConnectedChange,
+  onLiveCount,
 }: MapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
+  // The SSE handler is registered once; read toggles through a ref so a live
+  // marker respects the current state, not the state at mount.
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
   const mbglRef = useRef<any>(null);
   const liveMarkersRef = useRef<any[]>([]);
   const initialMarkersRef = useRef<any[]>([]);
@@ -417,7 +428,7 @@ function MapComponent({
         if (!m || !mbgl) return;
 
         const el = makeMessageEl(msg.capcode_colour || "#F7241D", true);
-        if (!filters.showMessages) el.style.display = "none";
+        if (!filtersRef.current.showMessages) el.style.display = "none";
         const marker = new mbgl.Marker(el)
           .setLngLat([lng, lat])
           .setPopup(new mbgl.Popup({ offset: 12, maxWidth: "400px" }).setHTML(popupHTMLMessage(msg)))
@@ -429,6 +440,7 @@ function MapComponent({
           const old = liveMarkersRef.current.shift();
           old?.remove();
         }
+        onLiveCount(liveMarkersRef.current.length);
       } catch {}
     };
     return () => es.close();
@@ -633,11 +645,11 @@ export default function MapPage({ loaderData }: Route.ComponentProps) {
   });
   const [flyTo, setFlyTo] = useState<{ lng: number; lat: number; zoom?: number } | null>(null);
   const [connected, setConnected] = useState(false);
+  const [liveCount, setLiveCount] = useState(0);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const stationCounts = useMemo(() => {
-    const counts: Record<StationCategoryKey, number> = {
-      rfs: 0, frnsw: 0, police: 0, ambulance: 0, ses: 0,
-    };
+    const counts: Record<StationCategoryKey, number> = { rfs: 0, frnsw: 0, police: 0, ambulance: 0, ses: 0 };
     for (const f of stations.features || []) {
       const c = f.properties?.category as StationCategoryKey;
       if (c && c in counts) counts[c]++;
@@ -662,168 +674,48 @@ export default function MapPage({ loaderData }: Route.ComponentProps) {
 
   const handleIncidentClick = (inc: Incident) => {
     setSelected(selected?.id === inc.id ? null : inc);
+    setSheetOpen(false);
     try {
       const geo = typeof inc.geometry === "string" ? JSON.parse(inc.geometry) : inc.geometry;
       let coords: [number, number] | null = null;
       if (geo?.type === "Point") coords = geo.coordinates;
-      else if (geo?.type === "Polygon" && geo.coordinates?.[0]?.[0]) {
-        const ring = geo.coordinates[0];
-        const lng = ring.reduce((s: number, c: number[]) => s + c[0], 0) / ring.length;
-        const lat = ring.reduce((s: number, c: number[]) => s + c[1], 0) / ring.length;
-        coords = [lng, lat];
-      } else if (geo?.type === "MultiPolygon" && geo.coordinates?.[0]?.[0]?.[0]) {
-        const ring = geo.coordinates[0][0];
-        const lng = ring.reduce((s: number, c: number[]) => s + c[0], 0) / ring.length;
-        const lat = ring.reduce((s: number, c: number[]) => s + c[1], 0) / ring.length;
-        coords = [lng, lat];
-      }
+      else if (geo?.type === "Polygon" && geo.coordinates?.[0]?.[0]) coords = ringCentre(geo.coordinates[0]);
+      else if (geo?.type === "MultiPolygon" && geo.coordinates?.[0]?.[0]?.[0]) coords = ringCentre(geo.coordinates[0][0]);
       if (coords) setFlyTo({ lng: coords[0], lat: coords[1], zoom: 10 });
     } catch {}
   };
 
+  const controls = (
+    <MapControls
+      filters={filters}
+      setFilters={setFilters}
+      pageCount={messages.length + liveCount}
+      liveCount={liveCount}
+      incidentCount={incidents.length}
+      stationCounts={stationCounts}
+    />
+  );
+  const list = <IncidentList incidents={sortedIncidents} selectedId={selected?.id ?? null} onPick={handleIncidentClick} />;
+
   return (
-    <div className="flex overflow-hidden bg-gray-50 h-[calc(100dvh-4rem)]">
-      {/* Sidebar */}
-      <aside className="w-80 lg:w-96 bg-white border-r border-gray-200 flex flex-col shrink-0 hidden md:flex">
-        {/* Header */}
-        <div className="px-5 py-5 border-b border-gray-100">
-          <div className="flex items-center gap-2 mb-2">
-            <div
-              className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-[0.12em] ${
-                connected ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"
-              }`}
-            >
-              <span className="relative flex w-1.5 h-1.5">
-                {connected && <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60 animate-ping" />}
-                <span className={`relative inline-flex w-1.5 h-1.5 rounded-full ${connected ? "bg-emerald-500" : "bg-gray-400"}`} />
-              </span>
-              {connected ? "LIVE" : "OFFLINE"}
-            </div>
-            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">NSW</span>
-          </div>
-          <h1 className={`${heading} text-xl font-extrabold text-gray-900 leading-tight tracking-tight`}>
-            Emergency map
-          </h1>
-          <p className="text-xs text-gray-400 mt-1">
-            {incidents.length} major incidents · {messages.length} messages with coords
+    // The map is a canvas, so this page keeps a viewport-fit shell on purpose;
+    // the rail scrolls its own controls and list, with min-h-0 so it can.
+    <div className="flex h-[calc(100dvh-4rem)] min-h-0 overflow-hidden bg-gray-50">
+      <aside className="hidden w-80 min-h-0 shrink-0 flex-col border-r border-gray-200 bg-white md:flex lg:w-96">
+        <div className="px-6 pb-4 pt-7">
+          <h1 className={`${heading} text-2xl font-extrabold tracking-tight text-gray-900`}>Emergency map</h1>
+          <p className="mt-2 text-sm leading-relaxed text-gray-500">
+            Pages that carry a location, major incidents from the RFS feed, and emergency service stations across NSW.
           </p>
         </div>
-
-        {/* Layer toggles */}
-        <div className="px-5 py-3 border-b border-gray-100 space-y-2">
-          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Layers</p>
-          {[
-            { key: "showMessages" as const, label: "Pager messages", count: messages.length, dot: "#F7241D" },
-            { key: "showIncidents" as const, label: "Major incidents", count: incidents.length, dot: "#FF9500" },
-          ].map((row) => (
-            <label key={row.key} className="flex items-center gap-2.5 cursor-pointer text-sm group">
-              <input
-                type="checkbox"
-                checked={filters[row.key]}
-                onChange={(e) => setFilters((f) => ({ ...f, [row.key]: e.target.checked }))}
-                className="w-4 h-4 rounded accent-[#F7241D]"
-              />
-              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: row.dot }} />
-              <span className="text-gray-700 group-hover:text-gray-900">{row.label}</span>
-              <span className="ml-auto text-xs text-gray-400 tabular-nums">{row.count}</span>
-            </label>
-          ))}
-        </div>
-
-        {/* Station layers */}
-        <div className="px-5 py-3 border-b border-gray-100 space-y-2">
-          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">
-            Stations
-          </p>
-          {STATION_CATEGORIES.map((cat) => (
-            <label
-              key={cat.key}
-              className="flex items-center gap-2.5 cursor-pointer text-sm group"
-            >
-              <input
-                type="checkbox"
-                checked={filters.stations[cat.key]}
-                onChange={(e) =>
-                  setFilters((f) => ({
-                    ...f,
-                    stations: { ...f.stations, [cat.key]: e.target.checked },
-                  }))
-                }
-                className="w-4 h-4 rounded"
-                style={{ accentColor: cat.color }}
-              />
-              <span
-                className="w-2 h-2 rounded-full"
-                style={{ backgroundColor: cat.color }}
-              />
-              <span className="text-gray-700 group-hover:text-gray-900">{cat.label}</span>
-              <span className="ml-auto text-xs text-gray-400 tabular-nums">
-                {stationCounts[cat.key]}
-              </span>
-            </label>
-          ))}
-        </div>
-
-        {/* Legend */}
-        <div className="px-5 py-3 border-b border-gray-100">
-          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Incident status</p>
-          <div className="grid grid-cols-2 gap-1.5">
-            {CATEGORY_LABELS.map((c) => (
-              <div key={c.label} className="flex items-center gap-1.5 text-[11px] text-gray-600">
-                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
-                {c.label}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Incident list */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="px-5 py-2.5 sticky top-0 bg-white border-b border-gray-100 z-10">
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Active incidents</p>
-          </div>
-          {sortedIncidents.length === 0 ? (
-            <div className="px-5 py-12 text-center text-sm text-gray-400">No active incidents</div>
-          ) : (
-            sortedIncidents.map((inc) => {
-              let d: any = {};
-              try {
-                d = typeof inc.data === "string" ? JSON.parse(inc.data) : inc.data || {};
-              } catch {}
-              const active = selected?.id === inc.id;
-              return (
-                <button
-                  key={inc.id}
-                  onClick={() => handleIncidentClick(inc)}
-                  className={`w-full text-left px-5 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors relative ${
-                    active ? "bg-red-50" : ""
-                  }`}
-                >
-                  {active && (
-                    <span className="absolute left-0 top-0 bottom-0 w-0.5 bg-[#F7241D]" />
-                  )}
-                  <div className="flex items-start gap-2.5">
-                    <div
-                      className="w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ring-2 ring-white shadow-sm"
-                      style={{ backgroundColor: categoryColor(inc.category) }}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-gray-900 leading-tight truncate">{inc.title}</p>
-                      <p className="text-xs text-gray-400 mt-0.5 truncate">
-                        {inc.category || "Unknown"}
-                        {d?.location ? ` · ${d.location}` : ""}
-                      </p>
-                    </div>
-                  </div>
-                </button>
-              );
-            })
-          )}
+        <StatusLine connected={connected} className="border-y border-gray-200 px-6 py-3" />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {controls}
+          {list}
         </div>
       </aside>
 
-      {/* Map */}
-      <div className="flex-1 relative">
+      <div className="relative min-w-0 flex-1">
         <MapComponent
           messages={messages}
           incidents={incidents}
@@ -831,42 +723,204 @@ export default function MapPage({ loaderData }: Route.ComponentProps) {
           filters={filters}
           flyTo={flyTo}
           onConnectedChange={setConnected}
+          onLiveCount={setLiveCount}
         />
 
-        {/* Mobile floating status (no sidebar visible) */}
-        <div className="md:hidden absolute top-4 left-4 right-4 z-10 flex items-center gap-2 px-3 py-2 bg-white/95 backdrop-blur-md rounded-xl shadow-lg border border-gray-100">
-          <div
-            className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-[0.12em] ${
-              connected ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"
-            }`}
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${connected ? "bg-emerald-500 animate-pulse" : "bg-gray-400"}`} />
-            {connected ? "LIVE" : "OFFLINE"}
-          </div>
-          <span className="text-xs text-gray-500 font-medium">
-            {incidents.length} incidents · {messages.length} pages
-          </span>
+        <div className="absolute left-3 right-3 top-3 z-10 flex items-center justify-between gap-2 md:hidden">
+          <StatusLine connected={connected} className="rounded-lg border border-gray-200 bg-white/95 px-3 py-2 shadow-sm backdrop-blur" compact />
+          <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+            <SheetTrigger className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg border border-gray-200 bg-white/95 px-3 text-sm font-semibold text-gray-800 shadow-sm backdrop-blur outline-none focus-visible:ring-2 focus-visible:ring-[#F7241D]/40">
+              <Layers className="size-4" />
+              Layers
+            </SheetTrigger>
+            <SheetContent side="bottom" className="gap-0 rounded-t-2xl p-0">
+              <SheetHeader className="border-b border-gray-100 px-5 py-4">
+                <SheetTitle className={`${heading} text-base font-bold text-gray-900`}>Emergency map</SheetTitle>
+              </SheetHeader>
+              <div className="max-h-[70dvh] overflow-y-auto pb-[max(1rem,env(safe-area-inset-bottom))]">
+                {controls}
+                {list}
+              </div>
+            </SheetContent>
+          </Sheet>
         </div>
 
-        {/* Detail card */}
-        {selected && (
-          <div className="absolute bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-[380px] bg-white rounded-xl shadow-xl border border-gray-100 p-5 z-10 animate-in slide-in-from-bottom-4 fade-in-0 duration-300">
-            <div className="flex items-start justify-between mb-3">
-              <h3 className={`${heading} font-bold text-gray-900 leading-tight pr-4`}>{selected.title}</h3>
-              <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 shrink-0 text-xl leading-none">
-                ×
-              </button>
-            </div>
-            <span
-              className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold text-white mb-3"
-              style={{ backgroundColor: categoryColor(selected.category) }}
-            >
-              {selected.category || "Unknown"}
-            </span>
-            <p className="text-xs text-gray-400">Updated {new Date(selected.created_at).toLocaleString("en-AU")}</p>
-          </div>
-        )}
+        {selected && <IncidentCard incident={selected} onClose={() => setSelected(null)} />}
       </div>
+    </div>
+  );
+}
+
+function ringCentre(ring: number[][]): [number, number] {
+  const lng = ring.reduce((s, c) => s + c[0], 0) / ring.length;
+  const lat = ring.reduce((s, c) => s + c[1], 0) / ring.length;
+  return [lng, lat];
+}
+
+function StatusLine({ connected, className = "", compact = false }: { connected: boolean; className?: string; compact?: boolean }) {
+  return (
+    <div className={`flex items-center gap-2.5 ${className}`}>
+      <span className="relative flex h-2.5 w-2.5 shrink-0" aria-hidden>
+        {connected && <span className="absolute inline-flex h-full w-full rounded-full bg-[#F7241D] opacity-60 motion-safe:animate-ping" />}
+        <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${connected ? "bg-[#F7241D]" : "bg-gray-300"}`} />
+      </span>
+      <p className="min-w-0 truncate text-sm text-gray-500">
+        <span className="font-semibold text-gray-900">{connected ? "Live" : "Connecting"}</span>
+        {!compact && <span> {connected ? "New pages with a location drop onto the map as they're decoded." : "Opening the live stream."}</span>}
+      </p>
+    </div>
+  );
+}
+
+function MapControls({
+  filters,
+  setFilters,
+  pageCount,
+  liveCount,
+  incidentCount,
+  stationCounts,
+}: {
+  filters: Filters;
+  setFilters: React.Dispatch<React.SetStateAction<Filters>>;
+  pageCount: number;
+  liveCount: number;
+  incidentCount: number;
+  stationCounts: Record<StationCategoryKey, number>;
+}) {
+  const row = "flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm text-gray-800 hover:bg-gray-50";
+  const box = "size-4 rounded border-gray-300 accent-[#F7241D]";
+  return (
+    <div className="border-b border-gray-200 px-3 py-4">
+      <p className={`${heading} px-3 text-sm font-bold text-gray-900`}>Layers</p>
+      <div className="mt-1 space-y-px">
+        <label className={row}>
+          <input type="checkbox" className={box} checked={filters.showMessages} onChange={(e) => setFilters((f) => ({ ...f, showMessages: e.target.checked }))} />
+          <span className="h-2.5 w-2.5 rounded-full bg-[#F7241D]" aria-hidden />
+          <span className="flex-1">Pager messages</span>
+          <span className="text-xs tabular-nums text-gray-500">{pageCount.toLocaleString()}</span>
+        </label>
+        <p className="px-3 pb-1 text-xs leading-relaxed text-gray-500">
+          The latest {MESSAGE_LIMIT} pages that carried a location{liveCount > 0 ? `, plus ${liveCount} that arrived while you've been watching` : ", plus anything that arrives while you watch"}.
+        </p>
+        <label className={row}>
+          <input type="checkbox" className={box} checked={filters.showIncidents} onChange={(e) => setFilters((f) => ({ ...f, showIncidents: e.target.checked }))} />
+          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: CATEGORY_LABELS[1].color }} aria-hidden />
+          <span className="flex-1">Major incidents</span>
+          <span className="text-xs tabular-nums text-gray-500">{incidentCount.toLocaleString()}</span>
+        </label>
+      </div>
+
+      <p className={`${heading} mt-5 px-3 text-sm font-bold text-gray-900`}>Stations</p>
+      <div className="mt-1 space-y-px">
+        {STATION_CATEGORIES.map((cat) => (
+          <label key={cat.key} className={row}>
+            <input
+              type="checkbox"
+              className="size-4 rounded border-gray-300"
+              style={{ accentColor: cat.color }}
+              checked={filters.stations[cat.key]}
+              onChange={(e) => setFilters((f) => ({ ...f, stations: { ...f.stations, [cat.key]: e.target.checked } }))}
+            />
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: cat.color }} aria-hidden />
+            <span className="flex-1">{cat.label}</span>
+            <span className="text-xs tabular-nums text-gray-500">{stationCounts[cat.key].toLocaleString()}</span>
+          </label>
+        ))}
+      </div>
+
+      <p className={`${heading} mt-5 px-3 text-sm font-bold text-gray-900`}>Incident status</p>
+      <ul className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 px-3">
+        {CATEGORY_LABELS.map((c) => (
+          <li key={c.label} className="flex items-center gap-2 text-sm text-gray-700">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: c.color }} aria-hidden />
+            {c.label}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function IncidentList({ incidents, selectedId, onPick }: { incidents: Incident[]; selectedId: number | null; onPick: (i: Incident) => void }) {
+  return (
+    <div className="pb-6">
+      <div className="flex items-baseline justify-between px-6 pb-2 pt-4">
+        <p className={`${heading} text-sm font-bold text-gray-900`}>Major incidents</p>
+        <p className="text-xs tabular-nums text-gray-500">{incidents.length.toLocaleString()}</p>
+      </div>
+      {incidents.length === 0 ? (
+        <p className="px-6 py-10 text-center text-sm text-gray-500">The RFS feed has no major incidents right now.</p>
+      ) : (
+        <ul>
+          {incidents.map((inc) => {
+            const location = incidentLocation(inc);
+            const active = selectedId === inc.id;
+            return (
+              <li key={inc.id}>
+                <button
+                  type="button"
+                  onClick={() => onPick(inc)}
+                  aria-pressed={active}
+                  className={`relative flex w-full items-start gap-3 px-6 py-2.5 text-left outline-none transition-colors hover:bg-gray-50 focus-visible:bg-gray-50 ${active ? "bg-red-50 hover:bg-red-50" : ""}`}
+                >
+                  {active && <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-[#F7241D]" />}
+                  <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: categoryColor(inc.category) }} aria-hidden />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-gray-900">{inc.title}</span>
+                    <span className="block truncate text-xs text-gray-500">
+                      {inc.category || "Uncategorised"}
+                      {location ? ` near ${location}` : ""}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function incidentLocation(inc: Incident): string | null {
+  try {
+    const d = typeof inc.data === "string" ? JSON.parse(inc.data) : inc.data;
+    return typeof d?.location === "string" && d.location.trim() ? d.location.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function IncidentCard({ incident, onClose }: { incident: Incident; onClose: () => void }) {
+  const location = incidentLocation(incident);
+  const updated = new Date(incident.created_at).toLocaleString("en-AU", {
+    timeZone: "Australia/Sydney",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  return (
+    <div className="absolute bottom-4 left-3 right-3 z-10 rounded-xl border border-gray-200 bg-white p-5 shadow-lg animate-in fade-in-0 slide-in-from-bottom-2 duration-200 motion-reduce:animate-none md:left-auto md:right-4 md:w-[380px]">
+      <div className="flex items-start justify-between gap-4">
+        <h2 className={`${heading} text-base font-bold leading-snug text-gray-900`}>{incident.title}</h2>
+        <button type="button" onClick={onClose} aria-label="Close" className="-mr-1 -mt-1 rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700">
+          <svg className="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: categoryColor(incident.category) }} aria-hidden />
+          {incident.category || "Uncategorised"}
+        </span>
+        {location && <span>{location}</span>}
+      </div>
+      <p className="mt-2 text-xs text-gray-500" suppressHydrationWarning>
+        Updated {updated}
+      </p>
     </div>
   );
 }

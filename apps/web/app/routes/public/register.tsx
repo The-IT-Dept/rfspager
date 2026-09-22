@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { BrandLockup } from "~/components/brand";
 import { Link, useNavigate } from "react-router";
 
-const heading = "font-[family-name:var(--font-heading)]";
+import { AuthShell, Field, Notice, SubmitButton, linkClass } from "~/components/auth/auth-shell";
 
 export function meta() {
-  return [{ title: "Create Account — RFSPager" }];
+  return [{ title: "Create an account — RFSPager" }];
 }
 
 export default function Register() {
@@ -13,14 +12,16 @@ export default function Register() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const mismatch = confirm.length > 0 && password !== confirm;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password !== passwordConfirmation) {
-      setError("Passwords don't match");
+    if (password !== confirm) {
+      setError("The two passwords don't match.");
       return;
     }
     setLoading(true);
@@ -29,93 +30,95 @@ export default function Register() {
       const res = await fetch("/api/v2/mobile/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password, password_confirmation: passwordConfirmation }),
+        body: JSON.stringify({ name, email, password, password_confirmation: confirm }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || "Registration failed");
+        setError(data.error || "We couldn't create that account.");
         return;
       }
-      if (typeof window !== "undefined") {
-        localStorage.setItem("rfspager_token", data.token);
-        window.dispatchEvent(new Event("rfspager:auth"));
-      }
+      localStorage.setItem("rfspager_token", data.token);
+      window.dispatchEvent(new Event("rfspager:auth"));
       navigate("/subscribe");
     } catch {
-      setError("Network error. Please try again.");
+      setError("Couldn't reach the server. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="flex-1 flex items-center justify-center py-16 px-4 bg-gray-50">
-      <div className="w-full max-w-[400px]">
-        <div className="text-center mb-8">
-          <Link to="/" className="inline-block mb-6">
-            <BrandLockup className="justify-center" markClassName="h-12 w-auto text-[#ff1003]" wordmarkClassName="h-10 w-auto" />
+    <AuthShell
+      title="Create an account"
+      intro="Free. It works in the app and on this site."
+      footer={
+        <>
+          Already have one?{" "}
+          <Link to="/login" className={linkClass}>
+            Sign in
           </Link>
-          <h1 className={`${heading} text-2xl font-extrabold text-gray-900 mb-2`}>Create your account</h1>
-          <p className="text-sm text-gray-500">Get started with RFSPager — it's free</p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 space-y-4">
-          {error && (
-            <div className="bg-red-50 text-red-700 text-sm px-4 py-3 rounded-xl font-medium">{error}</div>
-          )}
-
-          <div>
-            <label htmlFor="name" className="block text-sm font-semibold text-gray-700 mb-1.5">Name</label>
-            <input
-              id="name" type="text" value={name} onChange={(e) => setName(e.target.value)}
-              required autoComplete="name"
-              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#F7241D]/20 focus:border-[#F7241D] outline-none transition-all"
-              placeholder="Your name"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="email" className="block text-sm font-semibold text-gray-700 mb-1.5">Email</label>
-            <input
-              id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-              required autoComplete="email"
-              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#F7241D]/20 focus:border-[#F7241D] outline-none transition-all"
-              placeholder="you@example.com"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="password" className="block text-sm font-semibold text-gray-700 mb-1.5">Password</label>
-            <input
-              id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-              required autoComplete="new-password" minLength={8}
-              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#F7241D]/20 focus:border-[#F7241D] outline-none transition-all"
-              placeholder="Min. 8 characters"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="confirm" className="block text-sm font-semibold text-gray-700 mb-1.5">Confirm Password</label>
-            <input
-              id="confirm" type="password" value={passwordConfirmation} onChange={(e) => setPasswordConfirmation(e.target.value)}
-              required autoComplete="new-password"
-              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#F7241D]/20 focus:border-[#F7241D] outline-none transition-all"
-              placeholder="Confirm your password"
-            />
-          </div>
-
-          <button
-            type="submit" disabled={loading}
-            className="w-full bg-[#F7241D] text-white font-bold py-3 rounded-xl hover:bg-[#d91f19] transition-all shadow-sm hover:shadow-md disabled:opacity-50 mt-2"
-          >
-            {loading ? "Creating account..." : "Create Account"}
-          </button>
-        </form>
-
-        <p className="text-sm text-center text-gray-400 mt-6">
-          Already have an account? <Link to="/login" className="text-[#F7241D] font-semibold hover:underline">Sign in</Link>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {error && <Notice tone="error">{error}</Notice>}
+        <Field
+          id="name"
+          label="Name"
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+          autoComplete="name"
+          hint="Shown to other members when you mark yourself responding."
+        />
+        <Field
+          id="email"
+          label="Email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+          autoComplete="email"
+          placeholder="you@example.com"
+        />
+        <Field
+          id="password"
+          label="Password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+          minLength={8}
+          autoComplete="new-password"
+          hint="At least 8 characters."
+        />
+        <Field
+          id="confirm"
+          label="Confirm password"
+          type="password"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          required
+          autoComplete="new-password"
+          aria-invalid={mismatch || undefined}
+          hint={mismatch ? "These don't match yet." : undefined}
+        />
+        <SubmitButton busy={loading} busyLabel="Creating account…">
+          Create account
+        </SubmitButton>
+        <p className="text-center text-xs leading-relaxed text-gray-500">
+          By continuing you agree to the{" "}
+          <Link to="/terms-of-service" className="underline hover:text-gray-700">
+            terms of service
+          </Link>{" "}
+          and{" "}
+          <Link to="/privacy-policy" className="underline hover:text-gray-700">
+            privacy policy
+          </Link>
+          .
         </p>
-      </div>
-    </div>
+      </form>
+    </AuthShell>
   );
 }
