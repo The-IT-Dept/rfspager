@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/the-it-dept/rfspager/internal/install"
 	"github.com/the-it-dept/rfspager/internal/notify"
 )
 
@@ -239,6 +240,11 @@ func (h *Handlers) GetSystem(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
+	}
+	// Rendered server-side from the same helper the mobile app uses, so support
+	// and the owner are always reading the identical command.
+	if key, ok := row["api_key"].(string); ok && key != "" {
+		row["install_command"] = install.CommandFor(r, key)
 	}
 	writeJSON(w, http.StatusOK, row)
 }

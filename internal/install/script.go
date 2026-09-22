@@ -26,12 +26,24 @@ func (h *Handlers) Script(w http.ResponseWriter, r *http.Request) {
 	_ = scriptTmpl.Execute(w, map[string]string{"BaseURL": h.publicBase(r)})
 }
 
-// publicBase prefers the configured origin and otherwise reconstructs the one
+// ConfiguredBaseURL is set once at startup from PUBLIC_BASE_URL. It lets code
+// outside this package (the mobile systems endpoint, which shows an owner their
+// install command) render the same origin without threading config through two
+// more constructors — the same pattern main already uses for recvhub.PodID.
+var ConfiguredBaseURL string
+
+// CommandFor renders the one-liner a system owner runs on their Pi. Kept here
+// so the command and the script that serves it cannot drift apart.
+func CommandFor(r *http.Request, token string) string {
+	return "curl -fsSL " + BaseURLFor(r, ConfiguredBaseURL) + "/api/install | sudo bash -s -- " + token
+}
+
+// BaseURLFor prefers the configured origin and otherwise reconstructs the one
 // the caller used, so the script points back at the host the operator typed
 // rather than at an internal address.
-func (h *Handlers) publicBase(r *http.Request) string {
-	if h.baseURL != "" {
-		return h.baseURL
+func BaseURLFor(r *http.Request, configured string) string {
+	if configured != "" {
+		return configured
 	}
 	scheme := "https"
 	if f := r.Header.Get("X-Forwarded-Proto"); f != "" {
@@ -44,4 +56,8 @@ func (h *Handlers) publicBase(r *http.Request) string {
 		host = f
 	}
 	return scheme + "://" + host
+}
+
+func (h *Handlers) publicBase(r *http.Request) string {
+	return BaseURLFor(r, h.baseURL)
 }

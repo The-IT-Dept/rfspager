@@ -23,6 +23,7 @@ interface SystemDetail {
   suburb?: string | null;
   request_notes?: string | null;
   api_key?: string | null;
+  install_command?: string | null;
   approved_at?: string | null;
   deleted_at?: string | null;
   created_at?: string;
@@ -235,6 +236,26 @@ export default function SystemDetailPage() {
           <Field label="Frequency">{freqDisplay}</Field>
           <Field label="Suburb">{system.suburb || "—"}</Field>
           <Field label="Ingress API Key"><CopyValue value={system.api_key} /></Field>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Install on a Pi</CardTitle></CardHeader>
+        <CardContent>
+          {system.install_command ? (
+            <>
+              <CopyValue value={system.install_command} />
+              <p className="mt-3 text-sm text-muted-foreground">
+                Run this on the receiver over SSH. It installs the rtl-sdr dependencies, the binary and the
+                systemd unit, then waits until the receiver has reached this server. Re-running it is how you
+                upgrade.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No API key yet — approve the system to generate one.
+            </p>
+          )}
         </CardContent>
       </Card>
 

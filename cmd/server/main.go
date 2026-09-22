@@ -169,6 +169,7 @@ func main() {
 	// Receiver-agent websocket hub. PodID identifies this process in the
 	// system_connections table so multi-pod takeovers Just Work.
 	recvhub.PodID = podID()
+	install.ConfiguredBaseURL = cfg.PublicBaseURL
 	hub, err := recvhub.New(database, listener)
 	if hub != nil {
 		// Watchdog uses the notifier to push owners on offline/online

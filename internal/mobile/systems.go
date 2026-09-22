@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jmoiron/sqlx"
+	"github.com/the-it-dept/rfspager/internal/install"
 )
 
 // SystemHandlers exposes the user-facing system endpoints for the mobile app.
@@ -19,29 +20,29 @@ func NewSystemHandlers(db *sqlx.DB) *SystemHandlers { return &SystemHandlers{db:
 // All sensitive fields stay private to this file and are only emitted to
 // the owning user.
 type systemRow struct {
-	ID             int64    `db:"id"`
-	UserID         int64    `db:"user_id"`
-	SystemID       string   `db:"system_id"`
-	Name           string   `db:"name"`
-	Suburb         *string  `db:"suburb"`
-	RequestNotes   *string  `db:"request_notes"`
-	Frequency      int      `db:"frequency"`
-	Lat            *float64 `db:"lat"`
-	Lng            *float64 `db:"lng"`
-	CreatedAt      *string  `db:"created_at"`
-	ApprovedAt     *string  `db:"approved_at"`
-	IsPending      bool     `db:"is_pending"`
-	LastMessageAt  *string  `db:"last_message_at"`
-	APIKey         *string  `db:"api_key"`
-	PodID          *string  `db:"receiver_pod_id"`
-	ConnectedAt    *string  `db:"receiver_connected_at"`
-	LastPingAt     *string  `db:"receiver_last_ping_at"`
-	Version        *string  `db:"receiver_version"`
-	OS             *string  `db:"receiver_os"`
-	Arch           *string  `db:"receiver_arch"`
-	Hostname       *string  `db:"receiver_hostname"`
-	Dongles        *string  `db:"receiver_dongles"`
-	Online         *bool    `db:"receiver_online"`
+	ID            int64    `db:"id"`
+	UserID        int64    `db:"user_id"`
+	SystemID      string   `db:"system_id"`
+	Name          string   `db:"name"`
+	Suburb        *string  `db:"suburb"`
+	RequestNotes  *string  `db:"request_notes"`
+	Frequency     int      `db:"frequency"`
+	Lat           *float64 `db:"lat"`
+	Lng           *float64 `db:"lng"`
+	CreatedAt     *string  `db:"created_at"`
+	ApprovedAt    *string  `db:"approved_at"`
+	IsPending     bool     `db:"is_pending"`
+	LastMessageAt *string  `db:"last_message_at"`
+	APIKey        *string  `db:"api_key"`
+	PodID         *string  `db:"receiver_pod_id"`
+	ConnectedAt   *string  `db:"receiver_connected_at"`
+	LastPingAt    *string  `db:"receiver_last_ping_at"`
+	Version       *string  `db:"receiver_version"`
+	OS            *string  `db:"receiver_os"`
+	Arch          *string  `db:"receiver_arch"`
+	Hostname      *string  `db:"receiver_hostname"`
+	Dongles       *string  `db:"receiver_dongles"`
+	Online        *bool    `db:"receiver_online"`
 }
 
 // GetSystem handles GET /api/v2/mobile/systems/{uuid}.
@@ -92,16 +93,16 @@ func (h *SystemHandlers) GetSystem(w http.ResponseWriter, r *http.Request) {
 
 	isOwner := row.UserID == user.ID
 	resp := map[string]any{
-		"id":              row.ID,
-		"system_id":       row.SystemID,
-		"name":            row.Name,
-		"suburb":          row.Suburb,
-		"frequency":       row.Frequency,
-		"lat":             row.Lat,
-		"lng":             row.Lng,
-		"is_owner":        isOwner,
-		"is_pending":      row.IsPending,
-		"online":          row.Online != nil && *row.Online,
+		"id":         row.ID,
+		"system_id":  row.SystemID,
+		"name":       row.Name,
+		"suburb":     row.Suburb,
+		"frequency":  row.Frequency,
+		"lat":        row.Lat,
+		"lng":        row.Lng,
+		"is_owner":   isOwner,
+		"is_pending": row.IsPending,
+		"online":     row.Online != nil && *row.Online,
 		// Connection metadata that's safe to expose to anyone watching: just
 		// the timestamps. Hardware identifiers stay owner-gated below.
 		"connected_at":    row.ConnectedAt,
@@ -119,7 +120,7 @@ func (h *SystemHandlers) GetSystem(w http.ResponseWriter, r *http.Request) {
 		resp["approved_at"] = row.ApprovedAt
 		resp["request_notes"] = row.RequestNotes
 		if row.APIKey != nil && *row.APIKey != "" {
-			resp["install_command"] = "curl -fsSL https://rfspager.app/install.sh | sudo bash -s -- --api-key=" + *row.APIKey
+			resp["install_command"] = install.CommandFor(r, *row.APIKey)
 		}
 		resp["receiver"] = map[string]any{
 			"pod_id":   row.PodID,
