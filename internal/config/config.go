@@ -65,6 +65,12 @@ type Config struct {
 	APNBundleID   string
 	APNPrivateKey string
 	APNProduction bool
+
+	// Receiver distribution. The repository is private, so the server holds a
+	// read-only GitHub token and trades a valid receiver API key for a binary.
+	GitHubToken   string
+	GitHubRepo    string
+	PublicBaseURL string
 }
 
 func Load() (*Config, error) {
@@ -104,6 +110,9 @@ func Load() (*Config, error) {
 		APNBundleID:              os.Getenv("APN_BUNDLE_ID"),
 		APNPrivateKey:            os.Getenv("APN_PRIVATE_KEY"),
 		APNProduction:            getEnv("APN_PRODUCTION", "true") == "true",
+		GitHubToken:              os.Getenv("GITHUB_TOKEN"),
+		GitHubRepo:               getEnv("GITHUB_REPO", "the-it-dept/rfspager"),
+		PublicBaseURL:            os.Getenv("PUBLIC_BASE_URL"),
 	}
 
 	if cfg.DatabaseURL == "" {

@@ -23,6 +23,7 @@ import (
 	"github.com/the-it-dept/rfspager/internal/handler"
 	"github.com/the-it-dept/rfspager/internal/iap"
 	"github.com/the-it-dept/rfspager/internal/importer"
+	"github.com/the-it-dept/rfspager/internal/install"
 	resetmail "github.com/the-it-dept/rfspager/internal/mail"
 	"github.com/the-it-dept/rfspager/internal/middleware"
 	"github.com/the-it-dept/rfspager/internal/mobile"
@@ -229,6 +230,12 @@ func main() {
 			r.Use(chimw.Timeout(30 * time.Second))
 
 			handler.RegisterIngress(r, msgHandler)
+
+			// Receiver bootstrap: the script is public, the binaries behind it
+			// require a receiver API key.
+			installHandlers := install.New(database, cfg.GitHubToken, cfg.GitHubRepo, cfg.PublicBaseURL)
+			r.Get("/install", installHandlers.Script)
+			r.Get("/binaries/receiver/{platform}", installHandlers.Binary)
 
 			// Admin API
 			r.Mount("/v1/admin", admin.Router(database.Conn(), cfg.JWTSecret, notifier))

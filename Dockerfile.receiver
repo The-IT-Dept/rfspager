@@ -36,6 +36,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
         -ldflags="-s -w -X github.com/the-it-dept/rfspager/internal/receiver/buildinfo.InjectedVersion=${VERSION}-${COMMIT}" \
         -o /out/receiver ./cmd/receiver
 
+# ─── binary export stage ────────────────────────────────────────────────────
+# `docker buildx build --target binary --output type=local` lifts the compiled
+# receiver straight out for release assets, reusing the same toolchain and
+# Debian 12 ABI the container ships, so a Pi gets a binary built exactly the way
+# the image was.
+FROM scratch AS binary
+COPY --from=build /out/receiver /receiver
+
 # ─── runtime stage ──────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 

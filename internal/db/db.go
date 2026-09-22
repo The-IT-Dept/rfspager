@@ -78,6 +78,16 @@ func (d *DB) GetSystemByAPIKey(ctx context.Context, apiKey string) (*models.Syst
 	return &s, nil
 }
 
+// SystemNameForAPIKey authorises a receiver by its API key and returns the
+// system's name for logging. Used by the install/binary proxy, which needs to
+// know a key is real but nothing else about the system.
+func (d *DB) SystemNameForAPIKey(ctx context.Context, apiKey string) (string, error) {
+	var name string
+	err := d.conn.GetContext(ctx, &name,
+		`SELECT name FROM systems WHERE api_key = $1 AND deleted_at IS NULL`, apiKey)
+	return name, err
+}
+
 // GetSystemByTokenID finds a system by its personal_access_tokens ID (for Sanctum auth).
 func (d *DB) GetSystemByTokenID(ctx context.Context, tokenID int64) (*models.System, error) {
 	var s models.System
