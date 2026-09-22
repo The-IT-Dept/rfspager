@@ -8,6 +8,14 @@ on:
   push:
     tags:
       - "v*"
+  # Tags pushed by release-please carry GITHUB_TOKEN, and GitHub will not
+  # start a workflow from an event raised by that token. Until a PAT is
+  # wired into release-please, this is how a release is shipped.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v5.1.0)"
+        required: true
 
 jobs:
   docker:
@@ -18,12 +26,15 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Extract version
         id: meta
         run: |
           # strip leading "receiver-v"
-          VERSION="${GITHUB_REF_NAME#v}"
+          REF="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${REF#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
@@ -75,11 +86,14 @@ jobs:
             asset: rfspager-receiver-linux-amd64
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Extract version
         id: meta
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          REF="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${REF#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
