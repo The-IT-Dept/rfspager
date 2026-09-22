@@ -58,6 +58,16 @@ func (b *SSEBroker) Handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, ": connected\n\n")
 	flusher.Flush()
 
+	// One ticker for the life of the connection. `time.After` inside the select
+	// allocates a fresh timer every time round the loop and leaves the previous
+	// one pending until it fires, so a connection receiving messages accumulates
+	// live 30s timers it will never read. At this feed's volume that is
+	// invisible, but it scales with connections × message rate rather than with
+	// connections, which is the wrong shape. internal/mobile/sse.go already does
+	// it this way.
+	keepalive := time.NewTicker(30 * time.Second)
+	defer keepalive.Stop()
+
 	for {
 		select {
 		case msg, ok := <-ch:
@@ -68,7 +78,7 @@ func (b *SSEBroker) Handler(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
-		case <-time.After(30 * time.Second):
+		case <-keepalive.C:
 			fmt.Fprintf(w, ": keepalive\n\n")
 			flusher.Flush()
 		}
