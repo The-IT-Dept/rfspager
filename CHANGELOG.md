@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.2.0](https://github.com/The-IT-Dept/rfspager/compare/v5.1.0...v5.2.0) (2026-09-22)
+
+
+### Features
+
+* **receiver:** fan out to several backends, and restore legacy backfeed ([0bca195](https://github.com/The-IT-Dept/rfspager/commit/0bca195bfba35fc2b31d9a6e78da0fc6366a10a1))
+
+
+### Bug Fixes
+
+* **ci:** attach release assets to the tag, not the dispatch ref ([60cd8f0](https://github.com/The-IT-Dept/rfspager/commit/60cd8f0d1afb0175fc167b3cd02af5f22ae60a1a))
+* **ci:** upload release assets with gh instead of the release action ([76ae6f7](https://github.com/The-IT-Dept/rfspager/commit/76ae6f7a1d19d00a33a499c49ecda57f4eceb734))
+
 ## [5.1.0](https://github.com/The-IT-Dept/rfspager/compare/v5.0.0...v5.1.0) (2026-09-22)
 
 
