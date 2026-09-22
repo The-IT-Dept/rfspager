@@ -41,14 +41,6 @@ type PagePayload struct {
 	BitRate  int    `json:"baud"`
 }
 
-// SpectrumPayload is one waterfall slice: power in dB for each output bin,
-// ordered low-frequency-first across (centre_hz ± sample_rate/2).
-type SpectrumPayload struct {
-	CentreHz   uint32    `json:"centre_hz"`
-	SampleRate uint32    `json:"sample_rate"`
-	Bins       []float32 `json:"bins"`
-}
-
 // LogPayload is a single log line the receiver wants persisted + fanned out
 // to subscribed clients (owner + admin). The receiver assigns `ts`; the hub
 // records `received_at` itself.

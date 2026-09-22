@@ -1,17 +1,13 @@
 package admin
 
 import (
-	"net/http"
-
 	"github.com/go-chi/chi/v5"
 	"github.com/jmoiron/sqlx"
 	"github.com/the-it-dept/rfspager/internal/notify"
 )
 
-// Router creates the admin API router mounted at /api/v1/admin. The optional
-// spectrumSSE handler is mounted under /systems/{id}/spectrum if provided —
-// used for the diagnostic waterfall view on the system detail page.
-func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, spectrumSSE http.HandlerFunc) chi.Router {
+// Router creates the admin API router mounted at /api/v1/admin.
+func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier) chi.Router {
 	store := NewStore(db)
 	auth := NewAuthHandler(store, jwtSecret)
 	h := NewHandlers(store, notifier)
@@ -20,14 +16,6 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, spectrumSS
 
 	// Public auth routes
 	r.Post("/auth/login", auth.Login)
-
-	// Protected routes
-	r.Group(func(r chi.Router) {
-		r.Use(auth.JWTAuthHeaderOrQuery)
-		if spectrumSSE != nil {
-			r.Get("/systems/{id}/spectrum", spectrumSSE)
-		}
-	})
 
 	// Protected routes (header-only — most admin API endpoints)
 	r.Group(func(r chi.Router) {

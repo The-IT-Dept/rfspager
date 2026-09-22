@@ -1,17 +1,14 @@
 import React, { FC, useState } from "react"
 import { Ionicons } from "@expo/vector-icons"
-import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect"
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   Pressable,
   ScrollView,
   Share,
   StyleSheet,
   Text,
   View,
-  useWindowDimensions,
 } from "react-native"
 import * as Clipboard from "expo-clipboard"
 import { AppIcon } from "../../components/app-icon/app-icon"
@@ -19,7 +16,6 @@ import { Stack } from "expo-router"
 import moment from "moment"
 
 import { useSystem, useSystemEvents, useSystemRecentLogs } from "../../hooks"
-import { SpectrumWaterfall } from "../../components/spectrum-waterfall"
 import { AppTheme, useAppTheme } from "../../theme"
 
 export type SystemDetailScreenProps = {
@@ -32,7 +28,6 @@ export const SystemDetailScreen: FC<SystemDetailScreenProps> = function SystemDe
   const theme = useAppTheme()
   const styles = makeStyles(theme)
   const { data, isLoading, error } = useSystem(uuid)
-  const [fullscreen, setFullscreen] = useState(false)
 
   if (isLoading) {
     return (
@@ -84,31 +79,6 @@ export const SystemDetailScreen: FC<SystemDetailScreenProps> = function SystemDe
         ) : null}
         {data.suburb ? <Text style={styles.suburbText}>{data.suburb}</Text> : null}
       </View>
-
-      <Section
-        styles={styles}
-        title="Spectrum"
-        right={
-          <Pressable
-            onPress={() => setFullscreen(true)}
-            hitSlop={8}
-            style={styles.headerAction}
-          >
-            <AppIcon sf="arrow.up.left.and.arrow.down.right" ion="expand-outline" size={16} color={theme.colors.interactive} />
-            <Text style={styles.headerActionText}>Fullscreen</Text>
-          </Pressable>
-        }
-      >
-        <View style={styles.spectrumBody}>
-          <SpectrumWaterfall systemUuid={data.system_id} />
-        </View>
-      </Section>
-
-      <SpectrumFullscreen
-        visible={fullscreen}
-        onClose={() => setFullscreen(false)}
-        systemUuid={data.system_id}
-      />
 
       <Section styles={styles} title="Connection">
         <Field styles={styles} label="Connected" value={fmtTime(data.connected_at)} />
@@ -443,88 +413,6 @@ const Field: FC<{
   </View>
 )
 
-function SpectrumFullscreen({
-  visible,
-  onClose,
-  systemUuid,
-}: {
-  visible: boolean
-  onClose: () => void
-  systemUuid: string
-}) {
-  const { width: w, height: h } = useWindowDimensions()
-  // Render at "landscape" dims (swap w/h) then rotate the wrapper 90deg
-  // so it visually fills the portrait screen sideways.
-  const landWidth = h
-  const landHeight = w
-  return (
-    <Modal visible={visible} animationType="fade" presentationStyle="overFullScreen" transparent>
-      <View style={{ flex: 1, backgroundColor: "#000" }}>
-        <View
-          style={{
-            position: "absolute",
-            left: (w - landWidth) / 2,
-            top: (h - landHeight) / 2,
-            width: landWidth,
-            height: landHeight,
-            transform: [{ rotate: "90deg" }],
-            justifyContent: "center",
-            paddingHorizontal: 16,
-          }}
-        >
-          <SpectrumWaterfall
-            systemUuid={systemUuid}
-            cols={128}
-            rows={Math.max(48, Math.min(80, Math.floor((landHeight - 64) / 8)))}
-            height={landHeight - 64}
-            hideFooter
-          />
-        </View>
-        <Pressable
-          onPress={onClose}
-          style={{ position: "absolute", top: 50, right: 20 }}
-        >
-          {/* Floating over live spectrum content, so this is a real glass
-              case rather than a flat translucent fill: the system effect
-              refracts and adapts to whatever is moving underneath, which a
-              fixed rgba() cannot do. Falls back to the previous fill on
-              devices without Liquid Glass. */}
-          {isLiquidGlassAvailable() ? (
-            <GlassView
-              glassEffectStyle="clear"
-              isInteractive
-              style={{ padding: 10, borderRadius: 999 }}
-            >
-              <AppIcon sf="xmark" ion="close" size={22} color="#fff" />
-            </GlassView>
-          ) : (
-            <View
-              style={{
-                padding: 10,
-                borderRadius: 999,
-                backgroundColor: "rgba(255,255,255,0.15)",
-              }}
-            >
-              <AppIcon sf="xmark" ion="close" size={22} color="#fff" />
-            </View>
-          )}
-        </Pressable>
-        <Text
-          style={{
-            position: "absolute",
-            bottom: 30,
-            alignSelf: "center",
-            color: "#888",
-            fontSize: 12,
-          }}
-        >
-          Rotate your phone for the proper view · tap × to close
-        </Text>
-      </View>
-    </Modal>
-  )
-}
-
 function fmtTime(s?: string | null): string {
   if (!s) return "—"
   return moment(s).fromNow()
@@ -638,12 +526,6 @@ const makeStyles = (theme: AppTheme) =>
       textAlign: "right",
     },
     mono: { fontFamily: "Menlo" },
-
-    // Spectrum body — the waterfall draws its own background so the section
-    // only needs vertical breathing room.
-    spectrumBody: {
-      paddingVertical: 8,
-    },
 
     installRow: {
       paddingHorizontal: 16,

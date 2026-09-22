@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { redirect, useSearchParams } from "react-router";
 import type { Route } from "./+types/systems";
-import { SpectrumWaterfall } from "~/components/spectrum-waterfall";
 
 const API_BASE = process.env.API_URL || "http://localhost:8080";
 // The receiver agent pings every 30s. Two missed pings = stale. The
@@ -35,7 +34,7 @@ export function meta() {
     {
       name: "description",
       content:
-        "Live status of the SDR receivers feeding RFSPager. Pick a receiver to watch its real-time RF spectrum.",
+        "Live status of the SDR receivers feeding RFSPager. Pick a receiver to see its coverage and uptime.",
     },
   ];
 }
@@ -244,28 +243,6 @@ function SystemDetail({ system }: { system: System }) {
         </div>
       </div>
 
-      {/* Spectrum */}
-      <div className="rounded-2xl bg-[#0a0a0c] ring-1 ring-white/5 overflow-hidden shadow-xl mb-6">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-black/40">
-          <div className="flex items-center gap-2 text-[11px] font-mono text-white/60">
-            <span className="text-white/40">RF spectrum</span>
-            <span className="text-white/20">·</span>
-            <span className={online ? "text-emerald-400" : "text-white/40"}>
-              {online ? "live" : "no signal"}
-            </span>
-          </div>
-          <span className="text-[10px] text-white/30 font-mono uppercase tracking-wider">
-            real-time SDR
-          </span>
-        </div>
-        <div className="p-4">
-          <SpectrumWaterfall
-            url={`/api/public/systems/${system.uuid}/spectrum`}
-            height={360}
-          />
-        </div>
-      </div>
-
       {/* Connection info */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
         <InfoCard
@@ -290,11 +267,10 @@ function SystemDetail({ system }: { system: System }) {
       <div className="rounded-xl bg-white border border-gray-100 px-5 py-4 text-sm text-gray-600 leading-relaxed">
         <p className="font-semibold text-gray-900 mb-1">What you're looking at</p>
         <p>
-          This is a live RF spectrum from one of our software-defined-radio
-          receivers tuned to the NSW Public Safety Network. Bright vertical
-          streaks are radio transmissions — pages, voice channels, control
-          bursts. Our decoder pulls the POCSAG pager messages out of this raw
-          signal and pushes them to the feed.
+          This receiver is a software-defined radio tuned to the NSW Public
+          Safety Network. Our decoder pulls the POCSAG pager messages out of the
+          raw signal and pushes them straight to the feed — no third-party data,
+          no reseller in the middle.
         </p>
       </div>
     </div>

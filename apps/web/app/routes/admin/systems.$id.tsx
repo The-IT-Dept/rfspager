@@ -12,7 +12,6 @@ import {
   TableRow,
 } from "~/components/ui/table";
 import { Pencil, ArrowLeft, Copy, Check } from "lucide-react";
-import { SpectrumWaterfall } from "~/components/spectrum-waterfall";
 import { api } from "~/lib/api";
 
 interface SystemDetail {
@@ -218,13 +217,6 @@ export default function SystemDetailPage() {
               </Table>
             </div>
           )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>Spectrum</CardTitle></CardHeader>
-        <CardContent>
-          <SpectrumWaterfall systemId={system.id} />
         </CardContent>
       </Card>
 

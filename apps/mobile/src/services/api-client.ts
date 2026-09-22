@@ -14,8 +14,8 @@ function getBaseUrl(): string {
   return DEFAULT_BASE
 }
 
-/** Server origin (https://…). Exported so the spectrum WS client can build
- *  ws(s):// URLs against the same backend. */
+/** Server origin (https://…). Exported so callers outside this module can
+ *  build URLs against the same backend. */
 export function apiBaseUrl(): string {
   return getBaseUrl()
 }

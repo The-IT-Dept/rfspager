@@ -30,12 +30,8 @@ import (
 	"github.com/the-it-dept/rfspager/internal/receiver/config"
 	"github.com/the-it-dept/rfspager/internal/receiver/dsp"
 	"github.com/the-it-dept/rfspager/internal/receiver/sdr"
-	"github.com/the-it-dept/rfspager/internal/receiver/spectrum"
 	"github.com/the-it-dept/rfspager/internal/receiver/wsclient"
 )
-
-// spectrumInterval throttles waterfall frames pushed to the server.
-const spectrumInterval = 200 * time.Millisecond
 
 // dongleSilenceTimeout: if the dongle stops delivering IQ buffers for this
 // long we conclude it's been unplugged (or died) and tear down to retry.
@@ -165,7 +161,7 @@ func main() {
 			backoff = bumpBackoff(backoff, maxBackoff)
 			continue
 		}
-		err := runDongle(ctx, cfg, centre, channels, sender)
+		err := runDongle(ctx, cfg, centre, channels)
 		if err == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil {
 			return
 		}
@@ -179,10 +175,7 @@ func main() {
 // each Channel until the dongle stops delivering samples or ctx is cancelled.
 // Returns nil only on a clean shutdown via ctx; otherwise an error describing
 // why the SDR loop ended.
-//
-// Spectrum frames share the authenticated WebSocket transport.
-func runDongle(ctx context.Context, cfg *config.Config, centre uint32, channels []*receiver.Channel, sender receiver.PageSender) error {
-	ws, _ := sender.(*wsclient.Client) // fake PageSenders may omit spectrum in tests
+func runDongle(ctx context.Context, cfg *config.Config, centre uint32, channels []*receiver.Channel) error {
 	dongleIdx, err := resolveDongleIndex(cfg)
 	if err != nil {
 		return err
@@ -237,11 +230,10 @@ func runDongle(ctx context.Context, cfg *config.Config, centre uint32, channels 
 	}()
 
 	var (
-		work           []complex128
-		nextSpectrumAt = time.Now()
-		gaps           int       // stream gaps since the last gap log line
-		gapsDropped    int       // buffers lost across those gaps
-		nextGapLogAt   time.Time // rate-limit gap logging to one line per 10s
+		work         []complex128
+		gaps         int       // stream gaps since the last gap log line
+		gapsDropped  int       // buffers lost across those gaps
+		nextGapLogAt time.Time // rate-limit gap logging to one line per 10s
 	)
 	for {
 		select {
@@ -278,17 +270,6 @@ func runDongle(ctx context.Context, cfg *config.Config, centre uint32, channels 
 			sdr.Recycle(buf)
 			for _, ch := range channels {
 				ch.Process(work)
-			}
-			// Compute and send a spectrum slice at most once per
-			// spectrumInterval. Disabled via RECEIVER_DISABLE_SPECTRUM=1 for
-			// debugging USB stability on marginal hardware.
-			if ws != nil && !cfg.DisableSpectrum {
-				if now := time.Now(); now.After(nextSpectrumAt) && len(work) >= spectrum.FFTSize {
-					if bins := spectrum.Compute(work); bins != nil {
-						ws.SendSpectrum(centre, cfg.SampleRate, bins)
-					}
-					nextSpectrumAt = now.Add(spectrumInterval)
-				}
 			}
 		}
 	}

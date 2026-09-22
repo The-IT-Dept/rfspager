@@ -222,11 +222,6 @@ func main() {
 			r.Get("/receiver/ws", recvhub.Handler(database, hub, func(ctx context.Context, sys *models.System, p recvhub.PagePayload) (string, error) {
 				return msgHandler.IngestPage(ctx, sys, p.Address, p.Message, time.Unix(p.Datetime, 0))
 			}))
-			r.With(admin.NewJWTAuthMiddleware(database.Conn(), cfg.JWTSecret)).Get("/v1/admin/systems/{id}/spectrum", hub.SpectrumSSE)
-			// Mobile spectrum stream: JWT-auth'd WS. Lives in the streaming
-			// group so it's outside chi.Timeout — RN WebSocket can supply
-			// the Authorization header directly.
-			r.With(mobile.JWTUserAuth(database.Conn(), cfg.JWTSecret)).Get("/v2/mobile/systems/{uuid}/spectrum", mobile.SpectrumWS(database.Conn(), hub))
 		})
 
 		// --- Everything else with a 30s per-request timeout ---
@@ -236,7 +231,7 @@ func main() {
 			handler.RegisterIngress(r, msgHandler)
 
 			// Admin API
-			r.Mount("/v1/admin", admin.Router(database.Conn(), cfg.JWTSecret, notifier, nil))
+			r.Mount("/v1/admin", admin.Router(database.Conn(), cfg.JWTSecret, notifier))
 
 			// Mobile API
 			r.Mount("/v2/mobile", mobile.Router(database.Conn(), cfg.JWTSecret, cfg.AppleBundleID, mobileSSE, iapHandler, hub, authOptions))
@@ -254,7 +249,6 @@ func main() {
 				r.Get("/capcodes", publicHandlers.ListCapcodes)
 				r.Get("/capcodes/unknown", publicHandlers.UnknownCapcodes)
 				r.Get("/capcodes/messages", publicHandlers.CapcodeMessages)
-				r.Get("/systems/{uuid}/spectrum", public.SpectrumSSE(database.Conn(), hub))
 				r.Get("/systems/{uuid}/uptime", publicHandlers.SystemUptime)
 				r.Get("/events", publicSSE.Handler)
 			})

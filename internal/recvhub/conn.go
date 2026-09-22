@@ -249,13 +249,10 @@ func (c *Conn) handleFrame(ctx context.Context, database systemKeyLookup, f Fram
 		c.sendAck(f.ID, status, "")
 		_ = database // reserved for future direct DB use
 	case "spectrum":
-		// Decode + republish via the broker, which also appends to the
-		// ring buffer + persists snapshots.
-		var sp SpectrumPayload
-		if err := json.Unmarshal(f.Data, &sp); err != nil {
-			return
-		}
-		c.hub.Spectrum.Publish(c.SystemID, sp.CentreHz, sp.SampleRate, sp.Bins)
+		// The waterfall was removed. Receivers built before that still send
+		// these frames, so swallow them here rather than let them fall through
+		// to the unknown-frame warning below and spam the log once per frame.
+		// Safe to delete once every receiver in the field has been updated.
 	case "log":
 		// Persist + fan out to live subscribers (owner / admin).
 		var lp LogPayload

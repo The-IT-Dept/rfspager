@@ -150,7 +150,7 @@ export function PagerMessageScreen() {
         </View>
 
         {/* Receiver — which SDR station picked this page off the air.
-            Tappable to jump to the system detail (live spectrum etc).
+            Tappable to jump to the system detail.
             Falls back gracefully if upstream didn't link a system. */}
         {messageAdapted.system_name && (
           <View style={styles.sectionContainer}>

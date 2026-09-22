@@ -33,8 +33,7 @@ type Hub struct {
 	listener *db.Listener
 	notifier *notify.Notifier
 
-	Spectrum *SpectrumBroker
-	Logs     *LogBroker
+	Logs *LogBroker
 
 	mu    sync.RWMutex
 	conns map[int64]*Conn // system_id → live conn on this pod
@@ -48,7 +47,6 @@ func New(database *db.DB, listener *db.Listener) (*Hub, error) {
 	return &Hub{
 		db:       database,
 		listener: listener,
-		Spectrum: NewSpectrumBroker(database),
 		Logs:     NewLogBroker(database.Conn()),
 		conns:    make(map[int64]*Conn),
 	}, nil
@@ -65,7 +63,6 @@ func (h *Hub) Start(ctx context.Context) error {
 	go h.runSweeper(ctx)
 	go h.runWatchdog(ctx)
 	go h.runLogRotation(ctx)
-	h.Spectrum.Start(ctx)
 	return nil
 }
 

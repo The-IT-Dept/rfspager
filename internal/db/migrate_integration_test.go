@@ -56,6 +56,17 @@ func requireTable(t *testing.T, d *DB, table string) {
 	}
 }
 
+func requireNoTable(t *testing.T, d *DB, table string) {
+	t.Helper()
+	var exists bool
+	if err := d.conn.GetContext(context.Background(), &exists, `SELECT to_regclass($1) IS NOT NULL`, "public."+table); err != nil {
+		t.Fatalf("check table %s: %v", table, err)
+	}
+	if exists {
+		t.Errorf("table %s still exists", table)
+	}
+}
+
 // createRepresentativeLegacySchema models the Laravel tables that the first
 // Go migrations alter. It is intentionally independent from the Go baseline:
 // the upgrade test must prove that 000 leaves pre-existing rows and tables in
@@ -122,12 +133,16 @@ func TestMigrateBootstrapsEmptyPostGISDatabase(t *testing.T) {
 		"subscriptions", "filters", "alertzones", "responding", "photos",
 		"majorincidents", "hazardreductions", "social_providers", "personal_access_tokens",
 		"schema_migrations", "admin_users", "agencies", "capcode_suggestions",
-		"iap_transactions", "system_connections", "system_spectrum_snapshot",
+		"iap_transactions", "system_connections",
 		"iap_subscription_ownership",
 		"emergency_stations", "system_events", "system_logs",
 	} {
 		requireTable(t, d, table)
 	}
+
+	// 015 created the waterfall snapshot table; 025 drops it again now that
+	// the spectrum feature is gone. Assert the drop actually applied.
+	requireNoTable(t, d, "system_spectrum_snapshot")
 
 	var hasPostGIS bool
 	if err := d.conn.GetContext(context.Background(), &hasPostGIS, `SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis')`); err != nil {

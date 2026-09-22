@@ -39,11 +39,6 @@ type Config struct {
 	// set. Examples: "RFS00005", "00000001".
 	DongleSerial string
 
-	// DisableSpectrum skips the per-buffer FFT, JSON serialize and WS
-	// spectrum frame. Useful for isolating whether the waterfall load is
-	// contributing to USB stability issues on marginal hardware.
-	DisableSpectrum bool
-
 	// PostAll bypasses the receiver-side shouldPost content filter so
 	// every decoded page (including beacons / numeric / noise-shaped
 	// alpha) gets sent upstream. Useful for end-to-end pipeline tests
@@ -54,15 +49,14 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		ServerURL:       getEnv("RECEIVER_SERVER_URL", "http://localhost:8080"),
-		APIKey:          strings.Trim(strings.TrimSpace(os.Getenv("RECEIVER_API_KEY")), `"'`),
-		SampleRate:      uint32(getInt("RECEIVER_SAMPLE_RATE", 1_920_000)),
-		TunerGain:       getInt("RECEIVER_TUNER_GAIN", 0),
-		CorrectionPPM:   getInt("RECEIVER_PPM", 0),
-		DongleIndex:     getInt("RECEIVER_DONGLE_INDEX", -1),
-		DongleSerial:    strings.TrimSpace(os.Getenv("RECEIVER_DONGLE_SERIAL")),
-		DisableSpectrum: os.Getenv("RECEIVER_DISABLE_SPECTRUM") == "1",
-		PostAll:         os.Getenv("RECEIVER_POST_ALL") == "1",
+		ServerURL:     getEnv("RECEIVER_SERVER_URL", "http://localhost:8080"),
+		APIKey:        strings.Trim(strings.TrimSpace(os.Getenv("RECEIVER_API_KEY")), `"'`),
+		SampleRate:    uint32(getInt("RECEIVER_SAMPLE_RATE", 1_920_000)),
+		TunerGain:     getInt("RECEIVER_TUNER_GAIN", 0),
+		CorrectionPPM: getInt("RECEIVER_PPM", 0),
+		DongleIndex:   getInt("RECEIVER_DONGLE_INDEX", -1),
+		DongleSerial:  strings.TrimSpace(os.Getenv("RECEIVER_DONGLE_SERIAL")),
+		PostAll:       os.Getenv("RECEIVER_POST_ALL") == "1",
 	}
 	if os.Getenv("RECEIVER_LEGACY_URL") != "" || os.Getenv("RECEIVER_LEGACY_SYSTEM_UUID") != "" {
 		return nil, fmt.Errorf("legacy ingress has been removed; configure RECEIVER_SERVER_URL and a newly provisioned RECEIVER_API_KEY")

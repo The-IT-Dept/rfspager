@@ -283,36 +283,6 @@ func (d *DB) GetSystemBySanctumToken(ctx context.Context, tokenID string, hashed
 	return &s, nil
 }
 
-// --- system_spectrum_snapshot ---
-
-// UpsertSpectrumSnapshot persists the most-recent ring buffer of spectrum
-// frames for one system. Called periodically by the receiver hub; not on
-// every frame (5 fps × N systems would be a wasteful write pattern).
-func (d *DB) UpsertSpectrumSnapshot(ctx context.Context, systemID int64, payload []byte) error {
-	_, err := d.conn.ExecContext(ctx,
-		`INSERT INTO system_spectrum_snapshot (system_id, updated_at, payload)
-		 VALUES ($1, NOW(), $2)
-		 ON CONFLICT (system_id) DO UPDATE SET
-		    updated_at = EXCLUDED.updated_at,
-		    payload = EXCLUDED.payload`,
-		systemID, payload)
-	return err
-}
-
-// GetSpectrumSnapshot returns the most recent snapshot payload for a system,
-// or nil if none exists.
-func (d *DB) GetSpectrumSnapshot(ctx context.Context, systemID int64) ([]byte, time.Time, error) {
-	var payload []byte
-	var updatedAt time.Time
-	err := d.conn.QueryRowContext(ctx,
-		`SELECT payload, updated_at FROM system_spectrum_snapshot WHERE system_id = $1`,
-		systemID).Scan(&payload, &updatedAt)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	return payload, updatedAt, nil
-}
-
 // --- system_connections ---
 
 // SystemConnection is one row in system_connections, plus the joined system

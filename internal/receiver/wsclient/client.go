@@ -275,23 +275,6 @@ func (c *Client) SendPage(addr, msg string, when time.Time, fn, baud int) {
 	c.enqueue(Frame{Type: "page", ID: uuid.NewString(), Data: mustJSON(p)})
 }
 
-// SpectrumFrame matches the server's SpectrumPayload schema.
-type SpectrumFrame struct {
-	CentreHz   uint32    `json:"centre_hz"`
-	SampleRate uint32    `json:"sample_rate"`
-	Bins       []float32 `json:"bins"`
-}
-
-// SendSpectrum queues a waterfall slice for diagnostic display in the admin
-// portal. Best-effort: dropped silently if the network's slow.
-func (c *Client) SendSpectrum(centreHz, sampleRate uint32, bins []float32) {
-	c.enqueue(Frame{Type: "spectrum", Data: mustJSON(SpectrumFrame{
-		CentreHz:   centreHz,
-		SampleRate: sampleRate,
-		Bins:       bins,
-	})})
-}
-
 // LogFrame matches the server's LogPayload schema. The receiver assigns ts
 // (its own clock, unix milliseconds); the server records received_at itself.
 type LogFrame struct {
