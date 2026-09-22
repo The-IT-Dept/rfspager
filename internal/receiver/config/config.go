@@ -166,7 +166,12 @@ func Load() (*Config, error) {
 	// A single legacy backfeed can still be configured purely from the
 	// environment, which is how the Laravel-era receivers are set up. It stays
 	// until prod is cut over to the Go backend.
-	if legacyURL := strings.TrimSpace(os.Getenv("RECEIVER_LEGACY_URL")); legacyURL != "" {
+	//
+	// The file wins outright when present. Appending the environment's legacy
+	// target on top would double-post to a backend the file already lists —
+	// which is exactly the situation on a receiver being migrated from env-only
+	// legacy to a fan-out file.
+	if legacyURL := strings.TrimSpace(os.Getenv("RECEIVER_LEGACY_URL")); legacyURL != "" && len(cfg.Endpoints) == 0 {
 		uuid := strings.TrimSpace(os.Getenv("RECEIVER_LEGACY_SYSTEM_UUID"))
 		if uuid == "" {
 			return nil, fmt.Errorf("RECEIVER_LEGACY_URL is set but RECEIVER_LEGACY_SYSTEM_UUID is not")

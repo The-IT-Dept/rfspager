@@ -83,3 +83,22 @@ func TestLoadEndpointsUnsetMeansEnvMode(t *testing.T) {
 		t.Fatalf("want (nil, nil) for env mode, got (%v, %v)", eps, err)
 	}
 }
+
+// A receiver mid-migration has both an endpoints file and the old legacy
+// environment variables. The file must win: appending the env target would post
+// every page to prod twice.
+func TestEndpointsFileBeatsLegacyEnv(t *testing.T) {
+	writeEndpoints(t, `{"endpoints":[
+		{"name":"prod-legacy","mode":"legacy","url":"https://v3.rfspager.app","system_uuid":"8947d028-e391-4c8a-b99f-31034ebfa384"},
+		{"name":"dev","mode":"ws","url":"https://go.dev.example","api_key":"KEY"}
+	]}`)
+	t.Setenv("RECEIVER_LEGACY_URL", "https://v3.rfspager.app")
+	t.Setenv("RECEIVER_LEGACY_SYSTEM_UUID", "8947d028-e391-4c8a-b99f-31034ebfa384")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.Endpoints) != 2 {
+		t.Fatalf("got %d endpoints, want 2 — the env legacy target was appended: %+v", len(cfg.Endpoints), cfg.Endpoints)
+	}
+}
