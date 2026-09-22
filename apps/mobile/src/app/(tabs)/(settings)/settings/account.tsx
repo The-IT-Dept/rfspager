@@ -46,13 +46,13 @@ export default function AccountScreen() {
           theme={theme}
           label="Name"
           value={user?.name || "—"}
-          onPress={() => router.push("/(tabs)/(stack)/settings/edit-name" as any)}
+          onPress={() => router.push("/settings/edit-name")}
         />
         <EditableRow
           theme={theme}
           label="Email"
           value={user?.email || "—"}
-          onPress={() => router.push("/(tabs)/(stack)/settings/edit-email" as any)}
+          onPress={() => router.push("/settings/edit-email")}
           isLast
         />
       </View>
@@ -62,7 +62,7 @@ export default function AccountScreen() {
         <EditableRow
           theme={theme}
           label="Change Password"
-          onPress={() => router.push("/(tabs)/(stack)/settings/change-password" as any)}
+          onPress={() => router.push("/settings/change-password")}
           isLast
         />
       </View>
@@ -74,7 +74,7 @@ export default function AccountScreen() {
           label="Plan"
           value={productName}
           valueColor={validSubscription ? theme.colors.success : undefined}
-          onPress={() => router.push("/(tabs)/(stack)/settings/subscription" as any)}
+          onPress={() => router.push("/settings/subscription")}
           isLast
         />
       </View>
@@ -85,7 +85,7 @@ export default function AccountScreen() {
 
       <TouchableOpacity
         style={styles.actionButton}
-        onPress={() => router.push("/(tabs)/(stack)/settings/delete-account" as any)}
+        onPress={() => router.push("/settings/delete-account")}
       >
         <Text style={[styles.actionText, { color: theme.colors.error }]}>Delete Account</Text>
       </TouchableOpacity>

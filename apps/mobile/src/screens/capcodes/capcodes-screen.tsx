@@ -47,7 +47,7 @@ export const CapcodesScreen: FC = function CapcodesScreen() {
   const handleAgencyPress = useCallback(
     (item: (typeof groupedData)[0]) => {
       router.push(
-        `/(tabs)/settings/capcode-detail?agencyId=${item.agencyId}&agency=${encodeURIComponent(item.agency)}` as any,
+        `/settings/capcode-detail?agencyId=${item.agencyId}&agency=${encodeURIComponent(item.agency)}`,
       )
     },
     [router],
@@ -60,7 +60,7 @@ export const CapcodesScreen: FC = function CapcodesScreen() {
         ...(u.capcode_id ? { capcode_id: String(u.capcode_id) } : {}),
         ...(u.agency_name ? { agency: u.agency_name } : {}),
       })
-      router.push(`/(tabs)/capcodes/suggest?${qs.toString()}` as any)
+      router.push(`/capcodes/suggest?${qs.toString()}`)
     },
     [router],
   )

@@ -162,7 +162,7 @@ export function PagerMessageScreen() {
               disabled={!messageAdapted.system_uuid}
               onPress={() =>
                 messageAdapted.system_uuid &&
-                router.push(`/(tabs)/(stack)/system/${messageAdapted.system_uuid}` as any)
+                router.push(`/system/${messageAdapted.system_uuid}`)
               }
               style={styles.receiverRow}
             >

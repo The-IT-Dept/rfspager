@@ -56,7 +56,7 @@ export const SystemsScreen: FC = function SystemsScreen() {
             !isLast && styles.rowDivider,
             pressed && styles.rowPressed,
           ]}
-          onPress={() => router.push(`/(tabs)/(stack)/system/${item.uuid}` as any)}
+          onPress={() => router.push(`/system/${item.uuid}`)}
         >
           <View style={[styles.dot, { backgroundColor: statusColor }]} />
           <View style={styles.rowContent}>
@@ -112,7 +112,7 @@ export const SystemsScreen: FC = function SystemsScreen() {
         <View style={styles.headerSection}>
           <Pressable
             style={({ pressed }) => [styles.actionRow, pressed && styles.rowPressed]}
-            onPress={() => router.push("/(tabs)/(stack)/systems-create" as any)}
+            onPress={() => router.push("/systems-create")}
           >
             <AppIcon sf="plus.circle" ion="add-circle-outline" size={20} color={theme.colors.primary} />
             <Text style={styles.actionText}>Register interest to host a system</Text>
