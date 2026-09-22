@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -75,14 +76,19 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 
 // --- Messages ---
 
+// ListMessages serves the mobile pager feed.
+//
+// Pagination is a keyset cursor (?before_created_at= & ?before_id=), not an
+// offset. Two reasons. The feed prepends live messages over SSE, so an offset
+// shifts under the reader and silently duplicates or skips rows; and at 2.2M
+// rows a deep offset has to walk and discard everything above it, which is
+// wasted work nobody benefits from. A cursor is stable under inserts and costs
+// the same at any depth.
 func (h *Handlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 	user := GetUser(r.Context())
 	q := r.URL.Query()
-	page, _ := strconv.Atoi(q.Get("page"))
+
 	perPage, _ := strconv.Atoi(q.Get("per_page"))
-	if page < 1 {
-		page = 1
-	}
 	if perPage < 1 {
 		perPage = 25
 	}
@@ -90,65 +96,73 @@ func (h *Handlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 		perPage = 100
 	}
 
-	where := "m.deleted_at IS NULL"
 	args := []any{}
-	argIdx := 1
+	// add binds a value and returns its placeholder. Numbering follows the args
+	// slice itself, so a placeholder can never drift out of step with its value.
+	add := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
 
-	// Capcode filter
+	amRespondingPh := add(user.ID)
+	where := "m.deleted_at IS NULL"
+
 	if capcodeID := q.Get("capcode_id"); capcodeID != "" {
-		where += " AND m.capcode_id = $" + strconv.Itoa(argIdx)
-		args = append(args, capcodeID)
-		argIdx++
+		where += " AND m.capcode_id = " + add(capcodeID)
 	}
 
-	// Show only user's filtered capcodes
+	// Show only the capcodes this user filters on.
 	if q.Get("show_only_filtered") == "true" && user.SubscriptionValid {
-		where += " AND m.capcode_id IN (SELECT capcode_id FROM filters WHERE user_id = $" + strconv.Itoa(argIdx) + ")"
-		args = append(args, user.ID)
-		argIdx++
+		where += " AND m.capcode_id IN (SELECT capcode_id FROM filters WHERE user_id = " + add(user.ID) + ")"
 	}
 
-	// Show unknown (no capcode) messages — only paid users can opt in
+	// Unknown-capcode messages are a paid opt-in; the default feed hides them.
+	// Both predicates have a matching partial index (migration 026).
 	if q.Get("show_unknown") == "true" && user.SubscriptionValid {
-		// Show only unknown messages
 		where += " AND m.capcode_id IS NULL"
 	} else {
-		// Default: hide unknown messages
 		where += " AND m.capcode_id IS NOT NULL"
 	}
 
-	// Search
-	if search := q.Get("search"); search != "" {
-		where += " AND (m.message ILIKE $" + strconv.Itoa(argIdx) + " OR m.address ILIKE $" + strconv.Itoa(argIdx) + ")"
-		args = append(args, "%"+search+"%")
-		argIdx++
+	// Search runs against the generated `ts` tsvector (GIN indexed) for message
+	// text, plus a prefix match on address so capcode lookups still work. The
+	// previous `ILIKE '%term%'` could not use any index — a term with no matches
+	// walked the entire feed and took 3.7s. This is word- and stem-based rather
+	// than substring, and understands quoted phrases and negation.
+	if search := strings.TrimSpace(q.Get("search")); search != "" {
+		where += " AND (m.ts @@ websearch_to_tsquery('english', " + add(search) + ")" +
+			" OR m.address LIKE " + add(search+"%") + ")"
 	}
 
-	// Date filter
 	if after := q.Get("created_after"); after != "" {
-		where += " AND m.created_at >= $" + strconv.Itoa(argIdx)
-		args = append(args, after)
-		argIdx++
+		where += " AND m.created_at >= " + add(after)
 	}
 
-	// Fetch perPage+1 to detect if there's a next page (avoids expensive COUNT)
-	offset := (page - 1) * perPage
-	fetchLimit := perPage + 1
-	// Add user ID for responder check
-	args = append(args, user.ID)
-	userArgIdx := argIdx
-	argIdx++
+	// created_at is not unique, so id is the tiebreaker and the row comparison
+	// must match the ORDER BY exactly. A malformed cursor is ignored rather than
+	// rejected: the client just gets the first page back.
+	if bc, bi := q.Get("before_created_at"), q.Get("before_id"); bc != "" && bi != "" {
+		if ts, err := time.Parse(time.RFC3339Nano, bc); err == nil {
+			if id, err := strconv.ParseInt(bi, 10, 64); err == nil {
+				where += " AND (m.created_at, m.id) < (" + add(ts) + ", " + add(id) + ")"
+			}
+		}
+	}
+
+	// One extra row tells us whether another page exists without a COUNT.
+	limitPh := add(perPage + 1)
 
 	dataQuery := `SELECT m.id, m.system_id, m.capcode_id, m.address, m.message, m.lat, m.lng, m.created_at,
 		c.alias as capcode_alias, c.icon as capcode_icon, c.colour as capcode_colour,
 		a.agency as agency_name,
 		(SELECT COUNT(*) FROM responding r WHERE r.message_id = m.id) as responder_count,
-		EXISTS(SELECT 1 FROM responding r WHERE r.message_id = m.id AND r.user_id = $` + strconv.Itoa(userArgIdx) + `) as am_i_responding
+		EXISTS(SELECT 1 FROM responding r WHERE r.message_id = m.id AND r.user_id = ` + amRespondingPh + `) as am_i_responding
 		FROM messages m
 		LEFT JOIN capcodes c ON c.id = m.capcode_id
 		LEFT JOIN agencies a ON a.id = c.agency_id
-		WHERE ` + where + ` ORDER BY m.created_at DESC LIMIT $` + strconv.Itoa(argIdx) + ` OFFSET $` + strconv.Itoa(argIdx+1)
-	args = append(args, fetchLimit, offset)
+		WHERE ` + where + `
+		ORDER BY m.created_at DESC, m.id DESC
+		LIMIT ` + limitPh
 
 	rows, err := h.db.QueryxContext(r.Context(), dataQuery, args...)
 	if err != nil {
@@ -166,19 +180,13 @@ func (h *Handlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 		data = append(data, row)
 	}
 
-	// If we got perPage+1 results, there's a next page — trim to perPage
 	hasMore := len(data) > perPage
 	if hasMore {
 		data = data[:perPage]
 	}
-	totalPages := page
-	if hasMore {
-		totalPages = page + 1
-	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"data": data, "page": page, "per_page": perPage,
-		"total_pages": totalPages,
+		"data": data, "per_page": perPage, "has_more": hasMore,
 	})
 }
 

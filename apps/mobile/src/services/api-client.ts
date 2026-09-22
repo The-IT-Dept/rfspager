@@ -172,6 +172,18 @@ export interface PaginatedResponse<T> {
   total_pages: number
 }
 
+/**
+ * Keyset-paginated response. The feed prepends live messages over SSE, so an
+ * offset shifts under the reader and duplicates or skips rows; the next page is
+ * addressed by the last row you already hold instead. Derive the cursor from
+ * the final item's created_at + id.
+ */
+export interface CursorResponse<T> {
+  data: T[]
+  per_page: number
+  has_more: boolean
+}
+
 export interface AuthResponse {
   token: string
   user: User
@@ -234,7 +246,8 @@ export const user = {
 
 export const messages = {
   list: (params: {
-    page?: number
+    before_created_at?: string
+    before_id?: number
     per_page?: number
     show_only_filtered?: boolean
     show_unknown?: boolean
@@ -243,14 +256,18 @@ export const messages = {
     created_after?: string
   } = {}) => {
     const q = new URLSearchParams()
-    if (params.page) q.set("page", String(params.page))
+    // Both halves of the cursor or neither — the server ignores a partial one.
+    if (params.before_created_at && params.before_id != null) {
+      q.set("before_created_at", params.before_created_at)
+      q.set("before_id", String(params.before_id))
+    }
     if (params.per_page) q.set("per_page", String(params.per_page))
     if (params.show_only_filtered) q.set("show_only_filtered", "true")
     if (params.show_unknown) q.set("show_unknown", "true")
     if (params.capcode_id) q.set("capcode_id", String(params.capcode_id))
     if (params.search) q.set("search", params.search)
     if (params.created_after) q.set("created_after", params.created_after)
-    return get<PaginatedResponse<Message>>(`/messages?${q}`)
+    return get<CursorResponse<Message>>(`/messages?${q}`)
   },
 
   get: (id: number) => get<Message>(`/messages/${id}`),
