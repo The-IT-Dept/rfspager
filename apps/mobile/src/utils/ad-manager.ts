@@ -16,7 +16,12 @@ interface AdSession {
 
 export class AdManager {
   // Session tracking
-  private currentSession: AdSession
+  private currentSession: AdSession = {
+    date: new Date().toDateString(),
+    interstitialCount: 0,
+    lastInterstitialTime: 0,
+    sessionStartTime: Date.now(),
+  }
   private readonly STORAGE_KEY = "adManager_session"
   
   // Ad frequency limits

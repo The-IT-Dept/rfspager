@@ -4,28 +4,19 @@
   },
   "build": {
     "release": {
-      "node": "22.20.0",
-      "env": {
-        "EXPO_PUBLIC_API_URL": "https://v3.rfspager.app/graphql"
-      },
+      "node": "22.23.1",
       "channel": "production",
       "ios": {
         "autoIncrement": false
       }
     },
     "development": {
-      "node": "22.20.0",
-      "env": {
-        "EXPO_PUBLIC_API_URL": "https://go.dev.blah.au"
-      },
+      "node": "22.23.1",
       "developmentClient": true,
       "distribution": "internal"
     },
     "preview": {
-      "node": "22.20.0",
-      "env": {
-        "EXPO_PUBLIC_API_URL": "http://192.168.15.30:8080"
-      },
+      "node": "22.23.1",
       "ios": {
         "developmentClient": true,
         "simulator": true
@@ -37,11 +28,7 @@
       "android": {
         "track": "internal"
       },
-      "ios": {
-        "appleId": "nick@npratley.net",
-        "ascAppId": "1568913265",
-        "appleTeamId": "W62CSN3S5H"
-      }
+      "ios": {}
     }
   }
 }

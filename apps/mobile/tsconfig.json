@@ -12,6 +12,10 @@
     "noUnusedLocals": true,
     "sourceMap": true,
     "target": "esnext",
+    "types": [
+      "jest",
+      "node"
+    ],
     "lib": [
       "esnext",
       "dom"

@@ -45,7 +45,7 @@ const headlineCards: StatCard[] = [
   { label: "Active Subscriptions", key: "active_total", icon: UsersIcon, accent: "text-green-600" },
   { label: "MRR (est.)", key: "mrr_estimate_cents", icon: TrendingUp, accent: "text-green-600", format: "currency" },
   { label: "New (30d)", key: "new_subs_30d", icon: TrendingUp, accent: "text-blue-600", sub: "new_subs_7d" },
-  { label: "Cancellations (30d)", key: "cancellations_30d", icon: XCircle, accent: "text-orange-600" },
+  { label: "Cancellations (30d)", key: "cancellations_30d", icon: XCircle, accent: "text-orange-600" }, // gitleaks:allow — metric field name
   { label: "Refunds (30d)", key: "refunds_30d", icon: RefreshCcw, accent: "text-red-600" },
   { label: "Expiring in 7d", key: "expiring_soon", icon: CalendarClock, accent: "text-amber-600" },
 ];

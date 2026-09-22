@@ -4,8 +4,7 @@
     "name": "RFSPager",
     "slug": "RFSPager",
     "scheme": [
-      "rfspager",
-      "fb827789334584757"
+      "rfspager"
     ],
     "version": "4.1.0",
     "icon": "./assets/images/icon.png",
@@ -83,11 +82,6 @@
       },
       "package": "io.devlan.rfspager",
       "googleServicesFile": "./google-services.json",
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyCfkQrVivQWX7Yd9ew2R0X0q-Vq7WMYFyg"
-        }
-      },
       "intentFilters": [
         {
           "action": "VIEW",
@@ -117,29 +111,9 @@
               "RNFBCrashlytics",
               "RNFBMessaging"
             ],
-            "deploymentTarget": "16.4",
-            "newArchEnabled": false,
-            "appleTeamId": "W62CSN3S5H"
+            "deploymentTarget": "16.4"
           },
-          "android": {
-            "compileSdkVersion": 35,
-            "targetSdkVersion": 34,
-            "buildToolsVersion": "35.0.0",
-            "newArchEnabled": false
-          }
-        }
-      ],
-      [
-        "react-native-fbsdk-next",
-        {
-          "appID": "827789334584757",
-          "clientToken": "8f3fec964ad7a1859bf704364229a0f5",
-          "displayName": "RFSPager",
-          "scheme": "fb827789334584757",
-          "advertiserIDCollectionEnabled": true,
-          "autoLogAppEventsEnabled": true,
-          "isAutoInitEnabled": true,
-          "iosUserTrackingPermission": "This identifier will be used to deliver personalized ads to you."
+          "android": {}
         }
       ],
       "@react-native-firebase/app",
@@ -174,11 +148,7 @@
       ],
       "expo-status-bar"
     ],
-    "extra": {
-      "eas": {
-        "projectId": "8cfee94d-1a51-43f4-aaae-be693fb122a6"
-      }
-    },
+    "extra": {},
     "userInterfaceStyle": "automatic"
   }
 }

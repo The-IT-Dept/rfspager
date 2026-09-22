@@ -20,8 +20,11 @@ export const AuthLoginAnonymousScreen: FC = () => {
 
     const login = async () => {
       setLoading(true)
-      const email = getInstallationId() + "@anonymous.rfspager.app"
-      const password = getInstallationId() + "@anonymous.rfspager.app"
+      // Anonymous credentials remain device-local, while signed-in accounts
+      // use their own installation IDs for push registration.
+      const anonymousId = await getInstallationId("anonymous")
+      const email = anonymousId + "@anonymous.rfspager.app"
+      const password = anonymousId + "@anonymous.rfspager.app"
 
       const loginResult = await storeLogin(email.toLowerCase(), password)
 

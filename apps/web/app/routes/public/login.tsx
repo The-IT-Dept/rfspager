@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 
 const heading = "font-[family-name:var(--font-heading)]";
 
@@ -9,6 +9,7 @@ export function meta() {
 
 export default function Login() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -50,6 +51,11 @@ export default function Login() {
         </div>
 
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 space-y-5">
+          {searchParams.get("reset") === "1" && (
+            <div className="bg-green-50 text-green-800 text-sm px-4 py-3 rounded-xl font-medium">
+              Your password has been reset. You can sign in now.
+            </div>
+          )}
           {error && (
             <div className="bg-red-50 text-red-700 text-sm px-4 py-3 rounded-xl font-medium">{error}</div>
           )}
@@ -62,6 +68,10 @@ export default function Login() {
               className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#F7241D]/20 focus:border-[#F7241D] outline-none transition-all"
               placeholder="you@example.com"
             />
+          </div>
+
+          <div className="text-right -mt-2">
+            <Link to="/forgot-password" className="text-sm text-[#F7241D] font-semibold hover:underline">Forgot your password?</Link>
           </div>
 
           <div>

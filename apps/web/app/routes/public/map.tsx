@@ -314,7 +314,7 @@ function MapComponent({
     import("maplibre-gl").then((maplibregl) => {
       if (cancelled || !mapContainer.current) return;
 
-      map = new maplibregl.default.Map({
+      map = new maplibregl.Map({
         container: mapContainer.current,
         style: MAP_STYLE_URL,
         center: [150.34, -33.85],
@@ -326,18 +326,18 @@ function MapComponent({
       });
 
       map.addControl(
-        new maplibregl.default.NavigationControl({ showCompass: false }),
+        new maplibregl.NavigationControl({ showCompass: false }),
         "top-right",
       );
 
       mapRef.current = map;
-      mbglRef.current = maplibregl.default;
+      mbglRef.current = maplibregl;
 
       map.on("load", () => {
         if (cancelled || !map) return;
-        drawStations(map, maplibregl.default, stations, filters.stations);
-        drawInitialMessages(map, maplibregl.default, messages);
-        drawIncidents(map, maplibregl.default, incidents);
+        drawStations(map, maplibregl, stations, filters.stations);
+        drawInitialMessages(map, maplibregl, messages);
+        drawIncidents(map, maplibregl, incidents);
         requestAnimationFrame(() => {
           if (cancelled || !map) return;
           map.resize();

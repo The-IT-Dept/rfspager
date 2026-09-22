@@ -3,6 +3,7 @@
  * Uses StoreKit 2 JWS for server-side validation (Apple)
  */
 import { Platform } from "react-native"
+import { apiBaseUrl } from "./api-client"
 import {
   initConnection,
   endConnection,
@@ -26,7 +27,7 @@ if (Platform.OS === "ios") {
 
 const PRODUCT_SKUS = ["io.devlan.rfspager.monthly", "io.devlan.rfspager.yearly"]
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL?.replace("/graphql", "") || "https://v3.rfspager.app"
+const API_BASE = apiBaseUrl()
 const IAP_API = `${API_BASE}/api/v2/mobile`
 
 let authToken: string | null = null
@@ -49,7 +50,9 @@ async function apiPost(path: string, body: any) {
     },
     body: JSON.stringify(body),
   })
-  return res.json()
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || `Purchase verification failed (${res.status})`)
+  return data
 }
 
 export interface PurchaseProduct {

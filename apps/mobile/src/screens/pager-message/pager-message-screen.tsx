@@ -93,6 +93,7 @@ export function PagerMessageScreen() {
       alias: message.capcode_alias,
     },
   }
+  const responders = messageAdapted.responders ?? []
 
   const location = extractLocation(messageAdapted)
 
@@ -189,13 +190,13 @@ export function PagerMessageScreen() {
           <Text style={styles.messageText}>{messageAdapted.message}</Text>
         </View>
 
-        {messageAdapted.responders?.length > 0 && (
+        {responders.length > 0 && (
           <View style={styles.respondersSection}>
             <View style={styles.respondersHeader}>
-              <Text style={styles.respondersLabel}>Responders ({messageAdapted.responders.length})</Text>
+              <Text style={styles.respondersLabel}>Responders ({responders.length})</Text>
             </View>
             <View style={styles.avatarRow}>
-              {messageAdapted.responders.map((responder) => (
+              {responders.map((responder) => (
                 <View key={responder.id} style={styles.avatarContainer}>
                   <Image
                     style={styles.avatar}

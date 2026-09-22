@@ -87,21 +87,32 @@ export const MajorIncidentDetailScreen: FC = function MajorIncidentDetailScreen(
 
   // Extract location from geometry if available
   console.log("Incident Data:", incident)
-  let geometryData = null
+  let geometryData: { coordinates: [number, number] } | null = null
   try {
-    geometryData = incident.geometry ? (typeof incident.geometry === "string" ? JSON.parse(incident.geometry) : incident.geometry) : null
+    const geometry = incident.geometry
+      ? (typeof incident.geometry === "string" ? JSON.parse(incident.geometry) : incident.geometry)
+      : null
+    if (
+      geometry &&
+      Array.isArray(geometry.coordinates) &&
+      geometry.coordinates.length === 2 &&
+      typeof geometry.coordinates[0] === "number" &&
+      typeof geometry.coordinates[1] === "number"
+    ) {
+      geometryData = { coordinates: [geometry.coordinates[0], geometry.coordinates[1]] }
+    }
   } catch (e) {
     console.log("Failed to parse geometry:", e)
   }
 
-  const hasLocation =
-    geometryData && geometryData.coordinates && geometryData.coordinates.length === 2
-  const location = hasLocation
-    ? {
+  const location =
+    geometryData === null
+      ? null
+      : {
         latitude: geometryData.coordinates[1],
         longitude: geometryData.coordinates[0],
       }
-    : null
+  const hasLocation = location !== null
 
   console.log("Geometry Data:", geometryData)
   console.log("Location:", location)

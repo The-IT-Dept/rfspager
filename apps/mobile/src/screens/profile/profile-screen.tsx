@@ -19,12 +19,15 @@ import { useAppTheme, AppTheme } from "../../theme"
 
 type LoadingState = "loading" | "success" | "error"
 
+const SOURCE_URL = process.env.EXPO_PUBLIC_SOURCE_URL || "https://github.com/the-it-dept/rfspager"
+
 export const ProfileScreen: FC = function ProfileScreen() {
   const theme = useAppTheme()
   const styles = makeStyles(theme)
   const router = useRouter()
 
   const validSubscription = useValidSubscription()
+  const user = useAuthStore((s) => s.user)
   const resetApp = useAuthStore((s) => s.resetApp)
   const refreshUser = useAuthStore((s) => s.refreshUser)
   const upsertInstallation = useAuthStore((s) => s.upsertInstallation)
@@ -59,7 +62,7 @@ export const ProfileScreen: FC = function ProfileScreen() {
       setLoadingState("success")
     } catch (err) {
       console.error("Profile initialization error:", err)
-      setError(err?.message || "Failed to load profile")
+      setError(err instanceof Error ? err.message : "Failed to load profile")
       setLoadingState("error")
     }
   }, [upsertInstallation])
@@ -93,7 +96,8 @@ export const ProfileScreen: FC = function ProfileScreen() {
 
   const handleNeedHelp = useCallback(async () => {
     try {
-      const installationID = await getInstallationId()
+      if (!user) throw new Error("A signed-in user is required")
+      const installationID = await getInstallationId(user.user_id)
       Alert.alert(
         "Need Help?",
         `Your Support Token is ${installationID}. Please send a screenshot of this screen to hello@rfspager.app with a description of your issue.`,
@@ -102,7 +106,7 @@ export const ProfileScreen: FC = function ProfileScreen() {
     } catch (err) {
       Alert.alert("Error", "Failed to get support token")
     }
-  }, [])
+  }, [user])
 
   const handleReset = useCallback(() => {
     Alert.alert(
@@ -225,6 +229,15 @@ export const ProfileScreen: FC = function ProfileScreen() {
 
   const aboutSettings: SettingItem[] = [
     {
+      id: "source-code",
+      title: "Source code (AGPLv3)",
+      type: "navigation",
+      onPress: async () => {
+        await logEvent("source_code")
+        await Linking.openURL(SOURCE_URL)
+      },
+    },
+    {
       id: "discord",
       title: "Join us on Discord",
       type: "navigation",
@@ -264,7 +277,7 @@ export const ProfileScreen: FC = function ProfileScreen() {
       id: "version",
       title: "App Version",
       type: "info",
-      value: nativeApplicationVersion,
+      value: nativeApplicationVersion ?? "Unknown",
     },
     {
       id: "reset",

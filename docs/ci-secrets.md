@@ -279,3 +279,18 @@ All of these are listed in the root `.gitignore`. **Never commit them.**
 - **Docker push fails with 403** — repo → Settings → Actions → General →
   "Workflow permissions" must be **Read and write**. Default for new
   repos is read-only.
+
+
+## Deployment-specific build variables
+
+Before mobile release builds, set repository variables `EXPO_PUBLIC_API_URL`,
+`EXPO_PUBLIC_EAS_PROJECT_ID`, `EXPO_PUBLIC_SOURCE_URL`, `EXPO_PUBLIC_FACEBOOK_APP_ID`,
+and `APPLE_TEAM_ID` for this deployment. Maps and Facebook client-token values are
+read from the correspondingly named secrets `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` and
+`EXPO_PUBLIC_FACEBOOK_CLIENT_TOKEN`. They will be bundled into the client and must
+have provider-side application restrictions; they are not backend secrets.
+Supply the same values to EAS cloud build environments when building outside CI.
+
+The iOS workflow uses macOS 26 / Xcode 26.6 for Expo SDK 57. Each publisher must
+configure their own App Store submission identifiers and credentials via EAS;
+personal account IDs are no longer included in eas.json.

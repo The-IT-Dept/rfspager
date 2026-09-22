@@ -10,7 +10,6 @@ import {
   View,
   StyleSheet,
   TouchableOpacity,
-  Dimensions,
   Alert,
   ActivityIndicator,
   ScrollView,
@@ -38,8 +37,6 @@ interface SubscriptionModalProps {
   onDismiss: () => void
   source?: "native_ad" | "interstitial_ad" | "banner_ad"
 }
-
-const { width: screenWidth } = Dimensions.get("window")
 
 export function SubscriptionModal({ visible, onDismiss, source = "native_ad" }: SubscriptionModalProps) {
   const validSubscription = useValidSubscription()
@@ -484,7 +481,7 @@ const styles = StyleSheet.create({
   },
 
   purchasingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0, 0, 0, 0.75)",
     alignItems: "center",
     justifyContent: "center",

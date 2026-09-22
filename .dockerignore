@@ -13,6 +13,7 @@
 # Heavy sibling projects — not needed for the server build.
 apps/
 laravel-old/
+app-old/
 
 # Server-side build leftovers
 tmp/
@@ -26,3 +27,8 @@ docs/
 LICENSE.md
 README.md
 *.md
+
+# Ship license/attribution with distributed binaries.
+!LICENSE.md
+!NOTICE
+!THIRD_PARTY_NOTICES.md

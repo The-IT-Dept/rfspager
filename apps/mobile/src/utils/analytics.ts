@@ -2,8 +2,16 @@ import { getAnalytics, logEvent as fbLogEvent, setUserId as fbSetUserId, setUser
 import { AppEventsLogger } from "react-native-fbsdk-next"
 
 export const logEvent = async (event: string, params?: { [p: string]: any }) => {
-  await fbLogEvent(getAnalytics(), event, params)
-  AppEventsLogger.logEvent(event, params)
+  if (params) {
+    await fbLogEvent(getAnalytics(), event, params)
+  } else {
+    await fbLogEvent(getAnalytics(), event)
+  }
+  if (params) {
+    AppEventsLogger.logEvent(event, params)
+  } else {
+    AppEventsLogger.logEvent(event)
+  }
 }
 
 export const setUserId = async (id: string | null) => {

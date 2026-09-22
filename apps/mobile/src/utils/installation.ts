@@ -3,29 +3,28 @@ import * as Application from "expo-application"
 import * as Device from "expo-device"
 import * as Localization from "expo-localization"
 import { getMessaging, getToken, getAPNSToken } from "@react-native-firebase/messaging"
-import { getUniqueId } from "react-native-device-info"
+import AsyncStorage from "@react-native-async-storage/async-storage"
+import uuid from "react-native-uuid"
 
-const stringToUuid = (str: string) => {
-  // Ensure str is a string and handle edge cases
-  const stringValue = str ? String(str) : "unknown-device"
-
-  const cleanStr = stringValue.replace(/-/g, "")
-  const uuid = "xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx".replace(/[x]/g, function (_, p) {
-    return cleanStr[p % cleanStr.length]
-  })
-
-  return uuid
-}
-
-export const getInstallationId = async () => {
-  try {
-    const uniqueId = await getUniqueId()
-    return stringToUuid(uniqueId)
-  } catch (error) {
-    // Fallback to a timestamp-based ID
-    const fallbackId = `fallback-${Date.now()}`
-    return stringToUuid(fallbackId)
-  }
+// Installation IDs identify a registration; authorization is enforced by the
+// server. Separate IDs per account preserve ownership when a device signs out
+// and a different person signs in.
+const pendingIds = new Map<string, Promise<string>>()
+export const getInstallationId = (userId: string): Promise<string> => {
+  if (!userId) return Promise.reject(new Error("A user is required for push registration"))
+  const pending = pendingIds.get(userId)
+  if (pending) return pending
+  const request = (async () => {
+    const key = `rfspager.installation.${userId}`
+    const existing = await AsyncStorage.getItem(key)
+    if (existing) return existing
+    const id = String(uuid.v4()).toLowerCase()
+    await AsyncStorage.setItem(key, id)
+    return id
+  })()
+  pendingIds.set(userId, request)
+  void request.finally(() => pendingIds.delete(userId)).catch(() => {})
+  return request
 }
 
 export const getInstallationInput = async () => {
@@ -57,7 +56,7 @@ async function registerForPushNotificationsAsync() {
     expoToken = await getToken(getMessaging())
 
     if (Platform.OS === "ios") {
-      token = await getAPNSToken(getMessaging())
+      token = (await getAPNSToken(getMessaging())) ?? undefined
     } else {
       token = expoToken
     }

@@ -3,7 +3,7 @@
  * Replaces mst-gql / GraphQL
  */
 
-const DEFAULT_BASE = "https://v3.rfspager.app"
+const DEFAULT_BASE = "http://localhost:8080"
 
 function getBaseUrl(): string {
   const env = process.env.EXPO_PUBLIC_API_URL
@@ -86,6 +86,10 @@ export interface User {
 }
 
 export interface Message {
+  am_i_responding?: boolean
+  system_name?: string | null
+  system_uuid?: string | null
+  system_suburb?: string | null
   id: number
   system_id: number
   capcode_id: number | null

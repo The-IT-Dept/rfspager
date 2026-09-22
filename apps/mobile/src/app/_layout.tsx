@@ -36,7 +36,7 @@ const queryClient = new QueryClient({
 
 notifee.onBackgroundEvent(async ({ type, detail }) => {
   const { notification, pressAction } = detail
-  if (type === EventType.ACTION_PRESS && pressAction.id === "mark-as-read") {
+  if (type === EventType.ACTION_PRESS && pressAction?.id === "mark-as-read" && notification?.id) {
     await notifee.cancelNotification(notification.id)
   }
 })

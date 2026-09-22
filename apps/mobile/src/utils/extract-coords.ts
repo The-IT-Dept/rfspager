@@ -73,6 +73,6 @@ export const shareMessage = async (message: any) => {
       logEvent("share_dismiss")
     }
   } catch (error) {
-    crashlyticsLog(getCrashlytics(), error.toString())
+    crashlyticsLog(getCrashlytics(), String(error))
   }
 }

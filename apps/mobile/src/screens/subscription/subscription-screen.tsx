@@ -14,7 +14,7 @@ import {
   type ValidationResult,
 } from "../../services/purchase-service"
 import { TouchableOpacity } from "react-native-gesture-handler"
-import { useRouter, useNavigation, useFocusEffect } from "expo-router"
+import { useRouter } from "expo-router"
 import { useAuthStore, useValidSubscription, useProductName } from "../../stores"
 import { makeStyles } from "./styles"
 import { useAppTheme } from "../../theme"
@@ -22,7 +22,6 @@ import { PREMIUM_FEATURES } from "../../config/premium-features"
 
 export const SubscriptionScreen: FC = () => {
     const router = useRouter()
-    const navigation = useNavigation()
     const validSubscription = useValidSubscription()
     const productName = useProductName()
     const subscriptionExpiryDate = useAuthStore((s) => s.user?.subscription_expiry?.toString() || "")

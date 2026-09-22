@@ -1,0 +1,3 @@
+
+# Whitespace in upstream patch context must remain verbatim.
+apps/mobile/patches/*.patch -whitespace

@@ -218,7 +218,7 @@ GOOGLE_PLAY_CREDENTIALS=/path/to/play-service-account.json
 # Pub/Sub OIDC validation — required, the handler refuses to process
 # notifications if AUDIENCE is empty:
 GOOGLE_PUBSUB_AUDIENCE=https://<your-prod-host>/api/webhooks/google
-# Optional but recommended — pin to the exact service account that
+# Required when RTDN is enabled — pin to the exact service account that
 # Pub/Sub will use. Without this, any OIDC token signed for the audience
 # would be accepted.
 GOOGLE_PUBSUB_SERVICE_EMAIL=play-pubsub-pusher@<project>.iam.gserviceaccount.com

@@ -123,7 +123,7 @@ export default class OnboardingComponent extends React.Component<Props> {
 
     // Define swipe direction, then animate toward the nearest view and setOffset
 
-    const minValueSwipeAccepted: number = this.props.minValueSwipeAccepted
+    const minValueSwipeAccepted = this.props.minValueSwipeAccepted ?? 50
 
     if (dx > minValueSwipeAccepted) {
       // Swiped left, go to next scene
@@ -202,12 +202,11 @@ export default class OnboardingComponent extends React.Component<Props> {
    * Get background colors from each scene, create then return an animated background style
    */
   _getTransitionBackground = () => {
-    let { scenes } = this.props,
-      inputRange = [],
-      outputRange = [],
-      i
+    const { scenes } = this.props
+    const inputRange: number[] = []
+    const outputRange: string[] = []
 
-    for (i = 0; i < scenes.length; i++) {
+    for (let i = 0; i < scenes.length; i++) {
       inputRange.push(i * windowWidth)
       outputRange.push(scenes[i].backgroundColor)
     }

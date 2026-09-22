@@ -2,7 +2,6 @@ import React, { FC, useCallback, useMemo, useRef } from "react"
 import { StyleSheet, View } from "react-native"
 import { Text } from "react-native"
 import MapView, { Callout, Circle, Marker, Polygon } from "react-native-maps"
-import { makeOverlays } from "react-native-geojson"
 import { FontAwesome5 } from "@expo/vector-icons"
 import moment from "moment"
 
@@ -10,6 +9,7 @@ import { usePreferencesStore } from "../../stores"
 import { useAuthStore } from "../../stores"
 import { useAlertzones, useMapMessages, useMajorIncidents, useHazardReductions } from "../../hooks"
 import { extractLocation, hasLocation } from "../../utils/extract-coords"
+import { makeGeoJsonOverlays } from "../../utils/geojson-overlays"
 import type { Message, HazardReduction, MajorIncident } from "../../services/api-client"
 import { BannerAd } from "../../utils/admob"
 import { useFocusEffect } from "expo-router"
@@ -244,7 +244,7 @@ export const PagerMapScreen: FC =
         }
       }) || []
 
-    const hrOverlays = makeOverlays(
+    const hrOverlays = makeGeoJsonOverlays(
       (hazardReductionsData || []).map((hr) => {
         const geometry = typeof hr.geometry === "string" ? JSON.parse(hr.geometry) : hr.geometry
         return {
@@ -255,7 +255,7 @@ export const PagerMapScreen: FC =
         }
       }) || [],
     )
-    const miOverlays = makeOverlays(
+    const miOverlays = makeGeoJsonOverlays(
       (majorIncidentsData || []).map((mi) => {
         const geometry = typeof mi.geometry === "string" ? JSON.parse(mi.geometry) : mi.geometry
         return {

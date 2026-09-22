@@ -1,0 +1,17 @@
+RFSPager
+Copyright 2026 The IT Dept and contributors.
+
+RFSPager is licensed under the GNU Affero General Public License,
+version 3 only (AGPL-3.0-only). See LICENSE.md.
+
+Preserve applicable copyright, license, and attribution notices when copying
+or modifying the software. Distributed covered derivatives remain under this
+license. Modified versions operated over a network must offer corresponding
+source to their remote users as required by section 13 of the license.
+
+Third-party components retain their own licenses. Project names and logos
+are not licensed trademarks or an endorsement of third-party deployments.
+
+See THIRD_PARTY_NOTICES.md for bundled fonts, certificates, and asset notices.
+The decode-uri-component compatibility patch retains its upstream MIT license;
+see apps/mobile/patches/decode-uri-component@0.2.2.MIT.txt and patch documentation.

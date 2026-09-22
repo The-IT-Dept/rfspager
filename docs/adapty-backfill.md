@@ -181,8 +181,10 @@ Apple's signed notification carries. Two usual causes:
 
 Compare the JWS payload's `originalTransactionId` field (visible in
 admin notification history) against `users.apple_original_transaction_id`.
-If they differ, the truth is whatever the JWS says — run a manual
-`UPDATE users SET apple_original_transaction_id = '<from JWS>' WHERE id = N`.
+If they differ, reconcile the affected accounts against the App Store record
+before changing either binding. Migration 023 makes an entitlement unique
+across users; do not use a blind `UPDATE`, because it can either fail on the
+unique constraint or hide a cross-account ownership conflict.
 
 **`rate-limited (429)`.**
 Increase `--sleep` (e.g. `--sleep 500`) and resume. The command is

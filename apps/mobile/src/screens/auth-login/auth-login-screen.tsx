@@ -72,10 +72,15 @@ export const AuthLoginScreen: FC = () => {
 
       if (result.isCancelled) {
         setLoading(false)
-        return null
+        return
       }
 
       const token = await AccessToken.getCurrentAccessToken()
+      if (!token) {
+        setError("Facebook did not return an access token. Please try again.")
+        setLoading(false)
+        return
+      }
 
       storeSocialLogin("facebook", token.accessToken)
         .then(() => setLoading(false))
@@ -98,6 +103,11 @@ export const AuthLoginScreen: FC = () => {
         const fullName = [credential.fullName?.givenName, credential.fullName?.familyName]
           .filter(Boolean)
           .join(" ")
+        if (!credential.identityToken) {
+          setError("Apple did not return an identity token. Please try again.")
+          setLoading(false)
+          return
+        }
         storeSocialLogin("apple", credential.identityToken, {
           email: credential.email ?? undefined,
           name: fullName || undefined,
@@ -106,7 +116,7 @@ export const AuthLoginScreen: FC = () => {
           .finally(() => setLoading(false))
       } catch (e) {
         setLoading(false)
-        return null
+        return
       }
     }
 

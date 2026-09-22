@@ -22,6 +22,7 @@ Thumbs.db
 .env.*.local
 .secrets/
 *.pem
+!internal/iap/apple_root_ca_g3.pem
 *.p8
 *.p12
 *.key
@@ -146,3 +147,6 @@ apps/web/.vite/
 adapty-backfill
 migrate-spike
 .env.bak-*
+
+# Allow documentation templates while ignoring local credentials.
+!**/.env.example

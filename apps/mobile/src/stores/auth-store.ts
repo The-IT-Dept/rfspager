@@ -7,6 +7,7 @@ import { persist, createJSONStorage } from "zustand/middleware"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 import {
   api,
+  apiBaseUrl,
   setApiToken,
   setOnUnauthorized,
   type UpdateProfileInput,
@@ -15,6 +16,7 @@ import {
 import { setIAPAuthToken, setOnSubscriptionSynced } from "../services/purchase-service"
 import { getInstallationId, getInstallationInput } from "../utils/installation"
 import { logEvent, setUserEmail, setUserId } from "../utils/analytics"
+import { captureSession, sessionIsCurrent } from "./session-guard"
 
 interface AuthState {
   token: string | null
@@ -55,6 +57,22 @@ export const useAuthStore = create<AuthState>()(
       const syncToken = (token: string | null) => {
         setApiToken(token)
         setIAPAuthToken(token)
+      }
+
+      // Capture the old credentials before clearing local state. Background
+      // requests must not pick up another account's token after a quick login.
+      const revokeRemoteSession = () => {
+        const { token, user } = get()
+        if (!token || !user) return
+        const headers = { Authorization: `Bearer ${token}` }
+        void (async () => {
+          try {
+            const id = await getInstallationId(user.user_id)
+            await fetch(`${apiBaseUrl()}/api/v2/mobile/installations/${id}`, { method: "DELETE", headers })
+          } finally {
+            await fetch(`${apiBaseUrl()}/api/v2/mobile/auth/logout`, { method: "POST", headers })
+          }
+        })().catch(() => {})
       }
 
       return {
@@ -180,14 +198,14 @@ export const useAuthStore = create<AuthState>()(
         },
 
         logout: (message) => {
-          get().deleteInstallation().catch(() => {})
+          revokeRemoteSession()
           logEvent("logout")
           syncToken(null)
           set({ token: null, user: null, lastUserRefresh: 0, logoutMessage: message || "" })
         },
 
         resetApp: () => {
-          get().deleteInstallation().catch(() => {})
+          revokeRemoteSession()
           logEvent("app_reset")
           syncToken(null)
           set({ token: null, user: null, lastUserRefresh: 0, logoutMessage: "" })
@@ -195,7 +213,13 @@ export const useAuthStore = create<AuthState>()(
 
         refreshUser: async () => {
           try {
+            const session = get()
+            const currentUser = session.user
+            const captured = captureSession(session.token, currentUser?.user_id)
+            if (!captured) return
             const user = await api.user.me()
+            const latest = get()
+            if (!sessionIsCurrent(captured, { token: latest.token, userID: latest.user?.user_id })) return
             set({ user, lastUserRefresh: Date.now() })
           } catch (e) {
             console.error("Failed to refresh user:", e)
@@ -212,9 +236,14 @@ export const useAuthStore = create<AuthState>()(
 
         upsertInstallation: async () => {
           try {
-            if (!get().user) return
-            const installationId = (await getInstallationId()).toLowerCase()
+            const session = get()
+            const user = session.user
+            const captured = captureSession(session.token, user?.user_id)
+            if (!captured || !user) return
+            const installationId = await getInstallationId(user.user_id)
             const input = await getInstallationInput()
+            const latest = get()
+            if (!sessionIsCurrent(captured, { token: latest.token, userID: latest.user?.user_id })) return
             await api.installations.upsert(installationId, input)
           } catch (e) {
             console.error("Failed to upsert installation:", e)
@@ -223,7 +252,9 @@ export const useAuthStore = create<AuthState>()(
 
         deleteInstallation: async () => {
           try {
-            const installationId = await getInstallationId()
+            const user = get().user
+            if (!user) return
+            const installationId = await getInstallationId(user.user_id)
             await api.installations.delete(installationId)
           } catch (e) {
             console.error("Failed to delete installation:", e)

@@ -11,12 +11,12 @@ customer-facing pages. Part of the [RFSPager monorepo](../../README.md).
 ## Quickstart
 
 ```bash
-pnpm install
-pnpm dev          # http://localhost:5173
+npm ci
+npm run dev       # http://localhost:5173
 
 # Production build
-pnpm build
-pnpm start        # serves ./build via @react-router/serve
+npm run build
+npm run start     # serves ./build via @react-router/serve
 ```
 
 ## Layout

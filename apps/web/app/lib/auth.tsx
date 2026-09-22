@@ -12,7 +12,7 @@ interface AuthContextValue {
   user: AdminUser | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -35,9 +35,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.user);
   };
 
-  const logout = () => {
+  const logout = async () => {
+    const token = localStorage.getItem("admin_token");
     clearToken();
     setUser(null);
+    if (!token) return;
+    // Do not use api.post here: its 401 redirect handler would race local
+    // logout and can recursively redirect an already-cleared session.
+    try {
+      await fetch("/api/v1/admin/auth/logout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      // Local credentials are already cleared; a later expiry cannot restore
+      // this session, so a network failure needs no retry UI.
+    }
   };
 
   return <AuthContext.Provider value={{ user, loading, login, logout }}>{children}</AuthContext.Provider>;

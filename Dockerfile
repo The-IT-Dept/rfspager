@@ -3,7 +3,7 @@
 # Multi-stage build for the RFSPager Go API server.
 # Final image is distroless, ~25 MB, runs as non-root.
 
-FROM golang:1.25-alpine AS build
+FROM golang:1.27.1-alpine AS build
 WORKDIR /src
 
 # Cache module downloads
@@ -24,6 +24,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/server /server
+COPY LICENSE.md NOTICE THIRD_PARTY_NOTICES.md /
+LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
 EXPOSE 8080
 USER nonroot:nonroot
 ENTRYPOINT ["/server"]

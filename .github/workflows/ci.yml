@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -17,11 +20,11 @@ jobs:
     name: server (go)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: "1.25"
+          go-version: "1.27.1"
           cache: true
 
       - name: go vet
@@ -33,6 +36,36 @@ jobs:
       - name: go test
         run: go test ./... -count=1
 
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          govulncheck ./...
+
+  database:
+    name: database bootstrap and upgrade
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: rfspager_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d rfspager_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      RFSPAGER_TEST_DATABASE_URL: postgres://postgres@localhost:5432/rfspager_test?sslmode=disable
+      RFSPAGER_TEST_INSTALLATION_DATABASE_URL: postgres://postgres@localhost:5432/rfspager_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.27.1"
+          cache: true
+      - run: go test -p 1 ./internal/db ./internal/iap ./internal/mobile -count=1
+
   # ---------------------------------------------------------------------------
   # Web UI: typecheck + build
   # ---------------------------------------------------------------------------
@@ -43,23 +76,22 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-          cache: pnpm
-          cache-dependency-path: apps/web/pnpm-lock.yaml
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
 
-      - run: pnpm install --frozen-lockfile
+      - run: npm ci
 
-      - run: pnpm typecheck
+      - run: npm run typecheck
 
-      - run: pnpm build
+      - run: npm run build
+
+      - name: dependency audit
+        run: npm audit --audit-level=high
 
   # ---------------------------------------------------------------------------
   # Mobile: install + typecheck only (full builds run on tag, see mobile-release.yml)
@@ -71,13 +103,13 @@ jobs:
       run:
         working-directory: apps/mobile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -85,5 +117,33 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - run: pnpm run verify:decoder-patch
+
+      - run: pnpm run verify:auth-store-race
+
       - name: tsc --noEmit
         run: npx tsc --noEmit
+
+      - name: Metro iOS bundle
+        env:
+          EXPO_NO_DOTENV: "1"
+        run: pnpm exec expo export --platform ios --output-dir /tmp/mobile-bundle
+
+      - name: dependency audit
+        run: pnpm audit --audit-level=high
+
+  # Scan only the checked-out working tree. The repository's historical
+  # commits are intentionally excluded until its planned sanitized import.
+  secrets:
+    name: secrets (current snapshot)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Scan current tree
+        run: >-
+          docker run --rm --volume "$GITHUB_WORKSPACE:/repo:ro"
+          zricethezav/gitleaks:v8.30.0
+          detect --source=/repo --no-git --redact

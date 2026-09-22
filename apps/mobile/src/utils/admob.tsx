@@ -33,8 +33,10 @@ const adUnitIDRewardLIVE = Platform.select({
 // Use development IDs in dev mode, production IDs in production
 const isDevelopment = __DEV__ || process.env.NODE_ENV === 'development'
 
-export const adUnitIDBanner = isDevelopment ? adUnitIDBannerDEV : adUnitIDBannerLIVE
-export const adUnitIDReward = isDevelopment ? adUnitIDRewardDEV : adUnitIDRewardLIVE
+export const adUnitIDBanner =
+  (isDevelopment ? adUnitIDBannerDEV : adUnitIDBannerLIVE) ?? "ca-app-pub-3940256099942544/2435281174"
+export const adUnitIDReward =
+  (isDevelopment ? adUnitIDRewardDEV : adUnitIDRewardLIVE) ?? "ca-app-pub-3940256099942544/1712485313"
 
 // Debug logging
 console.log(`🎯 [AdMob] Environment: ${isDevelopment ? 'DEVELOPMENT' : 'PRODUCTION'}`)

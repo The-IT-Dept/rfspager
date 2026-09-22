@@ -8,6 +8,7 @@ const NAV_LINKS = [
   // Systems (public receiver-network page) gated off for now — see
   // routes/public/systems.tsx.
 ];
+const SOURCE_URL = import.meta.env.VITE_SOURCE_URL || "https://github.com/the-it-dept/rfspager";
 
 interface User {
   name: string | null;
@@ -54,10 +55,19 @@ function usePublicAuth() {
   }, [trigger]);
 
   const logout = () => {
+    const currentToken = localStorage.getItem("rfspager_token");
     localStorage.removeItem("rfspager_token");
     window.dispatchEvent(new Event("rfspager:auth"));
     setUser(null);
     setToken(null);
+    if (currentToken) {
+      // Use the captured token directly rather than a shared API client so a
+      // 401 cannot trigger a second logout/redirect while this one completes.
+      void fetch("/api/v2/mobile/auth/logout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${currentToken}` },
+      }).catch(() => {});
+    }
   };
 
   return { user, token, avatarHash, logout };
@@ -107,6 +117,9 @@ export function PublicLayout() {
               );
             })}
             <div className="hidden md:block w-px h-6 bg-gray-200 mx-2" />
+            <a href={SOURCE_URL} target="_blank" rel="noreferrer" className="hidden md:block px-3 py-2 text-sm font-semibold rounded-lg whitespace-nowrap text-gray-600 hover:text-gray-900 hover:bg-gray-50 transition-colors">
+              Source Code
+            </a>
 
             {user ? (
               <div className="relative">
@@ -210,6 +223,9 @@ export function PublicLayout() {
                   </Link>
                 );
               })}
+              <a href={SOURCE_URL} target="_blank" rel="noreferrer" onClick={() => setNavOpen(false)} className="px-3 py-2.5 text-base font-semibold rounded-lg text-gray-700 hover:text-gray-900 hover:bg-gray-50 transition-colors">
+                Source Code
+              </a>
             </nav>
           </div>
         )}
@@ -252,6 +268,7 @@ export function PublicLayout() {
                 <ul className="space-y-3 text-sm">
                   <li><a href="https://rfspager.app/discord" className="hover:text-white transition-colors">Discord</a></li>
                   <li><a href="mailto:hello@rfspager.app" className="hover:text-white transition-colors">Support</a></li>
+                  <li><a href={SOURCE_URL} target="_blank" rel="noreferrer" className="hover:text-white transition-colors">Source code (AGPLv3)</a></li>
                 </ul>
               </div>
               <div className="md:col-span-3">
