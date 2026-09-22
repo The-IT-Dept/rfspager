@@ -29,6 +29,7 @@
   },
   "devDependencies": {
     "@react-router/dev": "7.18.4",
+    "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "^4.2.2",
     "@types/mapbox-gl": "^3.4.1",
     "@types/node": "^22",

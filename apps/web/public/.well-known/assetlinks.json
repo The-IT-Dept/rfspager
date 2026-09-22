@@ -1,0 +1,14 @@
+[
+    {
+        "relation": [
+            "delegate_permission/common.handle_all_urls"
+        ],
+        "target": {
+            "namespace": "android_app",
+            "package_name": "io.devlan.rfspager",
+            "sha256_cert_fingerprints": [
+                "67:B5:9A:89:67:E0:4A:AF:5E:32:61:69:F1:CC:9F:4E:8B:8D:50:E4:EC:72:16:9C:9E:83:19:E7:4F:D4:16:A0"
+            ]
+        }
+    }
+]

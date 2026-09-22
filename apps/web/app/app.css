@@ -5,6 +5,10 @@
 @import "@fontsource-variable/montserrat";
 @import "maplibre-gl/dist/maplibre-gl.css";
 
+/* `prose` for the long-form legal pages, which are plain HTML lifted verbatim
+   from the Laravel site and so carry no utility classes of their own. */
+@plugin "@tailwindcss/typography";
+
 @custom-variant dark (&:is(.dark *));
 
 

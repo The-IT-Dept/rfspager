@@ -14,6 +14,14 @@ export default [
     route("register", "routes/public/register.tsx"),
     route("subscribe", "routes/public/subscribe.tsx"),
     route("account", "routes/public/account.tsx"),
+
+    // Linked directly from both the shipped and the new mobile app, so these
+    // have to keep resolving once this stack replaces the Laravel site.
+    route("privacy-policy", "routes/public/privacy-policy.tsx"),
+    route("terms-of-service", "routes/public/terms-of-service.tsx"),
+    route("discord", "routes/public/discord.tsx"),
+    // Laravel's equivalent of /account; kept so old links do not dead-end.
+    route("user/profile", "routes/public/user-profile.tsx"),
   ]),
 
   // Admin panel under /admin
