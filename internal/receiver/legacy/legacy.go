@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -46,7 +47,18 @@ func (c *Client) SendPage(addr, msg string, when time.Time, fn, baud int) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = c.post(ctx, addr, msg, when)
+		if err := c.post(ctx, addr, msg, when); err != nil {
+			// Previously discarded. With one upstream a silent drop was merely
+			// invisible; fanning out to several, it makes "did this page reach
+			// prod?" unanswerable — which is exactly the question a cutover
+			// needs to answer.
+			slog.Warn("legacy post failed",
+				"url", c.BaseURL,
+				"system_uuid", c.SystemUUID,
+				"address", addr,
+				"err", err,
+			)
+		}
 	}()
 }
 
