@@ -2,7 +2,6 @@ package iap
 
 import (
 	"context"
-	"errors"
 	"net/url"
 	"os"
 	"strings"
@@ -57,16 +56,16 @@ func testOwnershipDB(t *testing.T) *sqlx.DB {
 		CREATE TABLE iap_subscription_ownership (
 			platform TEXT NOT NULL,
 			original_transaction_id TEXT NOT NULL,
-			user_id BIGINT NOT NULL REFERENCES users(id),
+			user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			PRIMARY KEY (platform, original_transaction_id)
+			PRIMARY KEY (platform, original_transaction_id, user_id)
 		);
 		INSERT INTO users DEFAULT VALUES;
 		INSERT INTO users DEFAULT VALUES;
-		CREATE UNIQUE INDEX users_apple_original_transaction_id_unique
+		CREATE INDEX users_apple_original_transaction_id_idx
 			ON users (apple_original_transaction_id) WHERE apple_original_transaction_id IS NOT NULL;
-		CREATE UNIQUE INDEX users_google_purchase_token_unique
+		CREATE INDEX users_google_purchase_token_idx
 			ON users (google_purchase_token) WHERE google_purchase_token IS NOT NULL;
 	`); err != nil {
 		t.Fatalf("create ownership fixture: %v", err)
@@ -94,26 +93,30 @@ func TestApplySubscriptionKeepsAppleOwnershipWithFirstUser(t *testing.T) {
 	}
 }
 
-func TestApplySubscriptionRejectsAppleOwnershipConflict(t *testing.T) {
+func TestApplySubscriptionAllowsTwoAccountsToShareAppleEntitlement(t *testing.T) {
 	db := testOwnershipDB(t)
 	result := activeResult("apple", "pro.monthly", "Production")
 	result.OriginalTransactionID = "apple-original-456"
 	if err := applySubscription(context.Background(), db, 1, result, "purchase", "receipt"); err != nil {
 		t.Fatalf("first user claim: %v", err)
 	}
-
-	err := applySubscription(context.Background(), db, 2, result, "purchase", "receipt")
-	var conflict *OwnershipConflictError
-	if !errors.As(err, &conflict) {
-		t.Fatalf("second user error = %v, want ownership conflict", err)
+	if err := applySubscription(context.Background(), db, 2, result, "restore", "receipt"); err != nil {
+		t.Fatalf("second user restore: %v", err)
 	}
 
+	var linked int
+	if err := db.Get(&linked, `SELECT COUNT(*) FROM iap_subscription_ownership WHERE original_transaction_id = $1`, result.OriginalTransactionID); err != nil {
+		t.Fatalf("count linked accounts: %v", err)
+	}
+	if linked != 2 {
+		t.Fatalf("linked accounts = %d, want 2", linked)
+	}
 	var secondUserActive bool
 	if err := db.Get(&secondUserActive, `SELECT subscription_valid FROM users WHERE id = 2`); err != nil {
 		t.Fatalf("read second user: %v", err)
 	}
-	if secondUserActive {
-		t.Fatal("conflicting purchase granted the second user access")
+	if !secondUserActive {
+		t.Fatal("shared purchase did not grant the second user access")
 	}
 }
 
@@ -130,29 +133,39 @@ func TestApplySubscriptionAllowsNewApplePurchaseForSameUserAndRetainsOldClaim(t 
 		t.Fatalf("new Apple purchase for same user: %v", err)
 	}
 
-	err := applySubscription(context.Background(), db, 2, first, "restore", "receipt")
-	var conflict *OwnershipConflictError
-	if !errors.As(err, &conflict) {
-		t.Fatalf("old Apple purchase transferred after replacement: %v", err)
+	// The old receipt stays linked and a second account can now share it too.
+	if err := applySubscription(context.Background(), db, 2, first, "restore", "receipt"); err != nil {
+		t.Fatalf("old Apple purchase shared after replacement: %v", err)
+	}
+	var linked int
+	if err := db.Get(&linked, `SELECT COUNT(*) FROM iap_subscription_ownership WHERE original_transaction_id = $1`, first.OriginalTransactionID); err != nil {
+		t.Fatalf("count old-receipt links: %v", err)
+	}
+	if linked != 2 {
+		t.Fatalf("old-receipt links = %d, want 2", linked)
 	}
 }
 
-func TestApplySubscriptionRejectsGoogleOwnershipConflict(t *testing.T) {
+func TestApplySubscriptionAllowsTwoAccountsToShareGoogleEntitlement(t *testing.T) {
 	db := testOwnershipDB(t)
 	result := activeResult("google", "pro.monthly", "Production")
 	result.OriginalTransactionID = "google-token-789"
 	if err := applySubscription(context.Background(), db, 1, result, "purchase", "receipt"); err != nil {
 		t.Fatalf("first user claim: %v", err)
 	}
-
-	err := applySubscription(context.Background(), db, 2, result, "restore", "receipt")
-	var conflict *OwnershipConflictError
-	if !errors.As(err, &conflict) {
-		t.Fatalf("second user error = %v, want ownership conflict", err)
+	if err := applySubscription(context.Background(), db, 2, result, "restore", "receipt"); err != nil {
+		t.Fatalf("second user restore: %v", err)
+	}
+	var linked int
+	if err := db.Get(&linked, `SELECT COUNT(*) FROM iap_subscription_ownership WHERE original_transaction_id = $1`, result.OriginalTransactionID); err != nil {
+		t.Fatalf("count linked accounts: %v", err)
+	}
+	if linked != 2 {
+		t.Fatalf("linked accounts = %d, want 2", linked)
 	}
 }
 
-func TestApplySubscriptionRejectsGoogleUpgradeLinkedToAnotherUser(t *testing.T) {
+func TestApplySubscriptionAllowsGoogleUpgradeOnAnotherAccount(t *testing.T) {
 	db := testOwnershipDB(t)
 	old := activeResult("google", "pro.monthly", "Production")
 	old.OriginalTransactionID = "google-old-token"
@@ -163,10 +176,15 @@ func TestApplySubscriptionRejectsGoogleUpgradeLinkedToAnotherUser(t *testing.T) 
 	upgraded := activeResult("google", "pro.yearly", "Production")
 	upgraded.OriginalTransactionID = "google-upgraded-token"
 	upgraded.PreviousOwnershipID = old.OriginalTransactionID
-	err := applySubscription(context.Background(), db, 2, upgraded, "purchase", "receipt")
-	var conflict *OwnershipConflictError
-	if !errors.As(err, &conflict) {
-		t.Fatalf("upgrade on another account error = %v, want ownership conflict", err)
+	if err := applySubscription(context.Background(), db, 2, upgraded, "purchase", "receipt"); err != nil {
+		t.Fatalf("upgrade on another account: %v", err)
+	}
+	var bound string
+	if err := db.Get(&bound, `SELECT google_purchase_token FROM users WHERE id = 2`); err != nil {
+		t.Fatalf("read upgraded binding: %v", err)
+	}
+	if bound != upgraded.OriginalTransactionID {
+		t.Fatalf("bound token = %q, want new Google token", bound)
 	}
 }
 
@@ -211,14 +229,19 @@ func TestApplySubscriptionRejectsGoogleUpgradeLinkedToHistoricalOwner(t *testing
 	replay := activeResult("google", "pro.yearly", "Production")
 	replay.OriginalTransactionID = "google-attacker-new-token"
 	replay.PreviousOwnershipID = old.OriginalTransactionID
-	err := applySubscription(context.Background(), db, 2, replay, "purchase", "receipt")
-	var conflict *OwnershipConflictError
-	if !errors.As(err, &conflict) {
-		t.Fatalf("historical linked token granted another user: %v", err)
+	if err := applySubscription(context.Background(), db, 2, replay, "purchase", "receipt"); err != nil {
+		t.Fatalf("historical linked token replayed by another user: %v", err)
+	}
+	var bound string
+	if err := db.Get(&bound, `SELECT google_purchase_token FROM users WHERE id = 2`); err != nil {
+		t.Fatalf("read replay binding: %v", err)
+	}
+	if bound != replay.OriginalTransactionID {
+		t.Fatalf("replay bound token = %q, want %q", bound, replay.OriginalTransactionID)
 	}
 }
 
-func TestApplySubscriptionConcurrentAppleClaimsHaveOneOwner(t *testing.T) {
+func TestApplySubscriptionConcurrentAppleClaimsBothLink(t *testing.T) {
 	db := testOwnershipDB(t)
 	result := activeResult("apple", "pro.monthly", "Production")
 	result.OriginalTransactionID = "apple-concurrent-claim"
@@ -238,21 +261,46 @@ func TestApplySubscriptionConcurrentAppleClaimsHaveOneOwner(t *testing.T) {
 	wg.Wait()
 	close(errs)
 
-	var successes, conflicts int
 	for err := range errs {
-		if err == nil {
-			successes++
-			continue
+		if err != nil {
+			t.Fatalf("concurrent claim error = %v", err)
 		}
-		var conflict *OwnershipConflictError
-		if errors.As(err, &conflict) {
-			conflicts++
-			continue
-		}
-		t.Fatalf("concurrent claim error = %v", err)
 	}
-	if successes != 1 || conflicts != 1 {
-		t.Fatalf("concurrent claims: successes=%d conflicts=%d, want one each", successes, conflicts)
+	var linked int
+	if err := db.Get(&linked, `SELECT COUNT(*) FROM iap_subscription_ownership WHERE original_transaction_id = $1`, result.OriginalTransactionID); err != nil {
+		t.Fatalf("count concurrent links: %v", err)
+	}
+	if linked != 2 {
+		t.Fatalf("concurrent links = %d, want 2", linked)
+	}
+}
+
+func TestApplyWebhookSubscriptionFanOutUpdatesEverySharers(t *testing.T) {
+	db := testOwnershipDB(t)
+	result := activeResult("apple", "pro.monthly", "Production")
+	result.OriginalTransactionID = "apple-shared-fanout"
+	for _, userID := range []int64{1, 2} {
+		if err := applySubscription(context.Background(), db, userID, result, "purchase", "receipt"); err != nil {
+			t.Fatalf("link user %d: %v", userID, err)
+		}
+	}
+
+	result.Valid = false
+	updated, err := applyWebhookSubscription(context.Background(), db, result, "webhook:EXPIRED", "receipt", "")
+	if err != nil {
+		t.Fatalf("apply shared Apple webhook: %v", err)
+	}
+	if !updated {
+		t.Fatal("shared webhook reported no change")
+	}
+	for _, userID := range []int64{1, 2} {
+		var active bool
+		if err := db.Get(&active, `SELECT subscription_valid FROM users WHERE id = $1`, userID); err != nil {
+			t.Fatalf("read user %d: %v", userID, err)
+		}
+		if active {
+			t.Fatalf("user %d still active after expiry fan-out", userID)
+		}
 	}
 }
 

@@ -181,10 +181,16 @@ Apple's signed notification carries. Two usual causes:
 
 Compare the JWS payload's `originalTransactionId` field (visible in
 admin notification history) against `users.apple_original_transaction_id`.
-If they differ, reconcile the affected accounts against the App Store record
-before changing either binding. Migration 023 makes an entitlement unique
-across users; do not use a blind `UPDATE`, because it can either fail on the
-unique constraint or hide a cross-account ownership conflict.
+If they differ, reconcile the affected accounts from the App Store record.
+
+Since migration 029 an entitlement is shared, not owned: one store identifier
+may legitimately back several accounts (forgotten credentials → a new address,
+a private-relay and a personal address, an anonymous account). The backfill is
+therefore idempotent and safe to re-run — it links each account into
+`iap_subscription_ownership`, and a repeat run only bumps `updated_at`. It
+requires 029 to be applied first (the ledger's composite key comes from it). A
+`rows=0` on an Apple webhook after backfill now only means the identifier is not
+linked yet; the next `/iap/restore` repairs it.
 
 **`rate-limited (429)`.**
 Increase `--sleep` (e.g. `--sleep 500`) and resume. The command is

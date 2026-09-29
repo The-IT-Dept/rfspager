@@ -1,15 +1,15 @@
 // One-off backfill: pull each user's subscription state out of Adapty's
 // Server-Side API v2 and write it onto our users row so we can:
 //
-//   1. show correct subscription state for paid users who don't open the app
-//      after the cutover; and
-//   2. populate apple_original_transaction_id / google_purchase_token so
-//      future Apple S2S + Google RTDN webhooks can find these users.
+//  1. show correct subscription state for paid users who don't open the app
+//     after the cutover; and
+//  2. populate apple_original_transaction_id / google_purchase_token so
+//     future Apple S2S + Google RTDN webhooks can find these users.
 //
 // Usage:
 //
-//   ADAPTY_SECRET_API_KEY=secret_live_... \
-//     go run ./cmd/adapty-backfill --dry-run --only-missing --limit 10
+//	ADAPTY_SECRET_API_KEY=secret_live_... \
+//	  go run ./cmd/adapty-backfill --dry-run --only-missing --limit 10
 //
 // Then drop --dry-run when you're happy.
 //
@@ -199,6 +199,23 @@ func apply(ctx context.Context, conn *sqlx.DB, userID int64, p *patch) error {
 		return fmt.Errorf("update users: %w", err)
 	}
 
+	// Record the shared entitlement link so store webhooks can fan out to this
+	// account. Without it a backfilled row would be unreachable by matching
+	// against the ownership ledger (migration 029). Only Apple/Google have a
+	// ledger; a Stripe row is matched by users.stripe_id instead.
+	if p.StoreOriginalID != "" && (p.Platform == "apple" || p.Platform == "google") {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO iap_subscription_ownership
+				(platform, original_transaction_id, user_id, updated_at)
+			VALUES ($1, $2, $3, NOW())
+			ON CONFLICT (platform, original_transaction_id, user_id)
+				DO UPDATE SET updated_at = NOW()`,
+			p.Platform, p.StoreOriginalID, userID,
+		); err != nil {
+			return fmt.Errorf("link iap ownership: %w", err)
+		}
+	}
+
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO iap_transactions (
 			user_id, platform, transaction_id, original_transaction_id, product_id,
@@ -219,40 +236,40 @@ func apply(ctx context.Context, conn *sqlx.DB, userID int64, p *patch) error {
 
 type adaptyProfile struct {
 	Data struct {
-		ProfileID       string         `json:"profile_id"`
-		CustomerUserID  string         `json:"customer_user_id"`
-		AccessLevels    []accessLevel  `json:"access_levels"`
-		Subscriptions   []subscription `json:"subscriptions"`
+		ProfileID      string         `json:"profile_id"`
+		CustomerUserID string         `json:"customer_user_id"`
+		AccessLevels   []accessLevel  `json:"access_levels"`
+		Subscriptions  []subscription `json:"subscriptions"`
 	} `json:"data"`
 }
 
 type accessLevel struct {
-	AccessLevelID           string  `json:"access_level_id"`
-	Store                   string  `json:"store"`
-	StoreProductID          string  `json:"store_product_id"`
-	StoreTransactionID      string  `json:"store_transaction_id"`
-	StoreOriginalTxnID      string  `json:"store_original_transaction_id"`
-	Environment             string  `json:"environment"`
-	StartsAt                *string `json:"starts_at"`
-	PurchasedAt             *string `json:"purchased_at"`
-	ExpiresAt               *string `json:"expires_at"`
-	RenewalCancelledAt      *string `json:"renewal_cancelled_at"`
-	BillingIssueDetectedAt  *string `json:"billing_issue_detected_at"`
-	IsInGracePeriod         *bool   `json:"is_in_grace_period"`
-	CancellationReason      string  `json:"cancellation_reason"`
+	AccessLevelID          string  `json:"access_level_id"`
+	Store                  string  `json:"store"`
+	StoreProductID         string  `json:"store_product_id"`
+	StoreTransactionID     string  `json:"store_transaction_id"`
+	StoreOriginalTxnID     string  `json:"store_original_transaction_id"`
+	Environment            string  `json:"environment"`
+	StartsAt               *string `json:"starts_at"`
+	PurchasedAt            *string `json:"purchased_at"`
+	ExpiresAt              *string `json:"expires_at"`
+	RenewalCancelledAt     *string `json:"renewal_cancelled_at"`
+	BillingIssueDetectedAt *string `json:"billing_issue_detected_at"`
+	IsInGracePeriod        *bool   `json:"is_in_grace_period"`
+	CancellationReason     string  `json:"cancellation_reason"`
 }
 
 type subscription struct {
-	Store                   string  `json:"store"`
-	StoreProductID          string  `json:"store_product_id"`
-	StoreTransactionID      string  `json:"store_transaction_id"`
-	StoreOriginalTxnID      string  `json:"store_original_transaction_id"`
-	Environment             string  `json:"environment"`
-	PurchasedAt             *string `json:"purchased_at"`
-	RefundedAt              *string `json:"refunded_at"`
-	ExpiresAt               *string `json:"expires_at"`
-	RenewStatus             *int    `json:"renew_status"`
-	CancellationReason      string  `json:"cancellation_reason"`
+	Store              string  `json:"store"`
+	StoreProductID     string  `json:"store_product_id"`
+	StoreTransactionID string  `json:"store_transaction_id"`
+	StoreOriginalTxnID string  `json:"store_original_transaction_id"`
+	Environment        string  `json:"environment"`
+	PurchasedAt        *string `json:"purchased_at"`
+	RefundedAt         *string `json:"refunded_at"`
+	ExpiresAt          *string `json:"expires_at"`
+	RenewStatus        *int    `json:"renew_status"`
+	CancellationReason string  `json:"cancellation_reason"`
 }
 
 func fetchProfile(ctx context.Context, client *http.Client, key, customerUserID string) (*adaptyProfile, int, error) {
@@ -303,7 +320,7 @@ var rawPayloadByProfile = map[string]string{}
 // ----------------------------------------------------------------------------
 
 type patch struct {
-	Platform           string    // 'apple' / 'google' / 'stripe'
+	Platform           string // 'apple' / 'google' / 'stripe'
 	ProductID          string
 	Expiry             time.Time
 	Valid              bool
@@ -577,4 +594,3 @@ func fail(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "adapty-backfill: "+format+"\n", args...)
 	os.Exit(1)
 }
-
