@@ -172,7 +172,7 @@ export const SubscriptionScreen: FC = () => {
                     try {
                       await purchaseSubscription(product.productId)
                     } catch (error: any) {
-                      if (error?.code !== "E_USER_CANCELLED") {
+                      if (error?.code !== "E_USER_CANCELLED" && error?.code !== "user-cancelled") {
                         Alert.alert("Error purchasing", error?.message || "An error occurred")
                       }
                     } finally {

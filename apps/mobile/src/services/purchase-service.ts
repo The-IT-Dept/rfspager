@@ -13,17 +13,14 @@ import {
   finishTransaction,
   purchaseUpdatedListener,
   purchaseErrorListener,
+  getTransactionJwsIOS,
   type Purchase,
   type ProductSubscription,
 } from "expo-iap"
 
-// expo-iap iOS module for JWS
-let getTransactionJwsIOS: ((sku: string) => Promise<string>) | null = null
-if (Platform.OS === "ios") {
-  import("expo-iap").then((mod) => {
-    getTransactionJwsIOS = (mod as any).getTransactionJwsIOS ?? null
-  })
-}
+// Store error codes changed from SCREAMING_CASE to kebab-case in expo-iap v4.
+const isUserCancelled = (code: string | undefined) =>
+  code === "E_USER_CANCELLED" || code === "user-cancelled"
 
 const PRODUCT_SKUS = ["io.devlan.rfspager.monthly", "io.devlan.rfspager.yearly"]
 
@@ -149,7 +146,7 @@ export function setupPurchaseListeners(
   })
 
   purchaseErrorSubscription = purchaseErrorListener((error: any) => {
-    if (error.code !== "E_USER_CANCELLED") {
+    if (!isUserCancelled(error?.code)) {
       onPurchaseError(error)
     }
   })
@@ -206,9 +203,9 @@ export async function purchaseSubscription(productId: string): Promise<void> {
  * Get the JWS signed transaction for a product (iOS only).
  */
 async function getJWSForProduct(productId: string): Promise<string> {
-  if (Platform.OS !== "ios" || !getTransactionJwsIOS) return ""
+  if (Platform.OS !== "ios") return ""
   try {
-    return await getTransactionJwsIOS(productId)
+    return (await getTransactionJwsIOS(productId)) ?? ""
   } catch (err) {
     console.warn("[IAP] getTransactionJwsIOS failed:", err)
     return ""
@@ -234,6 +231,19 @@ async function validatePurchase(purchase: Purchase): Promise<ValidationResult> {
 }
 
 /**
+ * The restore endpoint answers {restored, ...}, not the validate shape. The
+ * screens read `.valid`, so normalise it here.
+ */
+function toValidationResult(data: any): ValidationResult {
+  return {
+    valid: Boolean(data?.restored ?? data?.valid),
+    product_id: data?.product_id ?? "",
+    expires_at: data?.expires_at ?? null,
+    will_renew: data?.will_renew ?? false,
+  }
+}
+
+/**
  * Restore previous purchases.
  */
 export async function restorePurchases(): Promise<ValidationResult | null> {
@@ -252,30 +262,36 @@ export async function restorePurchases(): Promise<ValidationResult | null> {
     }
 
     if (jwsList.length > 0) {
-      return apiPost("/iap/restore", {
-        platform: "ios",
-        jws_transactions: jwsList,
-      })
+      return toValidationResult(
+        await apiPost("/iap/restore", {
+          platform: "ios",
+          jws_transactions: jwsList,
+        }),
+      )
     }
 
     // Fallback to transaction IDs
     const transactionIds = purchases.map((p) => p.transactionId).filter(Boolean)
     if (transactionIds.length === 0) return null
 
-    return apiPost("/iap/restore", {
-      platform: "ios",
-      transaction_ids: transactionIds,
-    })
+    return toValidationResult(
+      await apiPost("/iap/restore", {
+        platform: "ios",
+        transaction_ids: transactionIds,
+      }),
+    )
   } else {
     const purchaseData = purchases.map((p) => ({
       purchase_token: p.purchaseToken,
       product_id: p.productId,
     }))
 
-    return apiPost("/iap/restore", {
-      platform: "android",
-      purchases: purchaseData,
-    })
+    return toValidationResult(
+      await apiPost("/iap/restore", {
+        platform: "android",
+        purchases: purchaseData,
+      }),
+    )
   }
 }
 
