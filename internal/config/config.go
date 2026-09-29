@@ -80,7 +80,7 @@ func Load() (*Config, error) {
 		SMTPPassword:             os.Getenv("SMTP_PASSWORD"),
 		SMTPFrom:                 os.Getenv("SMTP_FROM"),
 		SMTPMode:                 getEnv("SMTP_MODE", "starttls"),
-		TrustedProxyCIDRs:        strings.Fields(strings.ReplaceAll(os.Getenv("TRUSTED_PROXY_CIDRS"), ",", " ")),
+		TrustedProxyCIDRs:        parseTrustedProxyCIDRs(os.Getenv("TRUSTED_PROXY_CIDRS")),
 		IAPProductIDs:            strings.Join(strings.Fields(strings.ReplaceAll(getEnv("IAP_PRODUCT_IDS", "io.devlan.rfspager.monthly io.devlan.rfspager.yearly"), ",", " ")), " "),
 		AppleIAPEnvironment:      getEnv("APPLE_IAP_ENVIRONMENT", "Production"),
 		GoogleIAPEnvironment:     getEnv("GOOGLE_IAP_ENVIRONMENT", "Production"),
@@ -191,6 +191,18 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parseTrustedProxyCIDRs reads TRUSTED_PROXY_CIDRS, dropping empty entries so a
+// trailing or doubled comma cannot make an empty string look like an entry.
+func parseTrustedProxyCIDRs(raw string) []string {
+	out := make([]string, 0, 4)
+	for _, entry := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	}) {
+		out = append(out, entry)
+	}
+	return out
 }
 
 func uniqueCharacters(s string) map[rune]struct{} {

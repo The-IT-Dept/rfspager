@@ -14,6 +14,11 @@ import (
 // returns the ack status ("ok" / "dup" / "err") and an optional error.
 type PageHandler func(ctx context.Context, sys *models.System, p PagePayload) (string, error)
 
+// maxWSFrame caps a single inbound websocket frame. Kept in step with the
+// receiver client's own SetReadLimit and with maxIngressBody on the HTTP
+// ingress, so both transports accept the same pages.
+const maxWSFrame = 1 << 20 // 1 MiB
+
 // Handler builds the HTTP handler for GET /api/receiver/ws. apikey auth,
 // websocket upgrade, then off to Conn.run.
 func Handler(database *db.DB, hub *Hub, onPage PageHandler) http.HandlerFunc {
@@ -50,6 +55,12 @@ func Handler(database *db.DB, hub *Hub, onPage PageHandler) http.HandlerFunc {
 		// the socket fails, the hub shuts down, or a takeover evicts it.
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+
+		// Match the receiver client's limit (1 MiB) and maxIngressBody. The
+		// coder/websocket default is 32 KiB, which a legitimate large page or
+		// log frame exceeds, and the resulting 1009 close is fatal to the
+		// connection rather than a per-frame error.
+		ws.SetReadLimit(maxWSFrame)
 
 		c := newConn(hub, ws, sys)
 		c.OnPage = onPage

@@ -113,9 +113,28 @@ func (s *Store) ListAdminUsers(ctx context.Context, p ListParams) (*PaginatedRes
 	return s.paginatedQuery(ctx, "admin_users", "*", "1=1", nil, p, []string{"email", "name"})
 }
 
+// GetAdminUser loads one administrator by id. The console's edit form reads
+// this; without it the detail route 405s and the page never renders.
+func (s *Store) GetAdminUser(ctx context.Context, id int64) (map[string]any, error) {
+	row := s.db.QueryRowxContext(ctx, `SELECT * FROM admin_users WHERE id = $1`, id)
+	result := make(map[string]any)
+	if err := row.MapScan(result); err != nil {
+		return nil, err
+	}
+	cleanMapScan(result)
+	return result, nil
+}
+
 func (s *Store) CreateAdminUser(ctx context.Context, data map[string]any) (int64, error) {
 	if err := validateFields(data, adminUserInputFields); err != nil {
 		return 0, err
+	}
+	if role, ok := data["role"].(string); ok {
+		role = strings.ToLower(strings.TrimSpace(role))
+		if role != "admin" && role != "superadmin" {
+			return 0, fmt.Errorf("role %q must be admin or superadmin", role)
+		}
+		data["role"] = role
 	}
 	if pw, ok := data["password"].(string); ok {
 		hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
@@ -131,6 +150,13 @@ func (s *Store) CreateAdminUser(ctx context.Context, data map[string]any) (int64
 func (s *Store) UpdateAdminUser(ctx context.Context, id int64, data map[string]any) error {
 	if err := validateFields(data, adminUserInputFields); err != nil {
 		return err
+	}
+	if role, ok := data["role"].(string); ok {
+		role = strings.ToLower(strings.TrimSpace(role))
+		if role != "admin" && role != "superadmin" {
+			return fmt.Errorf("role %q must be admin or superadmin", role)
+		}
+		data["role"] = role
 	}
 	passwordChanged := false
 	if pw, ok := data["password"].(string); ok && pw != "" {
@@ -251,8 +277,41 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, data map[string]any) e
 }
 
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
-	return err
+	// Dependent rows reference users(id) with the default ON DELETE NO ACTION,
+	// so a bare DELETE fails with a foreign-key violation once the user owns
+	// anything. Remove the user-owned rows and disown systems (shared history),
+	// mirroring the mobile DeleteAccount cleanup.
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	cleanups := []string{
+		`DELETE FROM responding         WHERE user_id = $1`,
+		`DELETE FROM subscriptions      WHERE user_id = $1`,
+		`DELETE FROM filters            WHERE user_id = $1`,
+		`DELETE FROM alertzones         WHERE user_id = $1`,
+		`DELETE FROM installations      WHERE user_id = $1`,
+		`DELETE FROM iap_transactions   WHERE user_id = $1`,
+		`DELETE FROM iap_subscription_ownership WHERE user_id = $1`,
+		`DELETE FROM photos             WHERE user_id = $1`,
+		`DELETE FROM sessions           WHERE user_id = $1`,
+		`DELETE FROM social_providers   WHERE user_id = $1`,
+		`DELETE FROM password_reset_tokens WHERE user_id = $1`,
+		`DELETE FROM personal_access_tokens WHERE tokenable_type = 'App\Models\User' AND tokenable_id = $1`,
+		`DELETE FROM notifications      WHERE notifiable_id = $1 AND notifiable_type = 'App\Models\User'`,
+		// Don't delete systems the user owns — shared history others rely on.
+		`UPDATE systems SET user_id = NULL, api_key = NULL, approved_at = NULL, updated_at = NOW() WHERE user_id = $1`,
+	}
+	for _, q := range cleanups {
+		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // --- Capcodes ---
@@ -997,6 +1056,11 @@ func (s *Store) paginatedQuery(ctx context.Context, from, selectCols, where stri
 	}
 
 	offset := (p.Page - 1) * p.PerPage
+	if offset < 0 {
+		// A page near math.MaxInt64 overflows the int64 product and wraps
+		// negative; Postgres rejects a negative OFFSET (2201X).
+		offset = 0
+	}
 	dataQuery := fmt.Sprintf("SELECT %s FROM %s WHERE %s %s LIMIT %d OFFSET %d",
 		selectCols, from, where, orderClause, p.PerPage, offset)
 

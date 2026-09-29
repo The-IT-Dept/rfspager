@@ -91,9 +91,22 @@ export function Notice({ tone, children }: { tone: "error" | "success"; children
 
 export const linkClass = "font-semibold text-[#F7241D] hover:underline";
 
-/** Only ever follow same-origin paths from `?next=`; anything else goes home. */
+/**
+ * Only ever follow same-origin paths from `?next=`; anything else goes home.
+ *
+ * Resolve against the current origin rather than string-matching: the router
+ * and the URL parser both treat a leading backslash as a slash, so
+ * `"/\\evil.com"` is a *different origin* even though it starts with one slash
+ * and contains no scheme separator. Resolving also hands the router the exact
+ * path it will use, so it never rejects a value this function accepted.
+ */
 export function safeNext(raw: string | null, fallback: string): string {
   if (!raw) return fallback;
-  if (!raw.startsWith("/") || raw.startsWith("//") || raw.includes("://")) return fallback;
-  return raw;
+  try {
+    const url = new URL(raw, window.location.href);
+    if (url.origin !== window.location.origin) return fallback;
+    return url.pathname + url.search + url.hash;
+  } catch {
+    return fallback;
+  }
 }

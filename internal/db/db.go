@@ -358,9 +358,15 @@ type SystemConnection struct {
 }
 
 // UpsertSystemConnection records (or replaces) a receiver's connection. The
-// PRIMARY KEY on system_id means a new pod taking over evicts any prior row;
-// the previous holding pod's heartbeat will then return 0 rows affected and
-// the local socket should be dropped.
+// PRIMARY KEY on system_id means a new socket taking over evicts any prior row;
+// the previous holder's heartbeat will then return 0 rows affected and the
+// local socket should be dropped.
+//
+// c.PodID must be the *connection's* identity, not the process's: two sockets
+// for one system can be live at once (a reconnect overlapping its predecessor),
+// and whichever tears down first must not delete the row the other still owns.
+// recvhub therefore writes a per-socket value here. Keying on a bare pod id
+// would make the predecessor's cleanup match the successor's row.
 func (d *DB) UpsertSystemConnection(ctx context.Context, c *SystemConnection) error {
 	_, err := d.conn.ExecContext(ctx,
 		`INSERT INTO system_connections
@@ -382,8 +388,9 @@ func (d *DB) UpsertSystemConnection(ctx context.Context, c *SystemConnection) er
 }
 
 // TouchSystemConnection bumps last_ping_at iff the current row still belongs
-// to this pod. Returns (true, nil) if our row was bumped; (false, nil) means
-// another pod has taken over and the caller should close its local socket.
+// to this connection. Returns (true, nil) if our row was bumped; (false, nil)
+// means another connection has taken over and the caller should close its
+// local socket.
 func (d *DB) TouchSystemConnection(ctx context.Context, systemID int64, podID string) (bool, error) {
 	res, err := d.conn.ExecContext(ctx,
 		`UPDATE system_connections SET last_ping_at = NOW()
@@ -395,8 +402,9 @@ func (d *DB) TouchSystemConnection(ctx context.Context, systemID int64, podID st
 	return n > 0, nil
 }
 
-// DeleteSystemConnection removes the row iff it still belongs to this pod.
-// A no-op if another pod has already taken over.
+// DeleteSystemConnection removes the row iff it still belongs to this
+// connection. A no-op if another connection has already taken over, so a
+// sibling socket's row survives the first socket's teardown.
 func (d *DB) DeleteSystemConnection(ctx context.Context, systemID int64, podID string) error {
 	_, err := d.conn.ExecContext(ctx,
 		`DELETE FROM system_connections WHERE system_id = $1 AND pod_id = $2`,

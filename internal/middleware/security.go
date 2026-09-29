@@ -69,6 +69,10 @@ func AuthRateLimit(limit int, window time.Duration, trustedCIDRs []string) (func
 		if !isTrusted(ip) {
 			return ip.String()
 		}
+		// Walk the chain newest -> oldest and return the first untrusted
+		// address. Append-style proxies leave a client-supplied prefix on the
+		// left, which walking oldest-first would trust; the rightmost untrusted
+		// entry is the address the outermost trusted hop actually observed.
 		chain := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
 		for i := len(chain) - 1; i >= 0; i-- {
 			candidate := net.ParseIP(strings.TrimSpace(chain[i]))

@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/the-it-dept/rfspager/internal/install"
 )
 
 type Handlers struct {
@@ -276,19 +277,33 @@ func (h *Handlers) Respond(w http.ResponseWriter, r *http.Request) {
 	user := GetUser(r.Context())
 	messageID := chi.URLParam(r, "id")
 
-	// Toggle: delete if exists, create if not
-	var exists bool
-	h.db.GetContext(r.Context(), &exists,
-		`SELECT EXISTS(SELECT 1 FROM responding WHERE user_id = $1 AND message_id = $2)`,
-		user.ID, messageID)
-
-	if exists {
-		h.db.ExecContext(r.Context(), `DELETE FROM responding WHERE user_id = $1 AND message_id = $2`, user.ID, messageID)
-	} else {
-		h.db.ExecContext(r.Context(), `INSERT INTO responding (user_id, message_id, created_at, updated_at) VALUES ($1, $2, NOW(), NOW())`, user.ID, messageID)
+	// Atomic toggle. The previous SELECT EXISTS + separate INSERT/DELETE let
+	// concurrent requests all observe "not responding" and all insert, so one
+	// user could appear several times in the responder list. One statement now
+	// decides and flips; the unique (message_id, user_id) constraint backs the
+	// ON CONFLICT as a second line of defence.
+	var responding bool
+	err := h.db.QueryRowContext(r.Context(), `
+		WITH deleted AS (
+			DELETE FROM responding
+			 WHERE user_id = $1 AND message_id = $2
+			 RETURNING 1
+		)
+		INSERT INTO responding (user_id, message_id, created_at, updated_at)
+		SELECT $1, $2, NOW(), NOW()
+		 WHERE NOT EXISTS (SELECT 1 FROM deleted)
+		ON CONFLICT (message_id, user_id) DO NOTHING
+		RETURNING true`,
+		user.ID, messageID).Scan(&responding)
+	switch {
+	case err == sql.ErrNoRows:
+		responding = false
+	case err != nil:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"responding": !exists})
+	writeJSON(w, http.StatusOK, map[string]any{"responding": responding})
 }
 
 // --- Capcodes ---
@@ -323,12 +338,21 @@ func (h *Handlers) ListCapcodes(w http.ResponseWriter, r *http.Request) {
 
 	// Use LIMIT n+1 trick for fast pagination
 	offset := (page - 1) * perPage
+	if offset < 0 {
+		// A page near math.MaxInt64 overflows the int64 product and wraps
+		// negative; Postgres rejects a negative OFFSET (2201X).
+		offset = 0
+	}
 	fetchLimit := perPage + 1
 	args = append(args, fetchLimit, offset)
-	rows, _ := h.db.QueryxContext(r.Context(),
+	rows, err := h.db.QueryxContext(r.Context(),
 		`SELECT c.id, c.address, c.alias, c.icon, c.colour, c.agency_id, a.agency as agency_name
 		 FROM capcodes c LEFT JOIN agencies a ON a.id = c.agency_id
 		 WHERE `+where+` ORDER BY c.alias ASC LIMIT $`+strconv.Itoa(argIdx)+` OFFSET $`+strconv.Itoa(argIdx+1), args...)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 	defer rows.Close()
 
 	data := []map[string]any{}
@@ -354,10 +378,14 @@ func (h *Handlers) ListCapcodes(w http.ResponseWriter, r *http.Request) {
 // --- Agencies ---
 
 func (h *Handlers) ListAgencies(w http.ResponseWriter, r *http.Request) {
-	rows, _ := h.db.QueryxContext(r.Context(),
+	rows, err := h.db.QueryxContext(r.Context(),
 		`SELECT a.id, a.agency as name,
 		 (SELECT COUNT(*) FROM capcodes c WHERE c.agency_id = a.id AND c.deleted_at IS NULL) as capcode_count
 		 FROM agencies a ORDER BY a.agency ASC`)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 	defer rows.Close()
 	data := []map[string]any{}
 	for rows.Next() {
@@ -386,7 +414,7 @@ func (h *Handlers) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req)
 
 	_, err := h.db.ExecContext(r.Context(),
-		`INSERT INTO subscriptions (user_id, capcode_id, created_at, updated_at) VALUES ($1, $2, NOW(), NOW()) ON CONFLICT DO NOTHING`,
+		`INSERT INTO subscriptions (user_id, capcode_id, created_at, updated_at) VALUES ($1, $2, NOW(), NOW()) ON CONFLICT (user_id, capcode_id) DO NOTHING`,
 		user.ID, req.CapcodeID)
 	if err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
@@ -419,7 +447,7 @@ func (h *Handlers) CreateFilter(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req)
 
 	h.db.ExecContext(r.Context(),
-		`INSERT INTO filters (user_id, capcode_id, created_at, updated_at) VALUES ($1, $2, NOW(), NOW()) ON CONFLICT DO NOTHING`,
+		`INSERT INTO filters (user_id, capcode_id, created_at, updated_at) VALUES ($1, $2, NOW(), NOW()) ON CONFLICT (user_id, capcode_id) DO NOTHING`,
 		user.ID, req.CapcodeID)
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "ok"})
 }
@@ -653,9 +681,13 @@ func (h *Handlers) MySystems(w http.ResponseWriter, r *http.Request) {
 		rows.MapScan(row)
 		cleanMapScan(row)
 
-		// Attach a ready-to-run install command if we have an api_key (i.e. approved).
+		// Attach a ready-to-run install command if we have an api_key (i.e.
+		// approved). Built by the same helper the admin API and the served
+		// script use, so the origin, the quoting and the token flag cannot
+		// drift apart — the hardcoded host and the bare interpolation this
+		// replaced disagreed with both.
 		if key, ok := row["api_key"].(string); ok && key != "" {
-			row["install_command"] = "curl -fsSL https://rfspager.app/install.sh | sudo bash -s -- --api-key=" + key
+			row["install_command"] = install.CommandFor(r, key)
 		}
 
 		data = append(data, row)
@@ -667,8 +699,12 @@ func (h *Handlers) MySystems(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) ListAlertzones(w http.ResponseWriter, r *http.Request) {
 	user := GetUser(r.Context())
-	rows, _ := h.db.QueryxContext(r.Context(),
+	rows, err := h.db.QueryxContext(r.Context(),
 		`SELECT id, name, lat, lng, radius FROM alertzones WHERE user_id = $1`, user.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 	defer rows.Close()
 	data := []map[string]any{}
 	for rows.Next() {
@@ -815,9 +851,18 @@ func (h *Handlers) ListMajorIncidents(w http.ResponseWriter, r *http.Request) {
 
 	fetchLimit := perPage + 1
 	offset := (page - 1) * perPage
-	rows, _ := h.db.QueryxContext(r.Context(),
+	if offset < 0 {
+		// A page near math.MaxInt64 overflows the int64 product and wraps
+		// negative; Postgres rejects a negative OFFSET (2201X).
+		offset = 0
+	}
+	rows, err := h.db.QueryxContext(r.Context(),
 		`SELECT id, title, category, geometry, data, created_at, updated_at
 		 FROM majorincidents ORDER BY created_at DESC LIMIT $1 OFFSET $2`, fetchLimit, offset)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 	defer rows.Close()
 	data := []map[string]any{}
 	for rows.Next() {
@@ -854,9 +899,18 @@ func (h *Handlers) ListHazardReductions(w http.ResponseWriter, r *http.Request) 
 
 	fetchLimit := perPage + 1
 	offset := (page - 1) * perPage
-	rows, _ := h.db.QueryxContext(r.Context(),
+	if offset < 0 {
+		// A page near math.MaxInt64 overflows the int64 product and wraps
+		// negative; Postgres rejects a negative OFFSET (2201X).
+		offset = 0
+	}
+	rows, err := h.db.QueryxContext(r.Context(),
 		`SELECT id, title, "leadAgency", "supportingAgencies", lga, size, tenure, geometry, start_at, end_at, created_at
 		 FROM hazardreductions ORDER BY start_at DESC LIMIT $1 OFFSET $2`, fetchLimit, offset)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 	defer rows.Close()
 	data := []map[string]any{}
 	for rows.Next() {
@@ -906,10 +960,19 @@ func (h *Handlers) ListPhotos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offset := (page - 1) * perPage
+	if offset < 0 {
+		// A page near math.MaxInt64 overflows the int64 product and wraps
+		// negative; Postgres rejects a negative OFFSET (2201X).
+		offset = 0
+	}
 	args = append(args, perPage, offset)
-	rows, _ := h.db.QueryxContext(r.Context(),
+	rows, err := h.db.QueryxContext(r.Context(),
 		`SELECT p.id, p.photo_id, p.url, p.thumb, p.created_at, p.user_id
 		 FROM photos p WHERE `+where+` ORDER BY p.created_at DESC LIMIT $`+strconv.Itoa(argIdx)+` OFFSET $`+strconv.Itoa(argIdx+1), args...)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 	defer rows.Close()
 	data := []map[string]any{}
 	for rows.Next() {

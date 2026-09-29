@@ -108,8 +108,9 @@ func claimOwnership(ctx context.Context, tx *sqlx.Tx, platform, identifier strin
 			(platform, original_transaction_id, user_id, updated_at)
 		VALUES ($1, $2, $3, NOW())
 		ON CONFLICT (platform, original_transaction_id) DO UPDATE
-			SET updated_at = NOW()
-			WHERE iap_subscription_ownership.user_id = EXCLUDED.user_id
+			SET updated_at = NOW(), user_id = EXCLUDED.user_id
+			WHERE iap_subscription_ownership.user_id IS NULL
+			   OR iap_subscription_ownership.user_id = EXCLUDED.user_id
 		RETURNING user_id`, platform, identifier, userID)
 	if err == nil && ownerID != nil && *ownerID == userID {
 		return nil

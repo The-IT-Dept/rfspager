@@ -436,6 +436,7 @@ func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		`DELETE FROM alertzones         WHERE user_id = $1`,
 		`DELETE FROM installations      WHERE user_id = $1`,
 		`DELETE FROM iap_transactions   WHERE user_id = $1`,
+		`DELETE FROM iap_subscription_ownership WHERE user_id = $1`,
 		`DELETE FROM photos             WHERE user_id = $1`,
 		`DELETE FROM sessions           WHERE user_id = $1`,
 		`DELETE FROM social_providers   WHERE user_id = $1`,

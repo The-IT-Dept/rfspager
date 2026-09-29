@@ -298,23 +298,23 @@ func (h *Handlers) ApproveSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	update := map[string]any{
-		"approved_at": "NOW()",
-	}
-	// Preserve existing key if one was already issued; otherwise mint one.
-	apiKey, _ := row["api_key"].(string)
-	if apiKey == "" {
-		apiKey, err = generateAPIKey()
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate api key"})
-			return
-		}
-		update["api_key"] = apiKey
+	// Preserve an existing key if one was already issued; otherwise mint one.
+	// The pre-read is a race: two concurrent approvals both see an empty key
+	// and both mint, so the UPDATE must be atomic and the value it persists is
+	// the only one a caller may trust — hence RETURNING instead of echoing the
+	// locally generated candidate.
+	candidate, err := generateAPIKey()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate api key"})
+		return
 	}
 
-	if _, err := h.store.db.ExecContext(r.Context(),
-		`UPDATE systems SET approved_at = NOW(), api_key = COALESCE(api_key, $1), updated_at = NOW() WHERE id = $2`,
-		apiKey, id); err != nil {
+	var apiKey string
+	if err := h.store.db.QueryRowContext(r.Context(),
+		`UPDATE systems SET approved_at = NOW(), api_key = COALESCE(api_key, $1), updated_at = NOW()
+		  WHERE id = $2
+		  RETURNING api_key`,
+		candidate, id).Scan(&apiKey); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -729,6 +729,23 @@ func (h *Handlers) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// GetAdminUser returns a single administrator for the console's edit form.
+// Returns the bare record, which is what the client's `r.data?.[0] || r`
+// fallback expects.
+func (h *Handlers) GetAdminUser(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	row, err := h.store.GetAdminUser(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, row)
 }
 
 func (h *Handlers) CreateAdminUser(w http.ResponseWriter, r *http.Request) {

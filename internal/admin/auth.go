@@ -180,7 +180,7 @@ func (h *AuthHandler) jwtAuth(next http.Handler, allowQueryToken bool) http.Hand
 func (h *AuthHandler) RequireSuperadmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user := GetAdminUser(r.Context())
-		if user == nil || user.Role != "superadmin" {
+		if user == nil || !strings.EqualFold(strings.TrimSpace(user.Role), "superadmin") {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "superadmin required"})
 			return
 		}

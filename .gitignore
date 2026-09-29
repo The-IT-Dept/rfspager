@@ -150,3 +150,6 @@ migrate-spike
 
 # Allow documentation templates while ignoring local credentials.
 !**/.env.example
+
+# Strix security-scan output
+strix_runs/

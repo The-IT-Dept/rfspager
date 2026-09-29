@@ -10,7 +10,10 @@ import (
 //go:embed install.sh
 var installScript string
 
-var scriptTmpl = template.Must(template.New("install.sh").Parse(installScript))
+// shq is exposed to the template so the rendered script can single-quote the
+// one value it does not control.
+var scriptTmpl = template.Must(template.New("install.sh").Funcs(
+	template.FuncMap{"shq": shellQuote}).Parse(installScript))
 
 // Script serves the installer. It is deliberately unauthenticated: the script
 // is not a secret, it is a public recipe. The receiver token the operator
@@ -34,8 +37,23 @@ var ConfiguredBaseURL string
 
 // CommandFor renders the one-liner a system owner runs on their Pi. Kept here
 // so the command and the script that serves it cannot drift apart.
+//
+// Every interpolated value is single-quoted: BaseURLFor returns a value built
+// from request headers, and an unquoted `https://evil"; id; echo "` is split by
+// the shell into three commands. The token is quoted too, so a key that starts
+// with `-` or contains a space cannot be read as an option or a second
+// argument. shellQuote keeps the rendered command readable when the value is
+// the ordinary case.
 func CommandFor(r *http.Request, token string) string {
-	return "curl -fsSL " + BaseURLFor(r, ConfiguredBaseURL) + "/api/install | sudo bash -s -- " + token
+	return "curl -fsSL " + shellQuote(BaseURLFor(r, ConfiguredBaseURL)) +
+		"/api/install | sudo bash -s -- " + shellQuote(token)
+}
+
+// shellQuote wraps v in single quotes for POSIX sh. A literal single quote is
+// emitted as '\” (close, escaped quote, reopen) so the result is safe for any
+// byte sequence a header or API key can carry.
+func shellQuote(v string) string {
+	return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
 }
 
 // BaseURLFor prefers the configured origin and otherwise reconstructs the one

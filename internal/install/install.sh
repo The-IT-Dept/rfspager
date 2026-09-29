@@ -10,7 +10,10 @@
 # way to upgrade.
 set -euo pipefail
 
-SERVER_URL="{{.BaseURL}}"
+# Single-quoted: the value is assembled from request headers and may carry a
+# double quote, a semicolon or a command substitution. (Braces in this comment
+# would be read as template actions, hence the spelling.)
+SERVER_URL={{shq .BaseURL}}
 BIN_DIR=/opt/rfspager
 ETC_DIR=/etc/rfspager
 UNIT=/etc/systemd/system/rfspager-receiver.service
@@ -20,7 +23,11 @@ say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m==>\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mx\033[0m %s\n' "$*" >&2; exit 1; }
 
+# The app renders the token as --api-key=<token>; the admin/mobile one-liner
+# passes it bare. Accept both, and strip a leading --api-key= so the value sent
+# as the apikey header is the key itself.
 TOKEN="${1:-}"
+TOKEN="${TOKEN#--api-key=}"
 [ -n "$TOKEN" ] || die "Usage: curl -fsSL $SERVER_URL/api/install | sudo bash -s -- <token>"
 [ "$(id -u)" = "0" ] || die "This needs root. Pipe it to 'sudo bash' rather than 'bash'."
 command -v systemctl >/dev/null || die "No systemd here; this installer only supports systemd hosts."

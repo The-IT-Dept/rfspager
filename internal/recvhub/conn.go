@@ -11,6 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/google/uuid"
 	"github.com/the-it-dept/rfspager/internal/db"
 	"github.com/the-it-dept/rfspager/internal/models"
 )
@@ -33,6 +34,13 @@ type Conn struct {
 	// on disconnect.
 	connectedAt time.Time
 
+	// podID is this connection's identity in system_connections. It is derived
+	// from PodID but is per-socket, because two sockets for one system can be
+	// live on the same process at once and whichever tears down first must not
+	// delete the row the other still owns. Using the process-wide recvhub.PodID
+	// here is what made a takeover delete the successor's own row.
+	podID string
+
 	// emittedConnect tracks whether we wrote a `receiver_connected` event
 	// for this socket. Determines whether the deferred disconnect emitter
 	// fires a paired event.
@@ -50,6 +58,7 @@ func newConn(hub *Hub, ws *websocket.Conn, sys *models.System) *Conn {
 		System:   sys,
 		ws:       ws,
 		hub:      hub,
+		podID:    PodID + ":" + uuid.NewString()[:8],
 		sendCh:   make(chan Frame, 32),
 		closed:   make(chan struct{}),
 	}
@@ -62,7 +71,7 @@ func (c *Conn) run(ctx context.Context, database *db.DB) {
 	defer c.closeWithReason("loop exit")
 	defer c.hub.Unregister(c)
 	defer func() {
-		_ = database.DeleteSystemConnection(context.Background(), c.SystemID, PodID)
+		_ = database.DeleteSystemConnection(context.Background(), c.SystemID, c.podID)
 	}()
 	// Defer the receiver_disconnected event last so it lands even if other
 	// cleanup paths panic. Uses background context because r.Context() is
@@ -91,7 +100,7 @@ func (c *Conn) run(ctx context.Context, database *db.DB) {
 	dongles, _ := json.Marshal(hello.Dongles)
 	if err := database.UpsertSystemConnection(ctx, &db.SystemConnection{
 		SystemID:         c.SystemID,
-		PodID:            PodID,
+		PodID:            c.podID,
 		ReceiverVersion:  nullableString(hello.Version),
 		ReceiverOS:       nullableString(hello.OS),
 		ReceiverArch:     nullableString(hello.Arch),
@@ -164,7 +173,7 @@ func (c *Conn) run(ctx context.Context, database *db.DB) {
 					c.closeWithReason("receiver authorization revoked")
 					return
 				}
-				ok, err := database.TouchSystemConnection(context.Background(), c.SystemID, PodID)
+				ok, err := database.TouchSystemConnection(context.Background(), c.SystemID, c.podID)
 				if err != nil {
 					slog.Warn("touch connection failed", "err", err)
 					continue

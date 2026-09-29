@@ -6,7 +6,13 @@ import { api } from "~/lib/api";
 export default function EditAdminUserPage() {
   const { id } = useParams();
   const [data, setData] = useState<Record<string, any> | null>(null);
-  useEffect(() => { api.get(`/admin-users/${id}`).then((r) => setData(r.data?.[0] || r)); }, [id]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api.get(`/admin-users/${id}`)
+      .then((r) => setData(r.data?.[0] || r))
+      .catch((e) => setError(e.message || "Failed to load"));
+  }, [id]);
+  if (error) return <p className="text-destructive">{error}</p>;
   if (!data) return <p className="text-muted-foreground">Loading...</p>;
   return <ResourceForm title="Edit Admin User" fields={[
     { name: "email", label: "Email", type: "email", required: true },

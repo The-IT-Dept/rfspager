@@ -29,9 +29,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // Stats returns aggregate counts for the homepage.
 func (h *Handlers) Stats(w http.ResponseWriter, r *http.Request) {
 	var stats struct {
-		CapcodeCount     int `json:"capcode_count" db:"capcode_count"`
-		MessageCount30d  int `json:"message_count_30d" db:"message_count_30d"`
-		IncidentCount    int `json:"incident_count" db:"incident_count"`
+		CapcodeCount    int `json:"capcode_count" db:"capcode_count"`
+		MessageCount30d int `json:"message_count_30d" db:"message_count_30d"`
+		IncidentCount   int `json:"incident_count" db:"incident_count"`
 	}
 
 	h.db.GetContext(r.Context(), &stats.CapcodeCount,
@@ -90,9 +90,18 @@ func (h *Handlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	perPage, _ := strconv.Atoi(q.Get("per_page"))
-	if page < 1 { page = 1 }
-	if perPage < 1 || perPage > 100 { perPage = 50 }
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 100 {
+		perPage = 50
+	}
 	offset := (page - 1) * perPage
+	if offset < 0 {
+		// A page near math.MaxInt64 overflows the int64 product and wraps
+		// negative; Postgres rejects a negative OFFSET (2201X).
+		offset = 0
+	}
 
 	where := "m.deleted_at IS NULL AND m.capcode_id IS NOT NULL"
 	args := []any{}
@@ -177,7 +186,9 @@ func (h *Handlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) MapMessages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	if limit < 1 || limit > 500 { limit = 100 }
+	if limit < 1 || limit > 500 {
+		limit = 100
+	}
 
 	after := time.Now().Add(-24 * time.Hour)
 	if a := q.Get("created_after"); a != "" {
@@ -312,6 +323,9 @@ func (h *Handlers) ListCapcodes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offset := (page - 1) * perPage
+	if offset < 0 {
+		offset = 0
+	}
 	args = append(args, perPage+1, offset)
 	rows, err := h.db.QueryxContext(r.Context(),
 		`SELECT c.id, c.address, c.alias, c.icon, c.colour, c.agency_id,
@@ -500,13 +514,13 @@ func (h *Handlers) SystemUptime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"uuid":              uuid,
-		"window_days":       7,
-		"window_start":      windowStart,
-		"uptime_percent":    uptimePct,
-		"downtime_seconds":  int(totalDown.Seconds()),
+		"uuid":               uuid,
+		"window_days":        7,
+		"window_start":       windowStart,
+		"uptime_percent":     uptimePct,
+		"downtime_seconds":   int(totalDown.Seconds()),
 		"downtime_intervals": downIntervals,
-		"currently_offline": openInterval,
+		"currently_offline":  openInterval,
 	})
 }
 

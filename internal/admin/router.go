@@ -27,6 +27,7 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier) chi.Router
 
 		// Users
 		r.Route("/users", func(r chi.Router) {
+			r.Use(auth.RequireSuperadmin)
 			r.Get("/", h.ListUsers)
 			r.Post("/", h.CreateUser)
 			r.Get("/{id}", h.GetUser)
@@ -68,7 +69,7 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier) chi.Router
 			r.Get("/{id}", h.GetSystem)
 			r.Put("/{id}", h.UpdateSystem)
 			r.Delete("/{id}", h.DeleteSystem)
-			r.Post("/{id}/approve", h.ApproveSystem)
+			r.With(auth.RequireSuperadmin).Post("/{id}/approve", h.ApproveSystem)
 		})
 
 		// Messages
@@ -144,6 +145,7 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier) chi.Router
 		r.Route("/admin-users", func(r chi.Router) {
 			r.Use(auth.RequireSuperadmin)
 			r.Get("/", h.ListAdminUsers)
+			r.Get("/{id}", h.GetAdminUser)
 			r.Post("/", h.CreateAdminUser)
 			r.Put("/{id}", h.UpdateAdminUser)
 			r.With(auth.PreventSelfAdminDelete).Delete("/{id}", h.DeleteAdminUser)
