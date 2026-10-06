@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.3.1](https://github.com/The-IT-Dept/rfspager/compare/v5.3.0...v5.3.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* **deps:** clear high and critical audit findings in web and mobile ([2c35e4f](https://github.com/The-IT-Dept/rfspager/commit/2c35e4fb6f585418704394f52bd4fa7542802c72))
+* **iap:** read real store state for Apple renewals and Google cancellations ([a4048b8](https://github.com/The-IT-Dept/rfspager/commit/a4048b818e2cc825c85fa77d4ab8dfddeea9e8e2))
+* **install:** replace the old Docker agent and keep radio tuning on upgrade ([c3a32e7](https://github.com/The-IT-Dept/rfspager/commit/c3a32e762c0b15f6e586311a64a91936ce1cca25))
+* **web:** keep AdSense off the admin panel ([f324d45](https://github.com/The-IT-Dept/rfspager/commit/f324d452588fcd6b69be0df6bde2f4be3a2c950b))
+* **web:** ship apple-app-site-association for iOS universal links ([3c60b2f](https://github.com/The-IT-Dept/rfspager/commit/3c60b2f645de58404fc2497f6feb8fe6176691d6))
+
 ## [5.3.0](https://github.com/The-IT-Dept/rfspager/compare/v5.2.1...v5.3.0) (2026-10-06)
 
 
