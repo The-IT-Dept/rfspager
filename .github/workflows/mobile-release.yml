@@ -235,15 +235,20 @@ jobs:
           echo "installing NDK $rn_ndk and the AGP default 27.0.12077973"
           yes | sdkmanager --install "ndk;$rn_ndk" "ndk;27.0.12077973" > /dev/null
 
-      # The generated defaults (2 GB heap, serial, no build cache) leave most of
-      # the runner idle during the long native compile.
+      # The generated defaults (2 GB heap, 512 MB Metaspace, serial, no build
+      # cache) starve the build: the Gradle and Kotlin daemons looped on
+      # OutOfMemoryError: Metaspace until the job timed out. The Kotlin daemon
+      # gets its own limits rather than inheriting Gradle's. ~10.5 GB in total
+      # leaves the 16 GB runner room for the parallel native compiles.
       - name: Tune Gradle for the runner
         run: |
           {
-            echo "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+            echo "org.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1536m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8"
+            echo "kotlin.daemon.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=1g"
             echo "org.gradle.parallel=true"
             echo "org.gradle.caching=true"
           } >> android/gradle.properties
+          grep -E "^(org.gradle.jvmargs|kotlin.daemon.jvmargs)=" android/gradle.properties
 
       - name: Write signing material
         id: signing
