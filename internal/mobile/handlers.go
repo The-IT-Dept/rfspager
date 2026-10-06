@@ -59,14 +59,16 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 
 	var result struct {
 		AuthUser
-		NotificationsCount       int `db:"notifications_count" json:"notifications_count"`
-		UnreadNotificationsCount int `db:"unread_notifications_count" json:"unread_notifications_count"`
+		NotificationsCount       int  `db:"notifications_count" json:"notifications_count"`
+		UnreadNotificationsCount int  `db:"unread_notifications_count" json:"unread_notifications_count"`
+		HasPassword              bool `db:"has_password" json:"has_password"`
 	}
 	err := h.db.GetContext(r.Context(), &result,
 		`SELECT id, user_id, name, email, subscription_valid, subscription_product_id,
 		 subscription_expiry, will_renew, subscription_platform, superuser,
 		 (SELECT COUNT(*) FROM notifications WHERE notifiable_id = u.id AND notifiable_type = 'App\Models\User') as notifications_count,
-		 (SELECT COUNT(*) FROM notifications WHERE notifiable_id = u.id AND notifiable_type = 'App\Models\User' AND read_at IS NULL) as unread_notifications_count
+		 (SELECT COUNT(*) FROM notifications WHERE notifiable_id = u.id AND notifiable_type = 'App\Models\User' AND read_at IS NULL) as unread_notifications_count,
+		 `+hasPasswordSQL+` AS has_password
 		 FROM users u WHERE u.id = $1`, user.ID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch user"})

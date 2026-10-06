@@ -205,6 +205,47 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// hasPasswordSQL is true when the account holder knows a password: they set
+// one themselves (password_changed_at), or the account was not created by
+// social sign-in. Social sign-up stored a hash the user never saw (random under
+// Laravel, the unusable '!' here). "Created by" means the provider was linked
+// within five minutes of the account; links added later belong to accounts
+// that registered with an email and password. Expects users aliased as u.
+const hasPasswordSQL = `(u.password_changed_at IS NOT NULL OR (
+	u.password IS NOT NULL AND u.password <> '!' AND NOT EXISTS (
+		SELECT 1 FROM social_providers sp
+		 WHERE sp.user_id = u.id AND sp.created_at <= u.created_at + interval '5 minutes')))`
+
+// passwordState returns the stored hash and whether the user knows a password.
+func (h *AuthHandler) passwordState(ctx context.Context, userID int64) (hash string, known bool, err error) {
+	var stored sql.NullString
+	err = h.db.QueryRowContext(ctx, `SELECT u.password, `+hasPasswordSQL+` FROM users u WHERE u.id = $1`, userID).Scan(&stored, &known)
+	return stored.String, known, err
+}
+
+// checkCurrentPassword enforces the current password when the account has one
+// the user knows. It writes the error response and returns false on failure.
+func (h *AuthHandler) checkCurrentPassword(w http.ResponseWriter, r *http.Request, userID int64, current string) bool {
+	hash, known, err := h.passwordState(r.Context(), userID)
+	if err != nil {
+		slog.Error("failed to load password state", "error", err, "user_id", userID)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return false
+	}
+	if !known {
+		return true
+	}
+	if current == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "current password is required"})
+		return false
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(current)); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "current password is incorrect"})
+		return false
+	}
+	return true
+}
+
 func (h *AuthHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	user := GetUser(r.Context())
 	if user == nil {
@@ -231,15 +272,9 @@ func (h *AuthHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify current password
-	var currentHash string
-	if err := h.db.QueryRowContext(r.Context(), `SELECT password FROM users WHERE id = $1`, user.ID).Scan(&currentHash); err != nil {
-		slog.Error("failed to load current password", "error", err, "user_id", user.ID)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	if err := bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(req.CurrentPassword)); err != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "current password is incorrect"})
+	// Accounts created by social sign-in have no password the user knows;
+	// they set one here without a current password.
+	if !h.checkCurrentPassword(w, r, user.ID, req.CurrentPassword) {
 		return
 	}
 
@@ -255,7 +290,10 @@ func (h *AuthHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(r.Context(), `UPDATE users SET password = $1, token_version = token_version + 1, updated_at = NOW() WHERE id = $2`, string(hash), user.ID); err != nil {
+	var tokenVersion int64
+	if err := tx.QueryRowContext(r.Context(),
+		`UPDATE users SET password = $1, password_changed_at = NOW(), token_version = token_version + 1, updated_at = NOW()
+		  WHERE id = $2 RETURNING token_version`, string(hash), user.ID).Scan(&tokenVersion); err != nil {
 		slog.Error("failed to update password", "error", err, "user_id", user.ID)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
@@ -269,7 +307,16 @@ func (h *AuthHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	// The token_version bump signs out every other session; hand this one a
+	// fresh token so changing a password does not log the user out here too.
+	refreshed := *user
+	refreshed.TokenVersion = tokenVersion
+	token, err := h.generateToken(&refreshed)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "token": token})
 }
 
 // UpdateProfile patches the current user's editable fields. Name can be
@@ -300,17 +347,7 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid email"})
 			return
 		}
-		if req.CurrentPassword == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "current_password required to change email"})
-			return
-		}
-		var hash string
-		if err := h.db.QueryRowContext(r.Context(), `SELECT password FROM users WHERE id = $1`, user.ID).Scan(&hash); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-			return
-		}
-		if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.CurrentPassword)); err != nil {
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "current password is incorrect"})
+		if !h.checkCurrentPassword(w, r, user.ID, req.CurrentPassword) {
 			return
 		}
 	}
@@ -338,7 +375,7 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		     updated_at = NOW()
 		 WHERE id = $3
 		 RETURNING id, user_id, name, email, subscription_valid, subscription_product_id,
-		           subscription_expiry, will_renew, subscription_platform, superuser`
+		           subscription_expiry, will_renew, subscription_platform, superuser, token_version`
 	var tx *sqlx.Tx
 	if emailChanging {
 		tx, err = h.db.BeginTxx(r.Context(), nil)
@@ -357,7 +394,7 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		&updated.ID, &updated.UserID, &updated.Name, &updated.Email,
 		&updated.SubscriptionValid, &updated.SubscriptionProductID,
 		&updated.SubscriptionExpiry, &updated.WillRenew, &updated.SubscriptionPlatform,
-		&updated.Superuser)
+		&updated.Superuser, &updated.TokenVersion)
 	if err != nil {
 		// Most likely cause is the email unique constraint.
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
@@ -379,7 +416,19 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, updated)
+	// An email change bumps token_version, signing out every other session;
+	// return a fresh token so this one stays signed in.
+	resp := struct {
+		AuthUser
+		Token string `json:"token,omitempty"`
+	}{AuthUser: updated}
+	if emailChanging {
+		if resp.Token, err = h.generateToken(&updated); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // DeleteAccount hard-deletes the current user and all rows owned by them.
@@ -410,13 +459,9 @@ func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var hash string
-	if err := h.db.QueryRowContext(r.Context(), `SELECT password FROM users WHERE id = $1`, user.ID).Scan(&hash); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "password is incorrect"})
+	// Accounts without a password the user knows confirm with "DELETE" alone;
+	// Apple requires every account to be deletable in the app.
+	if !h.checkCurrentPassword(w, r, user.ID, req.Password) {
 		return
 	}
 
@@ -567,7 +612,7 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	if _, err := tx.ExecContext(r.Context(), `UPDATE users SET password = $1, token_version = token_version + 1, updated_at = NOW() WHERE id = $2`, string(passwordHash), userID); err != nil {
+	if _, err := tx.ExecContext(r.Context(), `UPDATE users SET password = $1, password_changed_at = NOW(), token_version = token_version + 1, updated_at = NOW() WHERE id = $2`, string(passwordHash), userID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}

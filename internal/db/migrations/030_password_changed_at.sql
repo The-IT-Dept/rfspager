@@ -1,0 +1,11 @@
+-- When the account holder last chose their own password.
+--
+-- Social sign-up never gave the user a password they know: Laravel stored a
+-- random bcrypt hash (Str::password()) and the Go server stores the unusable
+-- '!'. Those accounts must be able to *set* a password, change their email and
+-- delete themselves without a "current password" they never had. An account
+-- has a known password when this is set, or when it was not created by social
+-- sign-in (see mobile.hasPasswordSQL). NULL for every existing row: the rule
+-- derives the right answer for them, including accounts the old app keeps
+-- creating through Laravel.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ NULL;
