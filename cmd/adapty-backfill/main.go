@@ -181,18 +181,27 @@ func apply(ctx context.Context, conn *sqlx.DB, userID int64, p *patch) error {
 	// comparison, and they land on columns of differing types (varchar vs
 	// text). Without explicit casts Postgres cannot deduce one type for the
 	// parameter and rejects the statement with 42P08.
-	q := `UPDATE users SET
-		subscription_valid       = $1,
-		subscription_expiry      = $2,
-		subscription_product_id  = $3,
-		subscription_platform    = $4::text,
-		will_renew               = $5,
-		cancellation_reason      = COALESCE(NULLIF($6::text, ''), cancellation_reason),
-		apple_original_transaction_id = CASE WHEN $4::text = 'apple'  AND $7::text <> '' THEN $7::text ELSE apple_original_transaction_id END,
-		google_purchase_token         = CASE WHEN $4::text = 'google' AND $7::text <> '' THEN $7::text ELSE google_purchase_token END,
+	//
+	// Never shorten an entitlement granted elsewhere (a gift, a comp, a newer
+	// purchase): when the account is valid past Adapty's expiry, keep its
+	// subscription fields and only record the store IDs.
+	q := `WITH cur AS (
+		SELECT id, (subscription_valid AND (subscription_expiry IS NULL OR subscription_expiry > $2)) AS keep
+		  FROM users WHERE id = $8 FOR UPDATE
+	)
+	UPDATE users u SET
+		subscription_valid       = CASE WHEN cur.keep THEN u.subscription_valid ELSE $1 END,
+		subscription_expiry      = CASE WHEN cur.keep THEN u.subscription_expiry ELSE $2 END,
+		subscription_product_id  = CASE WHEN cur.keep THEN u.subscription_product_id ELSE $3 END,
+		subscription_platform    = CASE WHEN cur.keep THEN u.subscription_platform ELSE $4::text END,
+		will_renew               = CASE WHEN cur.keep THEN u.will_renew ELSE $5 END,
+		cancellation_reason      = CASE WHEN cur.keep THEN u.cancellation_reason ELSE COALESCE(NULLIF($6::text, ''), u.cancellation_reason) END,
+		apple_original_transaction_id = CASE WHEN $4::text = 'apple'  AND $7::text <> '' THEN $7::text ELSE u.apple_original_transaction_id END,
+		google_purchase_token         = CASE WHEN $4::text = 'google' AND $7::text <> '' THEN $7::text ELSE u.google_purchase_token END,
 		last_store_sync_at       = NOW(),
 		updated_at               = NOW()
-	 WHERE id = $8`
+	  FROM cur
+	 WHERE u.id = cur.id`
 	if _, err := tx.ExecContext(ctx, q,
 		p.Valid, p.Expiry, p.ProductID, p.Platform, p.WillRenew, p.CancellationReason, p.StoreOriginalID, userID,
 	); err != nil {

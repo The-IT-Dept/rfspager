@@ -42,7 +42,7 @@ func (f *FCMClient) Send(ctx context.Context, token, title, body string, badge i
 		},
 		Android: &messaging.AndroidConfig{
 			Notification: &messaging.AndroidNotification{
-				Color:             "#80000",
+				Color:             "#800000", // Laravel sent "#80000"; FCM requires #RRGGBB
 				Sound:             "default",
 				NotificationCount: intPtr(badge),
 			},

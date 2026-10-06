@@ -235,24 +235,35 @@ func (h *AdaptyWebhookHandler) apply(ctx context.Context, u adaptyUpdate, raw st
 		return userID, tx.Commit()
 	}
 
+	// The subscription fields are left alone when the account already holds
+	// an entitlement running past this event's expiry (a gift, a comp, or a
+	// newer purchase): an Adapty event only speaks for its own store
+	// subscription and must never shorten access granted elsewhere. Store
+	// IDs are still recorded.
+	//
 	// $4 and $8 appear both as assigned values and inside CASE comparisons
 	// against columns of differing types; the explicit casts stop Postgres
 	// rejecting the statement with 42P08.
 	err = tx.GetContext(ctx, &userID, `
-		UPDATE users SET
-			subscription_valid      = $1,
-			subscription_expiry     = $2,
-			subscription_product_id = COALESCE(NULLIF($3::text, ''), subscription_product_id),
-			subscription_platform   = COALESCE(NULLIF($4::text, ''), subscription_platform),
-			will_renew              = COALESCE($5, will_renew),
-			cancellation_reason     = COALESCE(NULLIF($6::text, ''), cancellation_reason),
-			adapty_id               = COALESCE(NULLIF($7::text, ''), adapty_id),
-			apple_original_transaction_id = CASE WHEN $4::text = 'apple'  AND $8::text <> '' THEN $8::text ELSE apple_original_transaction_id END,
-			google_purchase_token         = CASE WHEN $4::text = 'google' AND $8::text <> '' THEN $8::text ELSE google_purchase_token END,
+		WITH cur AS (
+			SELECT id, (subscription_valid AND (subscription_expiry IS NULL OR subscription_expiry > $2)) AS keep
+			  FROM users WHERE user_id = $9::uuid FOR UPDATE
+		)
+		UPDATE users u SET
+			subscription_valid      = CASE WHEN cur.keep THEN u.subscription_valid ELSE $1 END,
+			subscription_expiry     = CASE WHEN cur.keep THEN u.subscription_expiry ELSE $2 END,
+			subscription_product_id = CASE WHEN cur.keep THEN u.subscription_product_id ELSE COALESCE(NULLIF($3::text, ''), u.subscription_product_id) END,
+			subscription_platform   = CASE WHEN cur.keep THEN u.subscription_platform ELSE COALESCE(NULLIF($4::text, ''), u.subscription_platform) END,
+			will_renew              = CASE WHEN cur.keep THEN u.will_renew ELSE COALESCE($5, u.will_renew) END,
+			cancellation_reason     = CASE WHEN cur.keep THEN u.cancellation_reason ELSE COALESCE(NULLIF($6::text, ''), u.cancellation_reason) END,
+			adapty_id               = COALESCE(NULLIF($7::text, ''), u.adapty_id),
+			apple_original_transaction_id = CASE WHEN $4::text = 'apple'  AND $8::text <> '' THEN $8::text ELSE u.apple_original_transaction_id END,
+			google_purchase_token         = CASE WHEN $4::text = 'google' AND $8::text <> '' THEN $8::text ELSE u.google_purchase_token END,
 			last_adapty_sync_at     = NOW(),
 			updated_at              = NOW()
-		 WHERE user_id = $9::uuid
-		 RETURNING id`,
+		  FROM cur
+		 WHERE u.id = cur.id
+		 RETURNING u.id`,
 		u.Valid, u.Expiry, u.ProductID, u.Platform, u.WillRenew, u.CancellationReason,
 		u.ProfileID, u.StoreOriginalID, u.CustomerUserID,
 	)

@@ -102,3 +102,46 @@ func TestAdaptyWebhookUnknownUserIsAcknowledged(t *testing.T) {
 		t.Fatalf("unknown user should 200 so Adapty stops retrying, got %d", code)
 	}
 }
+
+func TestAdaptyWebhookNeverShortensEntitlementGrantedElsewhere(t *testing.T) {
+	h := testAdaptyDB(t)
+	// User 1 holds a gift running past the event's expiry (2026-10-24).
+	if _, err := h.db.Exec(`UPDATE users SET subscription_valid = true, subscription_expiry = '2026-12-13T00:00:00Z',
+		subscription_product_id = 'io.devlan.rfspager.gifted' WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	expired := strings.Replace(adaptyAppleAccessLevelUpdated, `"is_active": true`, `"is_active": false`, 1)
+	if code := postAdapty(t, h, expired); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	var valid bool
+	var product, apple sql.NullString
+	if err := h.db.QueryRow(`SELECT subscription_valid, subscription_product_id, apple_original_transaction_id FROM users WHERE id = 1`).
+		Scan(&valid, &product, &apple); err != nil {
+		t.Fatal(err)
+	}
+	if !valid || product.String != "io.devlan.rfspager.gifted" {
+		t.Fatalf("gift was overwritten: valid=%v product=%q", valid, product.String)
+	}
+	if apple.String != "230003643191093" {
+		t.Fatalf("store ID should still be recorded, got %q", apple.String)
+	}
+}
+
+func TestAdaptyWebhookRenewalExtendsActiveSubscription(t *testing.T) {
+	h := testAdaptyDB(t)
+	if _, err := h.db.Exec(`UPDATE users SET subscription_valid = true, subscription_expiry = '2026-09-24T05:46:18Z',
+		subscription_product_id = 'io.devlan.rfspager.monthly' WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if code := postAdapty(t, h, adaptyAppleAccessLevelUpdated); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	var expiry string
+	if err := h.db.QueryRow(`SELECT to_char(subscription_expiry AT TIME ZONE 'UTC', 'YYYY-MM-DD') FROM users WHERE id = 1`).Scan(&expiry); err != nil {
+		t.Fatal(err)
+	}
+	if expiry != "2026-10-24" {
+		t.Fatalf("renewal should extend expiry to 2026-10-24, got %s", expiry)
+	}
+}

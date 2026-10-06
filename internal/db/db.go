@@ -300,8 +300,14 @@ func (d *DB) GetPushTokensForUsers(ctx context.Context, userIDs []int64) ([]mode
 // GetUnreadNotificationCount returns the count of unread notifications for a user.
 func (d *DB) GetUnreadNotificationCount(ctx context.Context, userID int64) (int, error) {
 	var count int
+	// Capped: it only feeds the app badge, and old-app accounts can hold
+	// tens of thousands of unread rows. An exact count blocked push
+	// delivery for seconds per recipient on the 16 GB legacy table.
 	err := d.conn.GetContext(ctx, &count,
-		`SELECT COUNT(*) FROM notifications WHERE notifiable_id = $1 AND read_at IS NULL`, userID)
+		`SELECT COUNT(*) FROM (
+		     SELECT 1 FROM notifications
+		      WHERE notifiable_type = 'App\Models\User' AND notifiable_id = $1 AND read_at IS NULL
+		      LIMIT 99) capped`, userID)
 	return count, err
 }
 
