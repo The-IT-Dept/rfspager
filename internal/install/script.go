@@ -3,6 +3,7 @@ package install
 import (
 	_ "embed"
 	"net/http"
+	"regexp"
 	"strings"
 	"text/template"
 )
@@ -49,10 +50,19 @@ func CommandFor(r *http.Request, token string) string {
 		"/api/install | sudo bash -s -- " + shellQuote(token)
 }
 
-// shellQuote wraps v in single quotes for POSIX sh. A literal single quote is
-// emitted as '\” (close, escaped quote, reopen) so the result is safe for any
-// byte sequence a header or API key can carry.
+// shellSafe matches values the shell passes through as one literal word.
+// It excludes a leading "-" so a token can never be read as an option.
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./][A-Za-z0-9_@%+=:,./-]*$`)
+
+// shellQuote returns v unchanged when it is a plain word — the ordinary URL
+// and API key, so the command an owner copies stays readable — and otherwise
+// wraps it in single quotes for POSIX sh. A literal single quote is emitted
+// as '\” (close, escaped quote, reopen) so the result is safe for any byte
+// sequence a header or API key can carry.
 func shellQuote(v string) string {
+	if shellSafe.MatchString(v) {
+		return v
+	}
 	return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
 }
 
