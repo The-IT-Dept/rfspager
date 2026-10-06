@@ -89,11 +89,15 @@ platform :android do
     require_env("ANDROID_KEYSTORE_PATH", "ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_ALIAS", "ANDROID_KEY_PASSWORD")
     # The prebuilt project signs release with the debug key; the injected
     # properties replace that with the upload key for this build only.
+    #
+    # Only the ARM ABIs are compiled: x86/x86_64 Android devices are almost all
+    # emulators, and they doubled the native build time. ANDROID_ABIS overrides.
     gradle(
       project_dir: "android",
       task: "bundle",
       build_type: "Release",
       properties: {
+        "reactNativeArchitectures" => ENV.fetch("ANDROID_ABIS", "armeabi-v7a,arm64-v8a"),
         "android.injected.signing.store.file" => ENV["ANDROID_KEYSTORE_PATH"],
         "android.injected.signing.store.password" => ENV["ANDROID_KEYSTORE_PASSWORD"],
         "android.injected.signing.key.alias" => ENV["ANDROID_KEY_ALIAS"],

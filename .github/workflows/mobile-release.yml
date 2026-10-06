@@ -189,6 +189,11 @@ jobs:
         with:
           packages: ""
 
+      # Caches Gradle's dependency and wrapper downloads between runs.
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: false
+
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10
@@ -229,6 +234,16 @@ jobs:
           test -n "$rn_ndk" || { echo "::error::could not read React Native's ndkVersion"; exit 1; }
           echo "installing NDK $rn_ndk and the AGP default 27.0.12077973"
           yes | sdkmanager --install "ndk;$rn_ndk" "ndk;27.0.12077973" > /dev/null
+
+      # The generated defaults (2 GB heap, serial, no build cache) leave most of
+      # the runner idle during the long native compile.
+      - name: Tune Gradle for the runner
+        run: |
+          {
+            echo "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+            echo "org.gradle.parallel=true"
+            echo "org.gradle.caching=true"
+          } >> android/gradle.properties
 
       - name: Write signing material
         id: signing
