@@ -220,6 +220,16 @@ jobs:
       - name: Generate the native project
         run: npx expo prebuild --platform android --clean
 
+      # Gradle otherwise downloads NDKs mid-build, which has failed on the
+      # runner with a truncated archive. React Native pins one; native library
+      # modules that pin none fall back to the Android Gradle Plugin's default.
+      - name: Install the NDKs the build needs
+        run: |
+          rn_ndk="$(sed -nE 's/^ndkVersion = "([^"]+)"/\1/p' node_modules/react-native/gradle/libs.versions.toml)"
+          test -n "$rn_ndk" || { echo "::error::could not read React Native's ndkVersion"; exit 1; }
+          echo "installing NDK $rn_ndk and the AGP default 27.0.12077973"
+          yes | sdkmanager --install "ndk;$rn_ndk" "ndk;27.0.12077973" > /dev/null
+
       - name: Write signing material
         id: signing
         env:
