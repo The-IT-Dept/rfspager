@@ -10,12 +10,42 @@
 // paths. Prefer those when present; fall back to the local files so Metro and
 // local builds keep working unchanged.
 const appJson = require("./app.base.json");
+const pkg = require("./package.json");
+
+// The last build the previous app shipped to both stores. Every new build
+// number must exceed it or the stores reject the upload.
+const LAST_SHIPPED_BUILD = 530040100;
+
+// Store build number for a release-please version: 5.3.0 -> 550300000.
+// Layout is 5 + major (2 digits) + minor (2) + patch (2) + revision (3), so it
+// only ever increases with the version. MOBILE_BUILD_REVISION (0-999) allows
+// re-uploading the same version after a rejected or failed upload.
+function storeBuildNumber(version) {
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  if (!m) throw new Error(`package.json version "${version}" is not MAJOR.MINOR.PATCH`);
+  const [major, minor, patch] = m.slice(1).map(Number);
+  const revision = Number(process.env.MOBILE_BUILD_REVISION || 0);
+  if (minor > 99 || patch > 99 || !Number.isInteger(revision) || revision < 0 || revision > 999) {
+    throw new Error(`cannot encode ${version} (revision ${revision}) as a store build number`);
+  }
+  const build = 500000000 + major * 1e7 + minor * 1e5 + patch * 1e3 + revision;
+  if (build <= LAST_SHIPPED_BUILD) {
+    throw new Error(`build number ${build} would not exceed the last shipped build ${LAST_SHIPPED_BUILD}`);
+  }
+  return build;
+}
 
 module.exports = () => {
-  if (process.env.EAS_BUILD_PROFILE === "release" && (!process.env.EXPO_PUBLIC_API_URL || !process.env.EXPO_PUBLIC_EAS_PROJECT_ID)) {
-    throw new Error("Release builds require EXPO_PUBLIC_API_URL and EXPO_PUBLIC_EAS_PROJECT_ID");
+  const isRelease = process.env.RFSPAGER_RELEASE === "1" || process.env.EAS_BUILD_PROFILE === "release";
+  if (isRelease && !process.env.EXPO_PUBLIC_API_URL) {
+    throw new Error("Release builds require EXPO_PUBLIC_API_URL");
   }
   const cfg = JSON.parse(JSON.stringify(appJson.expo));
+  // The marketing version follows release-please (package.json), not app.base.json.
+  const build = storeBuildNumber(pkg.version);
+  cfg.version = pkg.version;
+  cfg.ios = { ...cfg.ios, buildNumber: String(build) };
+  cfg.android = { ...cfg.android, versionCode: build };
   // Provider client identifiers are supplied by each deployment, not shared by forks.
   const mapsKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
   if (mapsKey) cfg.android.config = { googleMaps: { apiKey: mapsKey } };

@@ -1,0 +1,121 @@
+# Release lanes for the RFSPager app, run by .github/workflows/mobile-release.yml
+# on GitHub-hosted runners against the native projects `expo prebuild` writes.
+# Nothing here talks to Expo's build or submit services.
+#
+# Inputs come from the environment (see docs/ci-secrets.md):
+#   iOS      ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH,
+#            IOS_DIST_CERT_PATH, IOS_DIST_CERT_PASSWORD, IOS_PROFILE_PATH, APPLE_TEAM_ID
+#   Android  ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS,
+#            ANDROID_KEY_PASSWORD, PLAY_JSON_KEY_PATH, PLAY_TRACK
+
+opt_out_usage
+default_platform(:ios)
+
+BUNDLE_ID = "io.devlan.rfspager"
+
+def require_env(*names)
+  missing = names.reject { |n| ENV[n].to_s.strip != "" }
+  UI.user_error!("Missing environment: #{missing.join(', ')}") unless missing.empty?
+end
+
+platform :ios do
+  # Compile and archive without signing: proves the app builds when no
+  # distribution certificate is configured yet.
+  lane :build_unsigned do
+    build_app(
+      workspace: "ios/RFSPager.xcworkspace",
+      scheme: "RFSPager",
+      configuration: "Release",
+      skip_codesigning: true,
+      skip_package_ipa: true,
+      archive_path: "build/RFSPager.xcarchive",
+      xcargs: "CODE_SIGNING_ALLOWED=NO"
+    )
+  end
+
+  lane :release do |options|
+    require_env("IOS_DIST_CERT_PATH", "IOS_DIST_CERT_PASSWORD", "IOS_PROFILE_PATH", "APPLE_TEAM_ID")
+    setup_ci # temporary keychain, so nothing touches the runner's login keychain
+
+    import_certificate(
+      certificate_path: ENV["IOS_DIST_CERT_PATH"],
+      certificate_password: ENV["IOS_DIST_CERT_PASSWORD"],
+      keychain_name: ENV["MATCH_KEYCHAIN_NAME"],
+      keychain_password: ENV["MATCH_KEYCHAIN_PASSWORD"]
+    )
+    install_provisioning_profile(path: ENV["IOS_PROFILE_PATH"])
+    profile = FastlaneCore::ProvisioningProfile.parse(ENV["IOS_PROFILE_PATH"])
+
+    update_code_signing_settings(
+      path: "ios/RFSPager.xcodeproj",
+      use_automatic_signing: false,
+      team_id: ENV["APPLE_TEAM_ID"],
+      targets: ["RFSPager"],
+      bundle_identifier: BUNDLE_ID,
+      code_sign_identity: "Apple Distribution",
+      profile_name: profile["Name"]
+    )
+
+    build_app(
+      workspace: "ios/RFSPager.xcworkspace",
+      scheme: "RFSPager",
+      configuration: "Release",
+      export_method: "app-store",
+      export_team_id: ENV["APPLE_TEAM_ID"],
+      export_options: { provisioningProfiles: { BUNDLE_ID => profile["Name"] } },
+      output_directory: "build",
+      output_name: "RFSPager.ipa"
+    )
+
+    next if options[:skip_upload]
+
+    require_env("ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_PATH")
+    api_key = app_store_connect_api_key(
+      key_id: ENV["ASC_KEY_ID"],
+      issuer_id: ENV["ASC_ISSUER_ID"],
+      key_filepath: ENV["ASC_KEY_PATH"]
+    )
+    # Lands in TestFlight; promoting to the App Store stays a deliberate step.
+    upload_to_testflight(
+      api_key: api_key,
+      ipa: "build/RFSPager.ipa",
+      skip_waiting_for_build_processing: true
+    )
+  end
+end
+
+platform :android do
+  lane :release do |options|
+    require_env("ANDROID_KEYSTORE_PATH", "ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_ALIAS", "ANDROID_KEY_PASSWORD")
+    # The prebuilt project signs release with the debug key; the injected
+    # properties replace that with the upload key for this build only.
+    gradle(
+      project_dir: "android",
+      task: "bundle",
+      build_type: "Release",
+      properties: {
+        "android.injected.signing.store.file" => ENV["ANDROID_KEYSTORE_PATH"],
+        "android.injected.signing.store.password" => ENV["ANDROID_KEYSTORE_PASSWORD"],
+        "android.injected.signing.key.alias" => ENV["ANDROID_KEY_ALIAS"],
+        "android.injected.signing.key.password" => ENV["ANDROID_KEY_PASSWORD"]
+      }
+    )
+    aab = lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH]
+    UI.message("Built #{aab}")
+
+    next if options[:skip_upload]
+
+    require_env("PLAY_JSON_KEY_PATH")
+    upload_to_play_store(
+      package_name: BUNDLE_ID,
+      json_key: ENV["PLAY_JSON_KEY_PATH"],
+      track: ENV.fetch("PLAY_TRACK", "internal"),
+      aab: aab,
+      release_status: "completed",
+      skip_upload_metadata: true,
+      skip_upload_changelogs: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+  end
+end

@@ -1,61 +1,78 @@
 name: mobile-release
 
-# Trigger: tags shaped like `v1.2.3`.
-# Runs LOCAL EAS builds (no EAS cloud queue) on a macOS runner, then submits
-# to the App Store + Play Store using `eas submit`.
+# Builds the iOS and Android apps on GitHub-hosted runners from the native
+# projects `expo prebuild` generates, signs them with keys held in GitHub
+# secrets, and uploads with fastlane: iOS to TestFlight, Android to a Play
+# testing track (internal by default). Promotion to the public stores is a
+# deliberate manual step in App Store Connect / Play Console.
 #
-# See docs/ci-secrets.md for the full inventory of required secrets.
+# No Expo build or submit service is involved.
+#
+# Started by release-please.yml after a release is cut (tag pushes made with
+# GITHUB_TOKEN do not start workflows, but workflow_dispatch does), or by hand.
+# Until the signing secrets exist the jobs still prove the build: iOS archives
+# unsigned and Android signs with a throwaway key, and nothing is uploaded.
+#
+# Secrets and variables: docs/ci-secrets.md.
 on:
-  push:
-    tags:
-      - "v*"
-
-  # Allow manual runs for testing the pipeline without cutting a tag.
   workflow_dispatch:
     inputs:
+      tag:
+        description: "Release tag to build (e.g. v5.3.0)"
+        required: true
       platform:
         description: "Platform to build"
         required: true
         default: "all"
         type: choice
         options: [all, ios, android]
-      submit:
-        description: "Submit to stores after build"
+      upload:
+        description: "Upload to TestFlight / Play after building"
         required: true
         default: "true"
         type: choice
         options: ["true", "false"]
+      play_track:
+        description: "Play track for the Android upload"
+        required: true
+        default: "internal"
+        type: choice
+        options: [internal, alpha, beta]
+      build_revision:
+        description: "Rebuild counter 0-999 (bump to re-upload the same version)"
+        required: true
+        default: "0"
 
 permissions:
   contents: read
 
 concurrency:
-  group: mobile-release-${{ github.ref }}
+  group: mobile-release-${{ inputs.tag }}
   cancel-in-progress: false
 
+env:
+  RFSPAGER_RELEASE: "1"
+  MOBILE_BUILD_REVISION: ${{ inputs.build_revision }}
+  EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
+  EXPO_PUBLIC_SOURCE_URL: ${{ vars.EXPO_PUBLIC_SOURCE_URL }}
+  EXPO_PUBLIC_FACEBOOK_APP_ID: ${{ vars.EXPO_PUBLIC_FACEBOOK_APP_ID }}
+  EXPO_PUBLIC_FACEBOOK_CLIENT_TOKEN: ${{ secrets.EXPO_PUBLIC_FACEBOOK_CLIENT_TOKEN }}
+  EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY }}
+  APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+
 jobs:
-  # ---------------------------------------------------------------------------
-  # iOS — runs on macOS so Xcode is available for the local build.
-  # ---------------------------------------------------------------------------
   ios:
-    if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'ios'
-    name: ios (eas build --local)
+    if: inputs.platform == 'all' || inputs.platform == 'ios'
+    name: ios
     runs-on: macos-26
-    timeout-minutes: 90
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: apps/mobile
-    env:
-      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-      EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
-      EXPO_PUBLIC_SOURCE_URL: ${{ vars.EXPO_PUBLIC_SOURCE_URL }}
-      EXPO_PUBLIC_EAS_PROJECT_ID: ${{ vars.EXPO_PUBLIC_EAS_PROJECT_ID }}
-      EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY }}
-      EXPO_PUBLIC_FACEBOOK_APP_ID: ${{ vars.EXPO_PUBLIC_FACEBOOK_APP_ID }}
-      EXPO_PUBLIC_FACEBOOK_CLIENT_TOKEN: ${{ secrets.EXPO_PUBLIC_FACEBOOK_CLIENT_TOKEN }}
-      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag }}
 
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
@@ -73,82 +90,95 @@ jobs:
 
       - uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1
         with:
-          ruby-version: "3.2"
-          bundler-cache: false
+          ruby-version: "3.3"
 
-      - run: pnpm install --frozen-lockfile
-
-      - name: Install eas-cli
-        run: npm install -g eas-cli
-
-      # Materialise platform-secret files from GH secrets. These are
-      # base64-encoded in the secret store to survive the binary boundary.
-      - name: Write GoogleService-Info.plist
+      - name: Install tools
         run: |
-          echo "${{ secrets.IOS_GOOGLE_SERVICE_INFO_PLIST }}" | base64 -d > GoogleService-Info.plist
+          pnpm install --frozen-lockfile
+          gem install fastlane cocoapods --no-document
 
-      - name: Check deployment configuration
+      - name: Check configuration
+        env:
+          PLIST: ${{ secrets.IOS_GOOGLE_SERVICE_INFO_PLIST }}
         run: |
-          test -n "$EXPO_PUBLIC_API_URL" || { echo "EXPO_PUBLIC_API_URL repository variable is required"; exit 1; }
-          test -n "$EXPO_PUBLIC_EAS_PROJECT_ID" || { echo "EXPO_PUBLIC_EAS_PROJECT_ID repository variable is required"; exit 1; }
+          test -n "$EXPO_PUBLIC_API_URL" || { echo "::error::repository variable EXPO_PUBLIC_API_URL is not set"; exit 1; }
+          test -n "$APPLE_TEAM_ID" || { echo "::error::repository variable APPLE_TEAM_ID is not set"; exit 1; }
+          test -n "$PLIST" || { echo "::error::secret IOS_GOOGLE_SERVICE_INFO_PLIST is not set"; exit 1; }
+          printf '%s' "$PLIST" | base64 --decode > GoogleService-Info.plist
+          node -e 'const c=require("./app.config.js")(); console.log(`Building ${c.version} (${c.ios.buildNumber}) against ${process.env.EXPO_PUBLIC_API_URL}`)'
 
-      - name: Build (local)
+      - name: Generate the native project
+        run: npx expo prebuild --platform ios --clean
+
+      - name: Choose signing
+        id: signing
+        env:
+          CERT: ${{ secrets.IOS_DIST_CERT_P12 }}
         run: |
-          eas build \
-            --platform ios \
-            --profile release \
-            --local \
-            --non-interactive \
-            --output build.ipa
+          if [ -n "$CERT" ]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::IOS_DIST_CERT_P12 is not set: archiving unsigned, nothing will be uploaded"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Upload IPA artifact
+      - name: Write signing material
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          CERT: ${{ secrets.IOS_DIST_CERT_P12 }}
+          PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+          ASC_P8: ${{ secrets.APPLE_ASC_KEY_P8 }}
+        run: |
+          d="$RUNNER_TEMP/ios-signing"; mkdir -p "$d"; chmod 700 "$d"
+          printf '%s' "$CERT" | base64 --decode > "$d/dist.p12"
+          printf '%s' "$PROFILE" | base64 --decode > "$d/appstore.mobileprovision"
+          {
+            echo "IOS_DIST_CERT_PATH=$d/dist.p12"
+            echo "IOS_PROFILE_PATH=$d/appstore.mobileprovision"
+          } >> "$GITHUB_ENV"
+          if [ -n "$ASC_P8" ]; then
+            printf '%s' "$ASC_P8" | base64 --decode > "$d/asc.p8"
+            echo "ASC_KEY_PATH=$d/asc.p8" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build, sign and upload to TestFlight
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.APPLE_ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APPLE_ASC_ISSUER_ID }}
+          UPLOAD: ${{ inputs.upload }}
+        run: |
+          if [ "$UPLOAD" = "true" ]; then fastlane ios release; else fastlane ios release skip_upload:true; fi
+
+      - name: Build (unsigned)
+        if: steps.signing.outputs.signed != 'true'
+        run: fastlane ios build_unsigned
+
+      - name: Keep the IPA
+        if: steps.signing.outputs.signed == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ios-ipa
-          path: apps/mobile/build.ipa
-          retention-days: 14
+          name: ios-ipa-${{ inputs.tag }}
+          path: apps/mobile/build/RFSPager.ipa
+          retention-days: 30
 
-      - name: Write App Store Connect API key
-        if: github.event_name == 'push' || inputs.submit == 'true'
-        run: |
-          mkdir -p .secrets
-          echo "${{ secrets.APPLE_ASC_KEY_P8 }}" | base64 -d > .secrets/asc.p8
-          # eas submit reads ASC_KEY_PATH / ASC_KEY_ID / ASC_ISSUER_ID
-          echo "ASC_KEY_PATH=$PWD/.secrets/asc.p8" >> "$GITHUB_ENV"
-          echo "ASC_KEY_ID=${{ secrets.APPLE_ASC_KEY_ID }}"     >> "$GITHUB_ENV"
-          echo "ASC_ISSUER_ID=${{ secrets.APPLE_ASC_ISSUER_ID }}" >> "$GITHUB_ENV"
+      - name: Remove signing material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/ios-signing"
 
-      - name: Submit to App Store Connect
-        if: github.event_name == 'push' || inputs.submit == 'true'
-        run: |
-          eas submit \
-            --platform ios \
-            --profile release \
-            --path build.ipa \
-            --non-interactive
-
-  # ---------------------------------------------------------------------------
-  # Android — can run on Linux; local EAS build needs Java + Android SDK.
-  # ---------------------------------------------------------------------------
   android:
-    if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'android'
-    name: android (eas build --local)
+    if: inputs.platform == 'all' || inputs.platform == 'android'
+    name: android
     runs-on: ubuntu-latest
     timeout-minutes: 90
     defaults:
       run:
         working-directory: apps/mobile
-    env:
-      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-      EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
-      EXPO_PUBLIC_SOURCE_URL: ${{ vars.EXPO_PUBLIC_SOURCE_URL }}
-      EXPO_PUBLIC_EAS_PROJECT_ID: ${{ vars.EXPO_PUBLIC_EAS_PROJECT_ID }}
-      EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY }}
-      EXPO_PUBLIC_FACEBOOK_APP_ID: ${{ vars.EXPO_PUBLIC_FACEBOOK_APP_ID }}
-      EXPO_PUBLIC_FACEBOOK_CLIENT_TOKEN: ${{ secrets.EXPO_PUBLIC_FACEBOOK_CLIENT_TOKEN }}
-      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag }}
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
@@ -169,57 +199,85 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/mobile/pnpm-lock.yaml
 
-      - run: pnpm install --frozen-lockfile
+      - uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1
+        with:
+          ruby-version: "3.3"
 
-      - name: Install eas-cli
-        run: npm install -g eas-cli
-
-      - name: Write google-services.json
-        run: echo "${{ secrets.ANDROID_GOOGLE_SERVICES_JSON }}" | base64 -d > google-services.json
-
-      - name: Write upload keystore
+      - name: Install tools
         run: |
-          mkdir -p .secrets
-          echo "${{ secrets.ANDROID_UPLOAD_KEYSTORE }}" | base64 -d > .secrets/upload.keystore
+          pnpm install --frozen-lockfile
+          gem install fastlane --no-document
 
-      - name: Check deployment configuration
-        run: |
-          test -n "$EXPO_PUBLIC_API_URL" || { echo "EXPO_PUBLIC_API_URL repository variable is required"; exit 1; }
-          test -n "$EXPO_PUBLIC_EAS_PROJECT_ID" || { echo "EXPO_PUBLIC_EAS_PROJECT_ID repository variable is required"; exit 1; }
-
-      - name: Build (local)
+      - name: Check configuration
         env:
-          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/apps/mobile/.secrets/upload.keystore
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          SERVICES_JSON: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON }}
         run: |
-          eas build \
-            --platform android \
-            --profile release \
-            --local \
-            --non-interactive \
-            --output build.aab
+          test -n "$EXPO_PUBLIC_API_URL" || { echo "::error::repository variable EXPO_PUBLIC_API_URL is not set"; exit 1; }
+          test -n "$SERVICES_JSON" || { echo "::error::secret ANDROID_GOOGLE_SERVICES_JSON is not set"; exit 1; }
+          printf '%s' "$SERVICES_JSON" | base64 --decode > google-services.json
+          node -e 'const c=require("./app.config.js")(); console.log(`Building ${c.version} (${c.android.versionCode}) against ${process.env.EXPO_PUBLIC_API_URL}`)'
 
-      - name: Upload AAB artifact
+      - name: Generate the native project
+        run: npx expo prebuild --platform android --clean
+
+      - name: Write signing material
+        id: signing
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_UPLOAD_KEYSTORE }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          PLAY_JSON: ${{ secrets.ANDROID_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          d="$RUNNER_TEMP/android-signing"; mkdir -p "$d"; chmod 700 "$d"
+          if [ -n "$KEYSTORE" ]; then
+            printf '%s' "$KEYSTORE" | base64 --decode > "$d/upload.keystore"
+            {
+              echo "ANDROID_KEYSTORE_PATH=$d/upload.keystore"
+              echo "ANDROID_KEYSTORE_PASSWORD=$STORE_PASSWORD"
+              echo "ANDROID_KEY_ALIAS=$KEY_ALIAS"
+              echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::ANDROID_UPLOAD_KEYSTORE is not set: signing with a throwaway key, nothing will be uploaded"
+            pass="$(openssl rand -hex 16)"
+            keytool -genkeypair -keystore "$d/throwaway.keystore" -alias throwaway -keyalg RSA -keysize 2048 \
+              -validity 1 -storepass "$pass" -keypass "$pass" -dname "CN=CI throwaway" >/dev/null 2>&1
+            echo "::add-mask::$pass"
+            {
+              echo "ANDROID_KEYSTORE_PATH=$d/throwaway.keystore"
+              echo "ANDROID_KEYSTORE_PASSWORD=$pass"
+              echo "ANDROID_KEY_ALIAS=throwaway"
+              echo "ANDROID_KEY_PASSWORD=$pass"
+            } >> "$GITHUB_ENV"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$PLAY_JSON" ]; then
+            printf '%s' "$PLAY_JSON" | base64 --decode > "$d/play.json"
+            echo "PLAY_JSON_KEY_PATH=$d/play.json" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build, sign and upload to Play
+        env:
+          PLAY_TRACK: ${{ inputs.play_track }}
+          UPLOAD: ${{ inputs.upload }}
+          SIGNED: ${{ steps.signing.outputs.signed }}
+        run: |
+          if [ "$UPLOAD" = "true" ] && [ "$SIGNED" = "true" ]; then
+            fastlane android release
+          else
+            fastlane android release skip_upload:true
+          fi
+
+      - name: Keep the AAB
+        if: steps.signing.outputs.signed == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: android-aab
-          path: apps/mobile/build.aab
-          retention-days: 14
+          name: android-aab-${{ inputs.tag }}
+          path: apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
+          retention-days: 30
 
-      - name: Write Play service-account key
-        if: github.event_name == 'push' || inputs.submit == 'true'
-        run: |
-          echo "${{ secrets.ANDROID_PLAY_SERVICE_ACCOUNT_JSON }}" | base64 -d > .secrets/play.json
-
-      - name: Submit to Play Store
-        if: github.event_name == 'push' || inputs.submit == 'true'
-        env:
-          GOOGLE_SERVICE_ACCOUNT_KEY_PATH: ${{ github.workspace }}/apps/mobile/.secrets/play.json
-        run: |
-          eas submit \
-            --platform android \
-            --profile release \
-            --path build.aab \
-            --non-interactive
+      - name: Remove signing material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/android-signing"

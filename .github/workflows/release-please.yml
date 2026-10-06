@@ -1,8 +1,11 @@
 name: release-please
 
-# Opens / updates "Release: X" PRs for each component. Merging one of those
-# PRs creates a tag, which is what the per-component release workflows
-# (server-release / web-release / mobile-release) listen for.
+# Opens / updates the release PR. Merging it creates the vX.Y.Z tag and GitHub
+# release, then this workflow starts the per-component release builds.
+#
+# The tag is pushed with GITHUB_TOKEN, and GitHub does not start workflows
+# from events that token raises, so the release workflows never see the tag
+# push. workflow_dispatch is the documented exception, hence the dispatch job.
 on:
   push:
     branches: [main]
@@ -14,9 +17,48 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
+      - id: release
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: .github/release-please-config.json
           manifest-file: .github/.release-please-manifest.json
+
+  build-release:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.release-please.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Start server, web and receiver builds
+        run: |
+          for wf in server-release.yml web-release.yml receiver-release.yml; do
+            gh workflow run "$wf" --ref main -f tag="$TAG"
+            echo "started $wf for $TAG"
+          done
+
+      # Store uploads are slow and every one lands in TestFlight / Play, so only
+      # build the app when something under apps/mobile changed in this release.
+      - name: Start the mobile build if the app changed
+        run: |
+          git fetch --tags --force
+          prev="$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2>/dev/null || true)"
+          if [ -n "$prev" ] && git diff --quiet "$prev" "$TAG" -- apps/mobile ':!apps/mobile/package.json' ':!apps/mobile/CHANGELOG.md'; then
+            echo "apps/mobile unchanged since $prev; skipping the mobile build"
+          else
+            gh workflow run mobile-release.yml --ref main -f tag="$TAG"
+            echo "started mobile-release.yml for $TAG (previous release: ${prev:-none})"
+          fi
