@@ -11,7 +11,7 @@ import type { Route } from "./+types/root";
 import { AuthProvider } from "./lib/auth";
 import { TooltipProvider } from "./components/ui/tooltip";
 import "./app.css";
-import { AdSense, GoogleAnalytics } from "~/components/analytics";
+import { GoogleAnalytics } from "~/components/analytics";
 
 export const links: Route.LinksFunction = () => [
   // Declared rather than left to convention, so the app icon is what shows up
@@ -43,7 +43,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         <GoogleAnalytics />
-        <AdSense />
         {children}
         <ScrollRestoration />
         <Scripts />
