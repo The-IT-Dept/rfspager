@@ -125,7 +125,8 @@ type AppleNotificationPayload struct {
 
 // AppleRenewalInfoPayload is the decoded renewal info.
 type AppleRenewalInfoPayload struct {
-	AutoRenewProductID string `json:"autoRenewProductId"`
-	AutoRenewStatus    int    `json:"autoRenewStatus"` // 1 = will renew
-	ExpirationIntent   *int   `json:"expirationIntent"`
+	AutoRenewProductID     string `json:"autoRenewProductId"`
+	AutoRenewStatus        int    `json:"autoRenewStatus"` // 1 = will renew
+	ExpirationIntent       *int   `json:"expirationIntent"`
+	GracePeriodExpiresDate int64  `json:"gracePeriodExpiresDate"` // ms; set while in billing grace
 }

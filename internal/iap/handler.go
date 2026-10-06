@@ -56,7 +56,7 @@ func (h *Handler) ValidateApple(w http.ResponseWriter, r *http.Request) {
 		result, err = h.validateAppleJWS(req.JWSTransaction)
 	} else if req.TransactionID != "" && h.apple != nil {
 		// Fallback: look up via Apple's App Store Server API (needs credentials)
-		result, err = h.apple.GetTransactionInfo(req.TransactionID)
+		result, err = h.apple.GetSubscriptionStatus(req.TransactionID, "")
 	} else if req.TransactionID != "" {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "send jws_transaction for validation"})
 		return
@@ -111,6 +111,18 @@ func (h *Handler) validateAppleJWS(jwsTransaction string) (*ValidationResult, er
 		return &ValidationResult{Valid: false, Platform: "apple"}, nil
 	}
 
+	// The signed transaction proves the purchase but says nothing about
+	// renewal. With API credentials, ask Apple for the subscription's current
+	// state (auto-renew, grace, billing retry); fall back to the transaction
+	// alone if the API is unavailable.
+	if h.apple != nil {
+		status, err := h.apple.GetSubscriptionStatus(txn.OriginalTransactionID, txn.Environment)
+		if err == nil && status.OriginalTransactionID == txn.OriginalTransactionID {
+			return status, nil
+		}
+		slog.Warn("apple: subscription status unavailable, using the signed transaction alone",
+			"original_transaction_id", txn.OriginalTransactionID, "error", err)
+	}
 	return appleTransactionResult(txn), nil
 }
 
@@ -127,7 +139,9 @@ func appleTransactionResult(txn *AppleJWSTransactionPayload) *ValidationResult {
 		ExpiresAt:             &expiresAt,
 		TransactionID:         txn.TransactionID,
 		OriginalTransactionID: txn.OriginalTransactionID,
-		WillRenew:             true,
+		// Unknown without renewal info; assume the common case. Only used when
+		// the App Store Server API cannot be reached.
+		WillRenew: true,
 	}
 }
 
@@ -207,7 +221,7 @@ func (h *Handler) Restore(w http.ResponseWriter, r *http.Request) {
 		// Fallback to transaction IDs via Apple API
 		if bestResult == nil && h.apple != nil {
 			for _, txnID := range req.TransactionIDs {
-				result, err := h.apple.GetTransactionInfo(txnID)
+				result, err := h.apple.GetSubscriptionStatus(txnID, "")
 				if err != nil {
 					slog.Error("restore: apple API failed", "error", err, "txn_id", txnID)
 					continue

@@ -67,8 +67,19 @@ func googleValidationResult(purchase *androidpublisher.SubscriptionPurchaseV2, p
 		expiresAt = &t
 	}
 	willRenew := item.AutoRenewingPlan != nil && item.AutoRenewingPlan.AutoRenewEnabled
-	valid := purchase.SubscriptionState == "SUBSCRIPTION_STATE_ACTIVE" ||
-		purchase.SubscriptionState == "SUBSCRIPTION_STATE_IN_GRACE_PERIOD"
+	var valid bool
+	switch purchase.SubscriptionState {
+	case "SUBSCRIPTION_STATE_ACTIVE", "SUBSCRIPTION_STATE_IN_GRACE_PERIOD":
+		valid = true
+	case "SUBSCRIPTION_STATE_CANCELED":
+		// Cancelling only stops renewal: Google keeps the subscriber entitled
+		// until the paid period ends, so access must too.
+		valid = expiresAt != nil && expiresAt.After(time.Now())
+	default:
+		// ON_HOLD (payment failed past grace), PAUSED, EXPIRED and PENDING
+		// carry no entitlement.
+		valid = false
+	}
 	environment := "Production"
 	if purchase.TestPurchase != nil {
 		environment = "Test"
