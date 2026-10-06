@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.3.3](https://github.com/The-IT-Dept/rfspager/compare/v5.3.2...v5.3.3) (2026-10-06)
+
+
+### Bug Fixes
+
+* **auth:** let social sign-in accounts set a password; keep the session ([57b39d2](https://github.com/The-IT-Dept/rfspager/commit/57b39d2e3327c3681da1030fb7ba7b40f4f8c166))
+* **mobile:** account forms sit below the header and work without a password ([1a37338](https://github.com/The-IT-Dept/rfspager/commit/1a373388d5345ccebe1fd1586017288e9750bd8a))
+
 ## [5.3.2](https://github.com/The-IT-Dept/rfspager/compare/v5.3.1...v5.3.2) (2026-10-06)
 
 
