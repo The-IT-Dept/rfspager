@@ -50,15 +50,23 @@ func (h *Hub) watchdogTick(ctx context.Context) {
 	db := h.db.Conn()
 
 	// Find systems we believe are offline but haven't told the owner about.
-	// A system is offline when its last_ping_at (or last message, as fallback)
-	// is older than offlineThreshold AND there's no unresolved
-	// receiver_offline event already.
+	// A system is offline when its last_ping_at is older than
+	// offlineThreshold AND there's no unresolved receiver_offline event
+	// already. A disconnect deletes the system_connections row, so without
+	// one fall back to the latest of its last message and its last
+	// connect/disconnect event: a receiver that drops for a server deploy or
+	// proxy reload was alive moments ago, however quiet the radio has been.
 	const offlineQuery = `
 		WITH last_status AS (
 		    SELECT s.id   AS system_id,
 		           s.name AS system_name,
 		           COALESCE(sc.last_ping_at,
-		                    (SELECT MAX(m.created_at) FROM messages m WHERE m.system_id = s.id)
+		                    GREATEST(
+		                        (SELECT MAX(m.created_at) FROM messages m WHERE m.system_id = s.id),
+		                        (SELECT MAX(e.created_at) FROM system_events e
+		                          WHERE e.system_id = s.id
+		                            AND e.type IN ('receiver_connected', 'receiver_disconnected'))
+		                    )
 		                   ) AS last_seen_at,
 		           (
 		               SELECT type FROM system_events
