@@ -90,8 +90,10 @@ jobs:
 
       - run: npm run build
 
+      # Production dependencies only: what ships in the web image. Dev tooling
+      # (the shadcn CLI's fast-glob/micromatch/braces chain) has no fixed release.
       - name: dependency audit
-        run: npm audit --audit-level=high
+        run: npm audit --omit=dev --audit-level=high
 
   # ---------------------------------------------------------------------------
   # Mobile: install + typecheck only (full builds run on tag, see mobile-release.yml)
