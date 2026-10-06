@@ -300,6 +300,10 @@ export const useValidSubscription = () =>
     const v = s.user?.subscription_valid
     return v === true
   })
+// Whether this account sees ads: only once the persisted user has loaded, so a
+// subscriber never glimpses an ad slot while the store rehydrates.
+export const useShowsAds = () =>
+  useAuthStore((s) => s._hasHydrated && s.user != null && s.user.subscription_valid !== true)
 export const useProductName = () =>
   useAuthStore((s) => {
     const pid = s.user?.subscription_product_id

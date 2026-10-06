@@ -60,7 +60,15 @@ export type BannerAdPlacement = "floating" | "accessory"
 // tab bars sit outside the window safe area reported by SafeAreaProvider.
 const NATIVE_TAB_BAR_HEIGHT = Platform.OS === "ios" ? 49 : 80
 
-export function BannerAd({ placement = "floating" }: { placement?: BannerAdPlacement } = {}) {
+export function BannerAd({
+  placement = "floating",
+  onUnavailable,
+}: {
+  placement?: BannerAdPlacement
+  // Called when no ad will show (load failed), so a host that draws its own
+  // chrome around the slot, like the iOS 26 tab accessory, can remove it.
+  onUnavailable?: () => void
+} = {}) {
   const validSubscription = useValidSubscription()
   const insets = useSafeAreaInsets()
   const glassTabBar = Platform.OS === "ios" && isLiquidGlassAvailable()
@@ -125,6 +133,7 @@ export function BannerAd({ placement = "floating" }: { placement?: BannerAdPlace
           console.error("🎯 [BannerAd] Ad Unit ID:", adUnitIDBanner)
           console.error("🎯 [BannerAd] Tracking Status:", trackingStatus)
           setAdFailed(true)
+          onUnavailable?.()
         }}
         onAdOpened={() => {
           console.log("🎯 [BannerAd] Ad opened")

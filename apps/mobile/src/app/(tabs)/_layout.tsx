@@ -1,8 +1,10 @@
+import { useState } from "react"
 import { Platform } from "react-native"
 import { NativeTabs } from "expo-router/unstable-native-tabs"
 import { isLiquidGlassAvailable } from "expo-glass-effect"
 import { useAppTheme } from "../../theme"
 import { BannerAd } from "../../utils/admob"
+import { useShowsAds } from "../../stores"
 
 /**
  * Native bottom tabs.
@@ -22,6 +24,10 @@ import { BannerAd } from "../../utils/admob"
  */
 export default function TabsLayout() {
   const theme = useAppTheme()
+  const showsAds = useShowsAds()
+  // iOS draws the accessory's glass capsule whenever the accessory exists,
+  // whatever it contains, so it must not be mounted unless an ad will fill it.
+  const [adUnavailable, setAdUnavailable] = useState(false)
 
   return (
     <NativeTabs
@@ -50,10 +56,11 @@ export default function TabsLayout() {
 
       {/* iOS 26 only: the accessory slot rides directly above the tab bar and
           minimises with it. Screens' own floating BannerAd returns null on
-          iOS 26 so the ad is not shown twice. */}
-      {Platform.OS === "ios" && isLiquidGlassAvailable() && (
+          iOS 26 so the ad is not shown twice. Subscribers, and anyone whose ad
+          failed to load, get no accessory at all rather than an empty capsule. */}
+      {Platform.OS === "ios" && isLiquidGlassAvailable() && showsAds && !adUnavailable && (
         <NativeTabs.BottomAccessory>
-          <AccessoryAd />
+          <AccessoryAd onUnavailable={() => setAdUnavailable(true)} />
         </NativeTabs.BottomAccessory>
       )}
     </NativeTabs>
@@ -67,8 +74,8 @@ export default function TabsLayout() {
  * the bar instead of being clipped to a sliver. Must be a child of
  * BottomAccessory: usePlacement reads that component's context.
  */
-function AccessoryAd() {
+function AccessoryAd({ onUnavailable }: { onUnavailable: () => void }) {
   // Both placements measure 322x48pt on device, so the same banner serves the
   // expanded capsule and the inline slot beside the minimised bar.
-  return <BannerAd placement="accessory" />
+  return <BannerAd placement="accessory" onUnavailable={onUnavailable} />
 }
