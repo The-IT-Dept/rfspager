@@ -390,6 +390,13 @@ func derivePatch(p *adaptyProfile) *patch {
 	expiry := parseExpiry(coalescePtr(getExpiry(al), getExpiry(sub)))
 	productID := coalesce(getString(al, "ProductID"), getString(sub, "ProductID"))
 	storeOriginal := coalesce(getString(al, "Original"), getString(sub, "Original"))
+	// For Google, Adapty's profile API only exposes the Play *order* ID
+	// (GPA.…), not the purchase token RTDN and the Play API key on. Storing it
+	// as google_purchase_token would never match; the Adapty webhook records
+	// the real token on the user's next event instead.
+	if platform == "google" && strings.HasPrefix(storeOriginal, "GPA.") {
+		storeOriginal = ""
+	}
 	storeTxn := coalesce(getString(al, "Txn"), getString(sub, "Txn"))
 	env := coalesce(getString(al, "Env"), getString(sub, "Env"))
 	cancelReason := coalesce(getString(al, "Cancel"), getString(sub, "Cancel"))

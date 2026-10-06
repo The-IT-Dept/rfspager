@@ -52,6 +52,7 @@ type Config struct {
 	SMTPPassword         string
 	SMTPFrom             string
 	SMTPMode             string
+	AdaptyWebhookAuth    string
 	FacebookAppID        string
 	FacebookAppSecret    string
 	TrustedProxyCIDRs    []string
@@ -84,6 +85,7 @@ func Load() (*Config, error) {
 		IAPProductIDs:            strings.Join(strings.Fields(strings.ReplaceAll(getEnv("IAP_PRODUCT_IDS", "io.devlan.rfspager.monthly io.devlan.rfspager.yearly"), ",", " ")), " "),
 		AppleIAPEnvironment:      getEnv("APPLE_IAP_ENVIRONMENT", "Production"),
 		GoogleIAPEnvironment:     getEnv("GOOGLE_IAP_ENVIRONMENT", "Production"),
+		AdaptyWebhookAuth:        os.Getenv("ADAPTY_WEBHOOK_AUTH"),
 		FacebookAppID:            os.Getenv("FACEBOOK_APP_ID"),
 		FacebookAppSecret:        os.Getenv("FACEBOOK_APP_SECRET"),
 		Port:                     getEnv("PORT", "8080"),
