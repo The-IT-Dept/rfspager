@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.3.2](https://github.com/The-IT-Dept/rfspager/compare/v5.3.1...v5.3.2) (2026-10-06)
+
+
+### Bug Fixes
+
+* **mobile:** no empty ad capsule above the tab bar for subscribers ([969c52d](https://github.com/The-IT-Dept/rfspager/commit/969c52de0e38ab2390ffcce7cd92a5318b9147c1))
+
 ## [5.3.1](https://github.com/The-IT-Dept/rfspager/compare/v5.3.0...v5.3.1) (2026-10-06)
 
 
