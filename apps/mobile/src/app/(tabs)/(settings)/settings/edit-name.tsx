@@ -1,20 +1,10 @@
-import { KeyboardAwareScrollView } from "react-native-keyboard-controller"
 import React, { useState } from "react"
-import {
-  ActivityIndicator,
-  Alert,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-} from "react-native"
+import { Alert } from "react-native"
 import { useRouter } from "expo-router"
 import { useAuthStore, useUser } from "../../../../stores"
-import { useAppTheme, AppTheme } from "../../../../theme"
+import { FormButton, FormField, FormScreen, FormSection } from "../../../../components/form/form"
 
 export default function EditNameScreen() {
-  const theme = useAppTheme()
-  const styles = makeStyles(theme)
   const router = useRouter()
   const user = useUser()
   const updateProfile = useAuthStore((s) => s.updateProfile)
@@ -25,7 +15,7 @@ export default function EditNameScreen() {
   const canSave = name.trim().length > 0 && name.trim() !== (user?.name ?? "")
 
   const onSave = async () => {
-    if (!canSave) return
+    if (!canSave || saving) return
     setSaving(true)
     const result = await updateProfile({ name: name.trim() })
     setSaving(false)
@@ -37,74 +27,23 @@ export default function EditNameScreen() {
   }
 
   return (
-    <KeyboardAwareScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      automaticallyAdjustKeyboardInsets
-      keyboardShouldPersistTaps="handled"
-      style={styles.container}
-      contentContainerStyle={{ paddingBottom: 48 }}
-    >
-      <Text style={styles.label}>Name</Text>
-        <TextInput
-          style={styles.input}
+    <FormScreen>
+      <FormSection title="Name" footer="Shown to others when you respond to a message.">
+        <FormField
+          label="Name"
           value={name}
           onChangeText={setName}
           autoFocus
           autoCapitalize="words"
+          textContentType="name"
           returnKeyType="done"
           onSubmitEditing={onSave}
           placeholder="Your name"
-          placeholderTextColor={theme.colors.textSecondary}
+          isLast
         />
-        <Text style={styles.hint}>This is the name shown to others when you respond to a message.</Text>
+      </FormSection>
 
-        <TouchableOpacity
-          style={[styles.button, !canSave && styles.buttonDisabled]}
-          onPress={onSave}
-          disabled={!canSave || saving}
-        >
-          {saving ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Save</Text>
-          )}
-        </TouchableOpacity>
-    </KeyboardAwareScrollView>
+      <FormButton title="Save" onPress={onSave} disabled={!canSave} loading={saving} />
+    </FormScreen>
   )
 }
-
-const makeStyles = (theme: AppTheme) =>
-  StyleSheet.create({
-    container: { flex: 1, padding: 16 },
-    label: {
-      fontSize: 13,
-      color: theme.colors.textSecondary,
-      textTransform: "uppercase",
-      letterSpacing: 0.5,
-      marginBottom: 6,
-      marginLeft: 4,
-    },
-    input: {
-      backgroundColor: theme.colors.cardBackground,
-      color: theme.colors.textPrimary,
-      borderRadius: 10,
-      paddingHorizontal: 12,
-      paddingVertical: 14,
-      fontSize: 17,
-    },
-    hint: {
-      marginTop: 8,
-      marginHorizontal: 4,
-      fontSize: 13,
-      color: theme.colors.textSecondary,
-    },
-    button: {
-      marginTop: 24,
-      backgroundColor: theme.colors.primary,
-      paddingVertical: 14,
-      borderRadius: 10,
-      alignItems: "center",
-    },
-    buttonDisabled: { opacity: 0.4 },
-    buttonText: { color: "#fff", fontSize: 17, fontWeight: "600" },
-  })

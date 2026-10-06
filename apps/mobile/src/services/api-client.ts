@@ -83,6 +83,9 @@ export interface User {
   subscription_platform: string | null
   notifications_count?: number
   unread_notifications_count?: number
+  // False for accounts created by Apple/Facebook sign-in that never set a
+  // password: they "set" one rather than "change" it. Only /me reports it.
+  has_password?: boolean
 }
 
 export interface Message {
@@ -218,8 +221,14 @@ export const auth = {
   resetPassword: (email: string, token: string, password: string, password_confirmation: string) =>
     post("/auth/reset-password", { email, token, password, password_confirmation }),
 
-  updatePassword: (current_password: string, password: string, password_confirmation: string) =>
-    post("/auth/update-password", { current_password, password, password_confirmation }),
+  // current_password is omitted when the account has no password yet. The
+  // response carries a fresh token: the change signs out every other session.
+  updatePassword: (current_password: string | undefined, password: string, password_confirmation: string) =>
+    post<{ status: string; token: string }>("/auth/update-password", {
+      ...(current_password ? { current_password } : {}),
+      password,
+      password_confirmation,
+    }),
 }
 
 // --- User ---
@@ -227,7 +236,7 @@ export const auth = {
 export interface UpdateProfileInput {
   name?: string
   email?: string
-  current_password?: string // required when email is being changed
+  current_password?: string // required to change email when the account has a password
 }
 
 export const user = {
@@ -237,9 +246,10 @@ export const user = {
     if (route) q.set("route", route)
     return get<{ magicLink: string }>(`/magic-link?${q}`)
   },
-  update: (input: UpdateProfileInput) => request<User>("PATCH", "/me", input),
-  deleteAccount: (password: string) =>
-    request<{ status: string }>("DELETE", "/me", { confirm: "DELETE", password }),
+  // An email change returns a fresh token alongside the user.
+  update: (input: UpdateProfileInput) => request<User & { token?: string }>("PATCH", "/me", input),
+  deleteAccount: (password?: string) =>
+    request<{ status: string }>("DELETE", "/me", { confirm: "DELETE", ...(password ? { password } : {}) }),
 }
 
 // --- Messages ---

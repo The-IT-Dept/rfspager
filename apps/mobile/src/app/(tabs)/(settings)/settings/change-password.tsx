@@ -1,82 +1,103 @@
-import { KeyboardAwareScrollView } from "react-native-keyboard-controller"
-import React, { useState } from "react"
-import {
-  ActivityIndicator,
-  Alert,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-} from "react-native"
-import { useRouter } from "expo-router"
-import { useAuthStore } from "../../../../stores"
-import { useAppTheme, AppTheme } from "../../../../theme"
+import React, { useEffect, useState } from "react"
+import { Alert } from "react-native"
+import { Stack, useRouter } from "expo-router"
+import { useAuthStore, useUser } from "../../../../stores"
+import { FormButton, FormField, FormScreen, FormSection } from "../../../../components/form/form"
 
+/**
+ * Change, or for accounts created with Apple/Facebook sign-in, set a password.
+ *
+ * Those accounts never had a password they know (the server stored a random
+ * one), so asking for the "current" password locked them out. /me reports
+ * has_password; until it is known we assume a password exists, the safe side.
+ */
 export default function ChangePasswordScreen() {
-  const theme = useAppTheme()
-  const styles = makeStyles(theme)
   const router = useRouter()
+  const user = useUser()
   const updatePassword = useAuthStore((s) => s.updatePassword)
+  const refreshUser = useAuthStore((s) => s.refreshUser)
+  const hasPassword = user?.has_password !== false
 
   const [current, setCurrent] = useState("")
   const [next, setNext] = useState("")
   const [confirm, setConfirm] = useState("")
   const [saving, setSaving] = useState(false)
 
-  const passwordsMatch = next.length >= 8 && next === confirm
-  const canSave = current.length > 0 && passwordsMatch
+  useEffect(() => {
+    void refreshUser()
+  }, [refreshUser])
+
+  const tooShort = next.length > 0 && next.length < 8
+  const mismatch = confirm.length > 0 && next !== confirm
+  const canSave = (!hasPassword || current.length > 0) && next.length >= 8 && next === confirm
 
   const onSave = async () => {
-    if (!canSave) return
+    if (!canSave || saving) return
     setSaving(true)
-    const result = await updatePassword(current, next, confirm)
+    const result = await updatePassword(hasPassword ? current : undefined, next, confirm)
     setSaving(false)
     if (result === "OK") {
-      Alert.alert("Password updated", "Your password has been changed.")
+      Alert.alert(
+        hasPassword ? "Password changed" : "Password set",
+        hasPassword
+          ? "Your other devices have been signed out."
+          : "You can now also sign in with your email address and this password.",
+      )
       router.back()
     } else {
-      Alert.alert("Couldn't change password", result)
+      Alert.alert(hasPassword ? "Couldn't change password" : "Couldn't set password", result)
     }
   }
 
-  return (
-    <KeyboardAwareScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      automaticallyAdjustKeyboardInsets
-      keyboardShouldPersistTaps="handled"
-      style={styles.container}
-      contentContainerStyle={{ paddingBottom: 48 }}
-    >
-      <Text style={styles.label}>Current password</Text>
-        <TextInput
-          style={styles.input}
-          value={current}
-          onChangeText={setCurrent}
-          autoFocus
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          textContentType="password"
-          returnKeyType="next"
-        />
+  const footer = tooShort
+    ? "Use at least 8 characters."
+    : mismatch
+      ? "The passwords don't match."
+      : hasPassword
+        ? "Changing your password signs out your other devices."
+        : "You signed up with Apple or Facebook, so there is no password yet. Set one to also sign in with your email address."
 
-        <Text style={[styles.label, { marginTop: 16 }]}>New password</Text>
-        <TextInput
-          style={styles.input}
+  return (
+    <FormScreen>
+      <Stack.Screen options={{ title: hasPassword ? "Change Password" : "Set Password" }} />
+
+      {hasPassword && (
+        <FormSection title="Current">
+          <FormField
+            label="Password"
+            value={current}
+            onChangeText={setCurrent}
+            autoFocus
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            textContentType="password"
+            returnKeyType="next"
+            placeholder="Required"
+            isLast
+          />
+        </FormSection>
+      )}
+
+      <FormSection
+        title={hasPassword ? "New" : "Password"}
+        footer={footer}
+        footerTone={tooShort || mismatch ? "error" : "neutral"}
+      >
+        <FormField
+          label="New"
           value={next}
           onChangeText={setNext}
+          autoFocus={!hasPassword}
           secureTextEntry
           autoCapitalize="none"
           autoCorrect={false}
           textContentType="newPassword"
           returnKeyType="next"
           placeholder="At least 8 characters"
-          placeholderTextColor={theme.colors.textSecondary}
         />
-
-        <Text style={[styles.label, { marginTop: 16 }]}>Confirm new password</Text>
-        <TextInput
-          style={styles.input}
+        <FormField
+          label="Confirm"
           value={confirm}
           onChangeText={setConfirm}
           secureTextEntry
@@ -85,59 +106,17 @@ export default function ChangePasswordScreen() {
           textContentType="newPassword"
           returnKeyType="done"
           onSubmitEditing={onSave}
+          placeholder="Repeat it"
+          isLast
         />
+      </FormSection>
 
-        {confirm.length > 0 && next !== confirm && (
-          <Text style={[styles.hint, { color: theme.colors.error }]}>Passwords don't match.</Text>
-        )}
-
-        <TouchableOpacity
-          style={[styles.button, !canSave && styles.buttonDisabled]}
-          onPress={onSave}
-          disabled={!canSave || saving}
-        >
-          {saving ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Change password</Text>
-          )}
-        </TouchableOpacity>
-    </KeyboardAwareScrollView>
+      <FormButton
+        title={hasPassword ? "Change Password" : "Set Password"}
+        onPress={onSave}
+        disabled={!canSave}
+        loading={saving}
+      />
+    </FormScreen>
   )
 }
-
-const makeStyles = (theme: AppTheme) =>
-  StyleSheet.create({
-    container: { flex: 1, padding: 16 },
-    label: {
-      fontSize: 13,
-      color: theme.colors.textSecondary,
-      textTransform: "uppercase",
-      letterSpacing: 0.5,
-      marginBottom: 6,
-      marginLeft: 4,
-    },
-    input: {
-      backgroundColor: theme.colors.cardBackground,
-      color: theme.colors.textPrimary,
-      borderRadius: 10,
-      paddingHorizontal: 12,
-      paddingVertical: 14,
-      fontSize: 17,
-    },
-    hint: {
-      marginTop: 8,
-      marginHorizontal: 4,
-      fontSize: 13,
-      color: theme.colors.textSecondary,
-    },
-    button: {
-      marginTop: 24,
-      backgroundColor: theme.colors.primary,
-      paddingVertical: 14,
-      borderRadius: 10,
-      alignItems: "center",
-    },
-    buttonDisabled: { opacity: 0.4 },
-    buttonText: { color: "#fff", fontSize: 17, fontWeight: "600" },
-  })

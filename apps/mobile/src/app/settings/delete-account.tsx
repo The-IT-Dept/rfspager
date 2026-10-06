@@ -1,28 +1,35 @@
-import { KeyboardAwareScrollView } from "react-native-keyboard-controller"
-import React, { useState } from "react"
-import {
-  ActivityIndicator,
-  Alert,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-} from "react-native"
+import React, { useEffect, useState } from "react"
+import { Alert, StyleSheet, Text, View } from "react-native"
 import { useRouter } from "expo-router"
-import { useAuthStore } from "../../stores"
+import { useAuthStore, useUser } from "../../stores"
 import { useAppTheme, AppTheme } from "../../theme"
+import { FormButton, FormField, FormScreen, FormSection } from "../../components/form/form"
 
+/**
+ * Apple requires every account to be deletable in the app. Accounts created
+ * with Apple/Facebook sign-in have no password they know, so they confirm with
+ * the alert alone; everyone else re-enters their password.
+ */
 export default function DeleteAccountScreen() {
   const theme = useAppTheme()
   const styles = makeStyles(theme)
   const router = useRouter()
+  const user = useUser()
   const deleteAccount = useAuthStore((s) => s.deleteAccount)
+  const refreshUser = useAuthStore((s) => s.refreshUser)
+  const hasPassword = user?.has_password !== false
 
   const [password, setPassword] = useState("")
   const [pending, setPending] = useState(false)
 
+  useEffect(() => {
+    void refreshUser()
+  }, [refreshUser])
+
+  const canSubmit = !hasPassword || password.length > 0
+
   const onSubmit = () => {
-    if (password.length === 0) return
+    if (!canSubmit || pending) return
     Alert.alert(
       "Delete account?",
       "This permanently removes your account, capcode subscriptions, alert zones and push registrations. It cannot be undone.",
@@ -33,7 +40,7 @@ export default function DeleteAccountScreen() {
           style: "destructive",
           onPress: async () => {
             setPending(true)
-            const result = await deleteAccount(password)
+            const result = await deleteAccount(hasPassword ? password : undefined)
             setPending(false)
             if (result === "OK") {
               // The store has already cleared the session; root layout will
@@ -49,88 +56,53 @@ export default function DeleteAccountScreen() {
   }
 
   return (
-    <KeyboardAwareScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      automaticallyAdjustKeyboardInsets
-      keyboardShouldPersistTaps="handled"
-      style={styles.container}
-      contentContainerStyle={{ paddingBottom: 48 }}
-    >
-      <Text style={styles.title}>This will permanently delete your account.</Text>
+    <FormScreen>
+      <View style={styles.intro}>
+        <Text style={styles.title}>This permanently deletes your account.</Text>
         <Text style={styles.body}>
           Your profile, capcode subscriptions, filters, alert zones and push registrations will be
           removed. Any systems you've registered will remain available to others but will no longer
-          be linked to you.{"\n\n"}
-          An active App Store or Play Store subscription will continue to bill until you cancel it
-          in your store's subscription settings.
+          be linked to you.
         </Text>
+        <Text style={styles.body}>
+          An active App Store or Play Store subscription keeps billing until you cancel it in your
+          store's subscription settings.
+        </Text>
+      </View>
 
-        <Text style={styles.label}>Confirm with your password</Text>
-        <TextInput
-          style={styles.input}
-          value={password}
-          onChangeText={setPassword}
-          autoFocus
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          returnKeyType="done"
-          onSubmitEditing={onSubmit}
-        />
+      {hasPassword && (
+        <FormSection title="Confirm it's you">
+          <FormField
+            label="Password"
+            value={password}
+            onChangeText={setPassword}
+            autoFocus
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            textContentType="password"
+            returnKeyType="done"
+            onSubmitEditing={onSubmit}
+            placeholder="Required"
+            isLast
+          />
+        </FormSection>
+      )}
 
-        <TouchableOpacity
-          style={[styles.button, password.length === 0 && styles.buttonDisabled]}
-          onPress={onSubmit}
-          disabled={password.length === 0 || pending}
-        >
-          {pending ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Delete my account</Text>
-          )}
-        </TouchableOpacity>
-    </KeyboardAwareScrollView>
+      <FormButton
+        title="Delete My Account"
+        tone="destructive"
+        onPress={onSubmit}
+        disabled={!canSubmit}
+        loading={pending}
+      />
+    </FormScreen>
   )
 }
 
 const makeStyles = (theme: AppTheme) =>
   StyleSheet.create({
-    container: { flex: 1, padding: 16 },
-    title: {
-      fontSize: 17,
-      fontWeight: "600",
-      color: theme.colors.error,
-      marginBottom: 8,
-    },
-    body: {
-      fontSize: 15,
-      color: theme.colors.textPrimary,
-      marginBottom: 24,
-      lineHeight: 21,
-    },
-    label: {
-      fontSize: 13,
-      color: theme.colors.textSecondary,
-      textTransform: "uppercase",
-      letterSpacing: 0.5,
-      marginBottom: 6,
-      marginLeft: 4,
-    },
-    input: {
-      backgroundColor: theme.colors.cardBackground,
-      color: theme.colors.textPrimary,
-      borderRadius: 10,
-      paddingHorizontal: 12,
-      paddingVertical: 14,
-      fontSize: 17,
-    },
-    button: {
-      marginTop: 24,
-      backgroundColor: theme.colors.error,
-      paddingVertical: 14,
-      borderRadius: 10,
-      alignItems: "center",
-    },
-    buttonDisabled: { opacity: 0.4 },
-    buttonText: { color: "#fff", fontSize: 17, fontWeight: "600" },
+    intro: { marginTop: 24, marginHorizontal: 32, gap: 10 },
+    title: { fontSize: 20, fontWeight: "600", color: theme.colors.textPrimary },
+    body: { fontSize: 15, lineHeight: 21, color: theme.colors.textSecondary },
   })

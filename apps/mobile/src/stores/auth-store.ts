@@ -34,8 +34,8 @@ interface AuthState {
   ) => Promise<string>
   forgotPassword: (email: string) => Promise<string>
   updateProfile: (input: UpdateProfileInput) => Promise<string>
-  updatePassword: (current: string, next: string, nextConfirmation: string) => Promise<string>
-  deleteAccount: (password: string) => Promise<string>
+  updatePassword: (current: string | undefined, next: string, nextConfirmation: string) => Promise<string>
+  deleteAccount: (password?: string) => Promise<string>
   logout: (message?: string) => void
   resetApp: () => void
   refreshUser: () => Promise<void>
@@ -157,7 +157,13 @@ export const useAuthStore = create<AuthState>()(
 
         updateProfile: async (input) => {
           try {
-            const updated = await api.user.update(input)
+            const { token, ...updated } = await api.user.update(input)
+            // An email change signs out other sessions and returns a token
+            // for this one; adopt it or the next request would 401.
+            if (token) {
+              syncToken(token)
+              set({ token })
+            }
             // Merge into the cached user so downstream selectors (name/email
             // changes) reflect immediately without a full /me round-trip.
             const current = get().user
@@ -175,7 +181,11 @@ export const useAuthStore = create<AuthState>()(
 
         updatePassword: async (current, next, nextConfirmation) => {
           try {
-            await api.auth.updatePassword(current, next, nextConfirmation)
+            const { token } = await api.auth.updatePassword(current, next, nextConfirmation)
+            // Other sessions are signed out; keep this one with the new token.
+            syncToken(token)
+            const user = get().user
+            set({ token, user: user ? { ...user, has_password: true } : user })
             logEvent("password_updated")
             return "OK"
           } catch (e: any) {

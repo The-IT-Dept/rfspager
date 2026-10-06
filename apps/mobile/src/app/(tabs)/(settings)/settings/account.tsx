@@ -61,7 +61,7 @@ export default function AccountScreen() {
       <View style={styles.card}>
         <EditableRow
           theme={theme}
-          label="Change Password"
+          label={user?.has_password === false ? "Set Password" : "Change Password"}
           onPress={() => router.push("/settings/change-password")}
           isLast
         />
