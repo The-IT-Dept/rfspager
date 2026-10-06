@@ -1,5 +1,24 @@
 # Changelog
 
+## [5.3.0](https://github.com/The-IT-Dept/rfspager/compare/v5.2.1...v5.3.0) (2026-10-06)
+
+
+### Features
+
+* **iap:** handle Adapty webhooks in Go and record store IDs ([846f97a](https://github.com/The-IT-Dept/rfspager/commit/846f97ac5d5410598562a92a3f321b8665f81db7))
+* **web:** restore Google Analytics and AdSense ([c81068b](https://github.com/The-IT-Dept/rfspager/commit/c81068bdc8806a1328cf298cdac8ad6e3c4c48ff))
+
+
+### Bug Fixes
+
+* **iap:** let one store entitlement back several accounts ([02e2701](https://github.com/The-IT-Dept/rfspager/commit/02e270160354c05b0744153b56e84135d981a760))
+* **ingress:** make message dedupe atomic ([5afb5f9](https://github.com/The-IT-Dept/rfspager/commit/5afb5f9271ec313aade1244401e5f3057f1c614e))
+* **install:** show the receiver install command without needless quotes ([18efa67](https://github.com/The-IT-Dept/rfspager/commit/18efa679dc4db5bda548e6a5d03da1eb921c65a5))
+* **mobile:** correct IAP restore result and expo-iap v4 cancel code ([dad509b](https://github.com/The-IT-Dept/rfspager/commit/dad509b0a6f84ec7b4b052f236a5b2dd3e8d4be8))
+* **push,iap:** unblock push delivery on prod data; never shorten gifted access ([fb7599f](https://github.com/The-IT-Dept/rfspager/commit/fb7599fee9ff4a83168cca681882f097c863b839))
+* **recvhub:** stop false receiver-offline alerts after brief disconnects ([8d27949](https://github.com/The-IT-Dept/rfspager/commit/8d27949e500224c6fe252abf45f1a61555187cd2))
+* **security:** remediate findings from strix deep scan ([2412a19](https://github.com/The-IT-Dept/rfspager/commit/2412a191fe307e7b67d13e371520acad37f43f23))
+
 ## [5.2.1](https://github.com/The-IT-Dept/rfspager/compare/v5.2.0...v5.2.1) (2026-09-22)
 
 
