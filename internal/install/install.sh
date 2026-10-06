@@ -71,6 +71,56 @@ EOF
 fi
 modprobe -r dvb_usb_rtl28xxu 2>/dev/null || true
 
+# --- Previous Docker-based agent -------------------------------------------
+# The old installer (rfspager-docs/agent.sh) ran the decoder as Docker
+# containers, rfspager-frnsw / rfspager-rfs from the rfspager-client image,
+# defined in /opt/rfspager/docker-compose.yml with /dev/bus/usb passed through
+# and restart: unless-stopped. Left in place they hold the dongle and return on
+# every boot, so take them down. Docker itself is left installed.
+LEGACY_COMPOSE="$BIN_DIR/docker-compose.yml"
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  if [ -f "$LEGACY_COMPOSE" ]; then
+    say "Stopping the previous Docker-based agent"
+    if docker compose version >/dev/null 2>&1; then
+      docker compose -f "$LEGACY_COMPOSE" down --remove-orphans >/dev/null 2>&1 || true
+    elif command -v docker-compose >/dev/null 2>&1; then
+      docker-compose -f "$LEGACY_COMPOSE" down --remove-orphans >/dev/null 2>&1 || true
+    fi
+  fi
+  # Catch containers started outside that compose file too. Match on the image
+  # *name* from the default listing, never the image ID: an ID can be shared
+  # with unrelated tags, and only the old agent may be touched here.
+  LEGACY_REPO=ghcr.io/the-it-dept/rfspager-client
+  LEGACY_IDS="$( { docker ps -aq --filter name='^rfspager-frnsw$'
+                   docker ps -aq --filter name='^rfspager-rfs$'
+                   docker ps -a --no-trunc 2>/dev/null \
+                     | awk -v repo="$LEGACY_REPO" 'NR > 1 && (index($2, repo ":") == 1 || index($2, repo "@") == 1 || $2 == repo) { print substr($1, 1, 12) }'
+                 } 2>/dev/null | sort -u )"
+  if [ -n "$LEGACY_IDS" ]; then
+    say "Removing previous agent containers"
+    # shellcheck disable=SC2086
+    docker rm -f $LEGACY_IDS >/dev/null
+  fi
+  # Untag by name:tag (no -f) so an image shared with another tag survives.
+  # Docker 29 lists a single IMAGE (repo:tag) column; older releases split
+  # REPOSITORY and TAG. Read the header to tell which.
+  LEGACY_REFS="$(docker images "$LEGACY_REPO" 2>/dev/null | awk '
+    NR == 1 { split_cols = ($1 == "REPOSITORY"); next }
+    split_cols { print ($2 == "<none>" ? $3 : $1 ":" $2); next }
+    { print $1 }')"
+  if [ -n "$LEGACY_REFS" ]; then
+    say "Removing the previous agent image"
+    # shellcheck disable=SC2086
+    docker rmi $LEGACY_REFS >/dev/null 2>&1 || warn "Could not remove the old rfspager-client image; it is unused and safe to delete."
+  fi
+fi
+if [ -f "$LEGACY_COMPOSE" ]; then
+  # It carries the old PagerMon key; keep it out of the way rather than live.
+  mv -f "$LEGACY_COMPOSE" "$LEGACY_COMPOSE.replaced-$(date -u +%Y%m%d%H%M%S)"
+  chmod 600 "$LEGACY_COMPOSE".replaced-* 2>/dev/null || true
+  say "Set aside the old docker-compose.yml"
+fi
+
 # --- Binary ----------------------------------------------------------------
 mkdir -p "$BIN_DIR" "$ETC_DIR"
 chmod 755 "$BIN_DIR"; chmod 750 "$ETC_DIR"
@@ -92,7 +142,12 @@ else
 fi
 
 chmod 755 "$TMP/receiver"
-"$TMP/receiver" --version >/dev/null 2>&1 || true
+# Confirm librtlsdr and friends resolve without executing it: the receiver
+# takes no arguments, so running it here would start a second decoder.
+if command -v ldd >/dev/null && ldd "$TMP/receiver" 2>/dev/null | grep -q "not found"; then
+  ldd "$TMP/receiver" | grep "not found" >&2 || true
+  die "The receiver is missing shared libraries (listed above)."
+fi
 [ -s "$BIN_DIR/receiver" ] && cp -f "$BIN_DIR/receiver" "$BIN_DIR/receiver.prev"
 mv -f "$TMP/receiver" "$BIN_DIR/receiver"
 say "Installed $BIN_DIR/receiver"
@@ -100,6 +155,13 @@ say "Installed $BIN_DIR/receiver"
 # --- Configuration ---------------------------------------------------------
 # Written fresh each run so an upgrade cannot leave stale legacy keys behind:
 # the current receiver refuses to start if RECEIVER_LEGACY_* are present.
+#
+# Per-site radio tuning is carried over, though: an upgrade must not reset a
+# gain or dongle choice someone tuned by hand.
+TUNING=""
+if [ -f "$ENV_FILE" ]; then
+  TUNING="$(grep -E '^(RECEIVER_TUNER_GAIN|RECEIVER_DONGLE_INDEX|RECEIVER_DONGLE_SERIAL|RECEIVER_PPM|RECEIVER_SAMPLE_RATE|RECEIVER_POST_ALL)=' "$ENV_FILE" || true)"
+fi
 say "Writing $ENV_FILE"
 umask 077
 cat > "$ENV_FILE" <<EOF
@@ -109,7 +171,18 @@ RECEIVER_SERVER_URL=$SERVER_URL
 RECEIVER_API_KEY=$TOKEN
 TZ=Australia/Sydney
 EOF
+if [ -n "$TUNING" ]; then
+  printf '\n# Kept from the previous configuration\n%s\n' "$TUNING" >> "$ENV_FILE"
+  say "Kept radio tuning: $(printf '%s' "$TUNING" | cut -d= -f1 | tr '\n' ' ')"
+fi
 chmod 600 "$ENV_FILE"
+
+# A fan-out file overrides the server and key above; say so rather than let a
+# stale one quietly win.
+if [ -f "$ETC_DIR/endpoints.json" ]; then
+  warn "$ETC_DIR/endpoints.json exists and takes precedence over $ENV_FILE."
+  warn "Make sure it points at $SERVER_URL with this receiver's key, or remove it."
+fi
 
 # --- Service ---------------------------------------------------------------
 say "Installing the systemd unit"
