@@ -144,9 +144,10 @@ swap is straightforward:
 
 ## 4. Cutting a release
 
-Merge the release-please PR. release-please tags `vX.Y.Z`, publishes the
-GitHub release, and its `build-release` job starts `server-release`,
-`web-release` and `receiver-release` for the tag, plus `mobile-release` when
+Merge the release-please PR. release-please runs as the org GitHub App
+(`BOT_APP_ID` / `BOT_APP_PRIVATE_KEY` org secrets), so its PRs get CI without
+approval and the `vX.Y.Z` tag it pushes starts `server-release`, `web-release`
+and `receiver-release`. Its `mobile-release` job starts the app build when
 anything under `apps/mobile` changed since the previous release.
 
 The app's store version is `apps/mobile/package.json` (bumped by

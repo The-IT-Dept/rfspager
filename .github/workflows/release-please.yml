@@ -1,18 +1,19 @@
 name: release-please
 
 # Opens / updates the release PR. Merging it creates the vX.Y.Z tag and GitHub
-# release, then this workflow starts the per-component release builds.
+# release.
 #
-# The tag is pushed with GITHUB_TOKEN, and GitHub does not start workflows
-# from events that token raises, so the release workflows never see the tag
-# push. workflow_dispatch is the documented exception, hence the dispatch job.
+# release-please runs as the org's GitHub App (BOT_APP_ID / BOT_APP_PRIVATE_KEY)
+# rather than GITHUB_TOKEN: GitHub starts no workflows from events raised by
+# GITHUB_TOKEN, so with it the release PR's CI waited for manual approval and
+# the tag never started the server, web and receiver release workflows. With
+# the App token both happen on their own.
 on:
   push:
     branches: [main]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release-please:
@@ -21,14 +22,23 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+
       - id: release
         uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           config-file: .github/release-please-config.json
           manifest-file: .github/.release-please-manifest.json
 
-  build-release:
+  # server-release, web-release and receiver-release start from the tag push.
+  # The app build has no tag trigger: store uploads are slow and each one lands
+  # in TestFlight / Play, so it only runs when apps/mobile changed.
+  mobile-release:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
@@ -43,15 +53,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Start server, web and receiver builds
-        run: |
-          for wf in server-release.yml web-release.yml receiver-release.yml; do
-            gh workflow run "$wf" --ref main -f tag="$TAG"
-            echo "started $wf for $TAG"
-          done
-
-      # Store uploads are slow and every one lands in TestFlight / Play, so only
-      # build the app when something under apps/mobile changed in this release.
       - name: Start the mobile build if the app changed
         run: |
           git fetch --tags --force
