@@ -287,6 +287,12 @@ func main() {
 	imp.Start()
 	defer imp.Stop()
 
+	// Daily safety net: switch off subscriptions long past expiry that no
+	// store or Adapty event ever closed (iap.ExpiryGrace).
+	expiry := iap.NewExpirySweeper(database.Conn(), 24*time.Hour)
+	expiry.Start()
+	defer expiry.Stop()
+
 	// Server
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
