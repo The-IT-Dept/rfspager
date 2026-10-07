@@ -63,7 +63,6 @@
     "react-native-google-mobile-ads": "^15.8.3",
     "react-native-gravatar": "^1.0.2",
     "react-native-keyboard-controller": "1.21.9",
-    "react-native-keychain": "^9.2.3",
     "react-native-map-clustering": "^3.4.2",
     "react-native-map-link": "^3.13.0",
     "react-native-maps": "1.27.2",
