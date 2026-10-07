@@ -34,6 +34,15 @@ func (h *Handlers) Dashboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stats)
 }
 
+func (h *Handlers) AppVersions(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.store.GetAppVersionStats(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
 // --- Users ---
 
 func (h *Handlers) ListUsers(w http.ResponseWriter, r *http.Request) {

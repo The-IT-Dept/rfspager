@@ -24,6 +24,7 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier) chi.Router
 		r.Get("/auth/me", auth.Me)
 		r.Post("/auth/logout", auth.Logout)
 		r.Get("/dashboard", h.Dashboard)
+		r.Get("/dashboard/app-versions", h.AppVersions)
 
 		// Users
 		r.Route("/users", func(r chi.Router) {

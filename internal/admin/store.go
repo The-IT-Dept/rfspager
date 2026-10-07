@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -791,6 +793,109 @@ func (s *Store) GetDashboardStats(ctx context.Context) (*DashboardStats, error) 
 		return nil, err
 	}
 	return val.(*DashboardStats), nil
+}
+
+// --- App versions ---
+
+// NewAppMajor is the first major version of the rebuilt (Go-backed) app.
+// Installs on it or later count as "on the new app".
+const NewAppMajor = 5
+
+// appVersionWindow is how recently an installation must have checked in
+// (installations.updated_at) to count as active.
+const appVersionWindow = 30 * 24 * time.Hour
+
+type AppVersionRow struct {
+	Version  string `json:"version" db:"version"`
+	IOS      int64  `json:"ios" db:"ios"`
+	Android  int64  `json:"android" db:"android"`
+	Devices  int64  `json:"devices" db:"devices"`
+	Accounts int64  `json:"accounts" db:"accounts"`
+}
+
+type AppVersionStats struct {
+	WindowDays        int             `json:"window_days"`
+	NewAppMajor       int             `json:"new_app_major"`
+	ActiveDevices     int64           `json:"active_devices" db:"active_devices"`
+	NewAppDevices     int64           `json:"new_app_devices" db:"new_app_devices"`
+	ActiveAccounts    int64           `json:"active_accounts" db:"active_accounts"`
+	NewAppAccounts    int64           `json:"new_app_accounts" db:"new_app_accounts"`
+	RegisteredDevices int64           `json:"registered_devices" db:"registered_devices"`
+	Versions          []AppVersionRow `json:"versions"`
+}
+
+// GetAppVersionStats reports which app versions active installations run,
+// split by platform, and how many have moved to the new app. Cached for 60s.
+func (s *Store) GetAppVersionStats(ctx context.Context) (*AppVersionStats, error) {
+	val, err := s.cachedStats("app_versions", 60*time.Second, func() (any, error) {
+		stats := AppVersionStats{WindowDays: int(appVersionWindow.Hours() / 24), NewAppMajor: NewAppMajor}
+		secs := appVersionWindow.Seconds()
+		// The CASE guards the cast: app_version is free text from the client.
+		err := s.db.GetContext(ctx, &stats, `
+			WITH active AS (
+				SELECT user_id,
+				       COALESCE(CASE WHEN split_part(app_version, '.', 1) ~ '^[0-9]{1,6}$'
+				                     THEN split_part(app_version, '.', 1)::int END, 0) >= $2 AS new_app
+				  FROM installations
+				 WHERE deleted_at IS NULL AND updated_at > NOW() - make_interval(secs => $1)
+			)
+			SELECT COUNT(*) AS active_devices,
+			       COUNT(*) FILTER (WHERE new_app) AS new_app_devices,
+			       COUNT(DISTINCT user_id) AS active_accounts,
+			       COUNT(DISTINCT user_id) FILTER (WHERE new_app) AS new_app_accounts,
+			       (SELECT COUNT(*) FROM installations WHERE deleted_at IS NULL) AS registered_devices
+			  FROM active`, secs, NewAppMajor)
+		if err != nil {
+			return nil, err
+		}
+		stats.Versions = []AppVersionRow{}
+		err = s.db.SelectContext(ctx, &stats.Versions, `
+			SELECT COALESCE(NULLIF(app_version, ''), 'unknown') AS version,
+			       COUNT(*) FILTER (WHERE push_type = 'APN') AS ios,
+			       COUNT(*) FILTER (WHERE push_type = 'GCM') AS android,
+			       COUNT(*) AS devices,
+			       COUNT(DISTINCT user_id) AS accounts
+			  FROM installations
+			 WHERE deleted_at IS NULL AND updated_at > NOW() - make_interval(secs => $1)
+			 GROUP BY 1`, secs)
+		if err != nil {
+			return nil, err
+		}
+		sort.Slice(stats.Versions, func(i, j int) bool {
+			return compareVersions(stats.Versions[i].Version, stats.Versions[j].Version) > 0
+		})
+		return &stats, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return val.(*AppVersionStats), nil
+}
+
+// compareVersions orders dotted version strings numerically ("5.10.0" after
+// "5.9.1"); non-numeric parts sort below numeric ones.
+func compareVersions(a, b string) int {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		na, nb := -1, -1
+		if i < len(pa) {
+			if n, err := strconv.Atoi(pa[i]); err == nil {
+				na = n
+			}
+		}
+		if i < len(pb) {
+			if n, err := strconv.Atoi(pb[i]); err == nil {
+				nb = n
+			}
+		}
+		if na != nb {
+			if na < nb {
+				return -1
+			}
+			return 1
+		}
+	}
+	return strings.Compare(a, b)
 }
 
 // --- Billing / IAP ---
