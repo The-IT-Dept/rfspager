@@ -19,7 +19,7 @@ func TestPasswordLoginAfterSessionRevocation(t *testing.T) {
 	defer conn.Close()
 	db := sqlx.NewDb(conn, "sqlmock")
 	hash, _ := bcrypt.GenerateFromPassword([]byte("valid-password-for-test"), bcrypt.MinCost)
-	mock.ExpectQuery("SELECT[\\s\\S]*FROM users WHERE email").WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "name", "email", "password", "subscription_valid", "subscription_product_id", "subscription_expiry", "will_renew", "subscription_platform", "superuser", "token_version"}).AddRow(7, "uuid", "User", "user@example.invalid", string(hash), false, nil, nil, nil, nil, false, 5))
+	mock.ExpectQuery("SELECT[\\s\\S]*FROM users WHERE lower\\(email\\) = lower\\(\\$1\\)").WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "name", "email", "password", "subscription_valid", "subscription_product_id", "subscription_expiry", "will_renew", "subscription_platform", "superuser", "token_version"}).AddRow(7, "uuid", "User", "user@example.invalid", string(hash), false, nil, nil, nil, nil, false, 5))
 	h := NewAuthHandler(db, "local-test-secret", "")
 	w := httptest.NewRecorder()
 	h.Login(w, httptest.NewRequest("POST", "/login", strings.NewReader(`{"email":"user@example.invalid","password":"valid-password-for-test"}`)))

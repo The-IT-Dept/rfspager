@@ -154,7 +154,7 @@ func TestSecuritySocialLoginCannotLinkEmailMatchedAccount(t *testing.T) {
 		switch {
 		case strings.Contains(q, "FROM social_providers"):
 			return &securityRows{cols: []string{"user_id"}}, nil
-		case strings.Contains(q, "SELECT id FROM users WHERE email"):
+		case strings.Contains(q, "SELECT id FROM users WHERE lower(email) = lower($1)"):
 			if a[0].Value != "victim@example.invalid" {
 				return nil, fmt.Errorf("email=%v", a[0].Value)
 			}
@@ -254,10 +254,10 @@ func TestSecurityForgotPasswordStoresOnlyHashAndSendsOpaqueToken(t *testing.T) {
 	var storedHash []byte
 	db := securityDB(t, &securityDriver{
 		query: func(q string, a []driver.NamedValue) (driver.Rows, error) {
-			if !strings.Contains(q, "SELECT id, COALESCE(name, '') FROM users WHERE email") || a[0].Value != "member@example.invalid" {
+			if !strings.Contains(q, "FROM users WHERE lower(email) = lower($1) ORDER BY (email = $1) DESC") || a[0].Value != "Member@Example.invalid" {
 				return nil, fmt.Errorf("unexpected query %q", q)
 			}
-			return &securityRows{cols: []string{"id", "name"}, values: [][]driver.Value{{int64(4), "Member Name"}}}, nil
+			return &securityRows{cols: []string{"id", "name", "email"}, values: [][]driver.Value{{int64(4), "Member Name", "member@example.invalid"}}}, nil
 		},
 		exec: func(q string, a []driver.NamedValue) (driver.Result, error) {
 			switch {
@@ -274,7 +274,7 @@ func TestSecurityForgotPasswordStoresOnlyHashAndSendsOpaqueToken(t *testing.T) {
 	})
 	mail := &capturedResetMail{}
 	h := NewAuthHandler(db, "test-secret", "app.example", AuthOptions{ResetMailer: mail, ResetURL: "https://app.example/reset-password"})
-	req := httptest.NewRequest(http.MethodPost, "/auth/forgot-password", strings.NewReader(`{"email":"member@example.invalid"}`))
+	req := httptest.NewRequest(http.MethodPost, "/auth/forgot-password", strings.NewReader(`{"email":"Member@Example.invalid"}`))
 	rr := httptest.NewRecorder()
 	h.ForgotPassword(rr, req)
 	if rr.Code != http.StatusOK || !tx.committed {

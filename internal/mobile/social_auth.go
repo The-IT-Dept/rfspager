@@ -134,7 +134,7 @@ func (h *AuthHandler) findOrCreateSocialUser(r *http.Request, provider string, i
 	// use an email match as proof that this caller owns the account.
 	{
 		var id int64
-		err := h.db.QueryRowContext(ctx, `SELECT id FROM users WHERE email = $1`, identity.Email).Scan(&id)
+		err := h.db.QueryRowContext(ctx, `SELECT id FROM users WHERE lower(email) = lower($1) LIMIT 1`, identity.Email).Scan(&id)
 		if err == nil {
 			return nil, errSocialIdentityAlreadyOwned
 		}

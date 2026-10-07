@@ -29,6 +29,11 @@ type PasswordResetMailer interface {
 	SendPasswordReset(ctx context.Context, recipient, name, resetURL, token string) error
 }
 
+// emailMatchOrder ranks accounts matched by lower(email) = lower($1) when
+// several addresses differ only in case (people who signed up twice): the
+// exact spelling, then a subscribed account, then the most recently active.
+const emailMatchOrder = `ORDER BY (email = $1) DESC, subscription_valid DESC, last_login DESC NULLS LAST, id DESC`
+
 // AuthOptions contains optional integrations. With no reset mailer/password
 // reset URL, recovery is explicitly unavailable rather than falsely claiming
 // that an email has been sent. Facebook is disabled without app credentials.
@@ -107,23 +112,36 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var passwordHash string
-	var user AuthUser
-	err := h.db.QueryRowContext(r.Context(),
+	// Emails match case-insensitively. Some people have two accounts whose
+	// addresses differ only in case, so the password decides which one this
+	// is: exact-case first, then a subscribed account (emailMatchOrder).
+	rows, err := h.db.QueryContext(r.Context(),
 		`SELECT id, user_id, name, email, password, subscription_valid,
 		 subscription_product_id, subscription_expiry, will_renew,
 		 subscription_platform, superuser, token_version
-		 FROM users WHERE email = $1`, req.Email).Scan(
-		&user.ID, &user.UserID, &user.Name, &user.Email, &passwordHash,
-		&user.SubscriptionValid, &user.SubscriptionProductID,
-		&user.SubscriptionExpiry, &user.WillRenew, &user.SubscriptionPlatform,
-		&user.Superuser, &user.TokenVersion)
+		 FROM users WHERE lower(email) = lower($1) `+emailMatchOrder+` LIMIT 5`, strings.TrimSpace(req.Email))
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		slog.Error("failed to look up login", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
+	var user AuthUser
+	found := false
+	for rows.Next() && !found {
+		var candidate AuthUser
+		var passwordHash string
+		if err := rows.Scan(&candidate.ID, &candidate.UserID, &candidate.Name, &candidate.Email, &passwordHash,
+			&candidate.SubscriptionValid, &candidate.SubscriptionProductID,
+			&candidate.SubscriptionExpiry, &candidate.WillRenew, &candidate.SubscriptionPlatform,
+			&candidate.Superuser, &candidate.TokenVersion); err != nil {
+			break
+		}
+		if bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)) == nil {
+			user, found = candidate, true
+		}
+	}
+	rows.Close()
+	if !found {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
@@ -156,6 +174,17 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	if req.Password != req.PasswordConfirmation {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "passwords do not match"})
+		return
+	}
+
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	var taken bool
+	if err := h.db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM users WHERE lower(email) = $1)`, req.Email).Scan(&taken); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if taken {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "email already taken"})
 		return
 	}
 
@@ -350,6 +379,15 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		if !h.checkCurrentPassword(w, r, user.ID, req.CurrentPassword) {
 			return
 		}
+		var taken bool
+		if err := h.db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM users WHERE lower(email) = lower($1) AND id <> $2)`, strings.TrimSpace(*req.Email), user.ID).Scan(&taken); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		if taken {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "email already taken"})
+			return
+		}
 	}
 
 	// Build the update set dynamically — Postgres COALESCE keeps existing
@@ -530,7 +568,7 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	email := strings.TrimSpace(req.Email)
 	var userID int64
 	var name string
-	err := h.db.QueryRowContext(r.Context(), `SELECT id, COALESCE(name, '') FROM users WHERE email = $1`, email).Scan(&userID, &name)
+	err := h.db.QueryRowContext(r.Context(), `SELECT id, COALESCE(name, ''), email FROM users WHERE lower(email) = lower($1) `+emailMatchOrder+` LIMIT 1`, email).Scan(&userID, &name, &email)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "If that email exists, a reset link has been sent."})
 		return
