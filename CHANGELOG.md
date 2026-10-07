@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.3.4](https://github.com/The-IT-Dept/rfspager/compare/v5.3.3...v5.3.4) (2026-10-07)
+
+
+### Bug Fixes
+
+* **mobile:** account forms no longer slide under the header ([6c8669e](https://github.com/The-IT-Dept/rfspager/commit/6c8669e017884443ec336e19394eac03d8a6941a))
+
 ## [5.3.3](https://github.com/The-IT-Dept/rfspager/compare/v5.3.2...v5.3.3) (2026-10-06)
 
 
