@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -51,10 +52,20 @@ func (f *FCMClient) Send(ctx context.Context, token, title, body string, badge i
 
 	_, err := f.client.Send(ctx, msg)
 	if err != nil {
+		// Classify before wrapping: the SDK's Is* helpers type-assert rather
+		// than unwrap, so they cannot see the error once it is wrapped.
+		if messaging.IsUnregistered(err) || messaging.IsSenderIDMismatch(err) {
+			return fmt.Errorf("sending FCM message: %w: %w", ErrBadToken, err)
+		}
 		return fmt.Errorf("sending FCM message: %w", err)
 	}
 	return nil
 }
+
+// ErrBadToken marks a push token the provider says will never work again
+// (app uninstalled, token rotated). The dispatcher retires such tokens
+// instead of retrying them.
+var ErrBadToken = errors.New("push token is no longer registered")
 
 func intPtr(i int) *int {
 	return &i

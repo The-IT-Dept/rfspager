@@ -187,6 +187,9 @@ func toErrors(s []string) []error {
 // isBadTokenError detects provider-returned "device token is gone" responses.
 // Conservative — anything we don't recognize is treated as transient.
 func isBadTokenError(err error) bool {
+	if errors.Is(err, ErrBadToken) {
+		return true
+	}
 	msg := err.Error()
 	// APN reasons (from sideshow/apns2) — non-recoverable on the token.
 	for _, s := range []string{
@@ -198,8 +201,11 @@ func isBadTokenError(err error) bool {
 			return true
 		}
 	}
-	// FCM error codes — non-recoverable on the token.
+	// FCM error codes — non-recoverable on the token. The Go SDK reports an
+	// uninstalled app as "NotRegistered"; the hyphenated codes are the
+	// Admin SDK's names for the same conditions.
 	for _, s := range []string{
+		"NotRegistered",
 		"registration-token-not-registered",
 		"invalid-argument",
 		"invalid-registration-token",
