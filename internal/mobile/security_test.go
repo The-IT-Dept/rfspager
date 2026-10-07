@@ -242,10 +242,10 @@ type securityTx struct{ committed bool }
 func (tx *securityTx) Commit() error { tx.committed = true; return nil }
 func (*securityTx) Rollback() error  { return nil }
 
-type capturedResetMail struct{ recipient, resetURL, token string }
+type capturedResetMail struct{ recipient, name, resetURL, token string }
 
-func (m *capturedResetMail) SendPasswordReset(_ context.Context, recipient, resetURL, token string) error {
-	m.recipient, m.resetURL, m.token = recipient, resetURL, token
+func (m *capturedResetMail) SendPasswordReset(_ context.Context, recipient, name, resetURL, token string) error {
+	m.recipient, m.name, m.resetURL, m.token = recipient, name, resetURL, token
 	return nil
 }
 
@@ -254,10 +254,10 @@ func TestSecurityForgotPasswordStoresOnlyHashAndSendsOpaqueToken(t *testing.T) {
 	var storedHash []byte
 	db := securityDB(t, &securityDriver{
 		query: func(q string, a []driver.NamedValue) (driver.Rows, error) {
-			if !strings.Contains(q, "SELECT id FROM users WHERE email") || a[0].Value != "member@example.invalid" {
+			if !strings.Contains(q, "SELECT id, COALESCE(name, '') FROM users WHERE email") || a[0].Value != "member@example.invalid" {
 				return nil, fmt.Errorf("unexpected query %q", q)
 			}
-			return &securityRows{cols: []string{"id"}, values: [][]driver.Value{{int64(4)}}}, nil
+			return &securityRows{cols: []string{"id", "name"}, values: [][]driver.Value{{int64(4), "Member Name"}}}, nil
 		},
 		exec: func(q string, a []driver.NamedValue) (driver.Result, error) {
 			switch {
@@ -280,7 +280,7 @@ func TestSecurityForgotPasswordStoresOnlyHashAndSendsOpaqueToken(t *testing.T) {
 	if rr.Code != http.StatusOK || !tx.committed {
 		t.Fatalf("status=%d committed=%v", rr.Code, tx.committed)
 	}
-	if mail.recipient != "member@example.invalid" || mail.token == "" || !strings.Contains(mail.resetURL, "token=") {
+	if mail.recipient != "member@example.invalid" || mail.name != "Member Name" || mail.token == "" || !strings.Contains(mail.resetURL, "token=") {
 		t.Fatalf("mail=%+v", mail)
 	}
 	wantHash := sha256.Sum256([]byte(mail.token))

@@ -34,10 +34,10 @@ func TestSMTPPasswordResetMailerRejectsHeaderInjectionAtSend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := mailer.SendPasswordReset(context.Background(), "member@example.invalid\r\nBcc: victim@example.invalid", "https://app.example/reset?token=x", "x"); err == nil {
+	if err := mailer.SendPasswordReset(context.Background(), "member@example.invalid\r\nBcc: victim@example.invalid", "", "https://app.example/reset?token=x", "x"); err == nil {
 		t.Fatal("recipient header injection was accepted")
 	}
-	if err := mailer.SendPasswordReset(context.Background(), "member@example.invalid", "https://app.example/reset\r\nBcc: victim@example.invalid", "x"); err == nil {
+	if err := mailer.SendPasswordReset(context.Background(), "member@example.invalid", "", "https://app.example/reset\r\nBcc: victim@example.invalid", "x"); err == nil {
 		t.Fatal("URL header injection was accepted")
 	}
 }

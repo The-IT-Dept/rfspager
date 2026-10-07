@@ -26,7 +26,7 @@ const maxBcryptPasswordBytes = 72
 // supplied separately for transports that need a template variable, but must
 // never be logged or persisted by the mailer.
 type PasswordResetMailer interface {
-	SendPasswordReset(ctx context.Context, recipient, resetURL, token string) error
+	SendPasswordReset(ctx context.Context, recipient, name, resetURL, token string) error
 }
 
 // AuthOptions contains optional integrations. With no reset mailer/password
@@ -529,7 +529,8 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.TrimSpace(req.Email)
 	var userID int64
-	err := h.db.QueryRowContext(r.Context(), `SELECT id FROM users WHERE email = $1`, email).Scan(&userID)
+	var name string
+	err := h.db.QueryRowContext(r.Context(), `SELECT id, COALESCE(name, '') FROM users WHERE email = $1`, email).Scan(&userID, &name)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "If that email exists, a reset link has been sent."})
 		return
@@ -569,7 +570,7 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	if err := h.resetMailer.SendPasswordReset(r.Context(), email, resetURL, token); err != nil {
+	if err := h.resetMailer.SendPasswordReset(r.Context(), email, name, resetURL, token); err != nil {
 		slog.Error("failed to deliver password reset", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "unable to send password reset"})
 		return

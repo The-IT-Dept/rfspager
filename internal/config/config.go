@@ -46,12 +46,19 @@ type Config struct {
 	BaseURL             string
 
 	// Optional password recovery delivery and social provider validation.
-	SMTPHost             string
-	SMTPPort             int
-	SMTPUsername         string
-	SMTPPassword         string
-	SMTPFrom             string
-	SMTPMode             string
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+	SMTPMode     string
+	// Libredesk sends password resets as support-desk conversations when set,
+	// taking precedence over SMTP.
+	LibredeskURL         string
+	LibredeskAPIKey      string
+	LibredeskAPISecret   string
+	LibredeskInboxID     int
+	LibredeskAgentID     int
 	AdaptyWebhookAuth    string
 	FacebookAppID        string
 	FacebookAppSecret    string
@@ -81,6 +88,9 @@ func Load() (*Config, error) {
 		SMTPPassword:             os.Getenv("SMTP_PASSWORD"),
 		SMTPFrom:                 os.Getenv("SMTP_FROM"),
 		SMTPMode:                 getEnv("SMTP_MODE", "starttls"),
+		LibredeskURL:             os.Getenv("LIBREDESK_URL"),
+		LibredeskAPIKey:          os.Getenv("LIBREDESK_API_KEY"),
+		LibredeskAPISecret:       os.Getenv("LIBREDESK_API_SECRET"),
 		TrustedProxyCIDRs:        parseTrustedProxyCIDRs(os.Getenv("TRUSTED_PROXY_CIDRS")),
 		IAPProductIDs:            strings.Join(strings.Fields(strings.ReplaceAll(getEnv("IAP_PRODUCT_IDS", "io.devlan.rfspager.monthly io.devlan.rfspager.yearly"), ",", " ")), " "),
 		AppleIAPEnvironment:      getEnv("APPLE_IAP_ENVIRONMENT", "Production"),
@@ -169,6 +179,19 @@ func Load() (*Config, error) {
 		cfg.SMTPPort, err = strconv.Atoi(getEnv("SMTP_PORT", defaultPort))
 		if err != nil || cfg.SMTPPort < 1 || cfg.SMTPPort > 65535 {
 			return nil, fmt.Errorf("invalid SMTP_PORT")
+		}
+	}
+	if cfg.LibredeskURL != "" || cfg.LibredeskAPIKey != "" || cfg.LibredeskAPISecret != "" || os.Getenv("LIBREDESK_INBOX_ID") != "" || os.Getenv("LIBREDESK_AGENT_ID") != "" {
+		if cfg.LibredeskURL == "" || cfg.LibredeskAPIKey == "" || cfg.LibredeskAPISecret == "" {
+			return nil, fmt.Errorf("LIBREDESK_URL, LIBREDESK_API_KEY and LIBREDESK_API_SECRET must all be set, or all omitted")
+		}
+		cfg.LibredeskInboxID, err = strconv.Atoi(os.Getenv("LIBREDESK_INBOX_ID"))
+		if err != nil || cfg.LibredeskInboxID < 1 {
+			return nil, fmt.Errorf("LIBREDESK_INBOX_ID must be a positive integer")
+		}
+		cfg.LibredeskAgentID, err = strconv.Atoi(os.Getenv("LIBREDESK_AGENT_ID"))
+		if err != nil || cfg.LibredeskAgentID < 1 {
+			return nil, fmt.Errorf("LIBREDESK_AGENT_ID must be a positive integer")
 		}
 	}
 	for _, cidr := range cfg.TrustedProxyCIDRs {

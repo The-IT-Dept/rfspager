@@ -64,7 +64,7 @@ func NewSMTPPasswordResetMailer(host string, port int, username, password, from,
 // SendPasswordReset sends fullResetURL as the recovery destination. token is
 // intentionally not included in headers or logs; it is accepted to match the
 // application mailer interface and may be used by template-aware transports.
-func (m *SMTPPasswordResetMailer) SendPasswordReset(ctx context.Context, recipient, fullResetURL, token string) error {
+func (m *SMTPPasswordResetMailer) SendPasswordReset(ctx context.Context, recipient, _, fullResetURL, token string) error {
 	if m == nil {
 		return errors.New("password reset mailer is not configured")
 	}

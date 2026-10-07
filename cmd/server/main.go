@@ -112,10 +112,17 @@ func main() {
 		cfg.StripeSecretKey, cfg.StripePriceMonthly, cfg.StripePriceYearly,
 		cfg.StripeWebhookSecret, cfg.BaseURL)
 
-	// Optional password recovery delivery. Missing SMTP keeps recovery unavailable
-	// rather than claiming to send mail.
+	// Optional password recovery delivery: Libredesk if configured, else SMTP.
+	// With neither, recovery stays unavailable rather than claiming to send mail.
 	var resetMailer mobile.PasswordResetMailer
-	if cfg.SMTPHost != "" {
+	if cfg.LibredeskURL != "" {
+		resetMailer, err = resetmail.NewLibredeskPasswordResetMailer(cfg.LibredeskURL, cfg.LibredeskAPIKey, cfg.LibredeskAPISecret, cfg.LibredeskInboxID, cfg.LibredeskAgentID)
+		if err != nil {
+			slog.Error("invalid Libredesk configuration", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("password resets are sent through Libredesk", "url", cfg.LibredeskURL, "inbox_id", cfg.LibredeskInboxID)
+	} else if cfg.SMTPHost != "" {
 		resetMailer, err = resetmail.NewSMTPPasswordResetMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, cfg.SMTPMode)
 		if err != nil {
 			slog.Error("invalid SMTP configuration", "error", err)
