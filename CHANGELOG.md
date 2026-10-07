@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.3.5](https://github.com/The-IT-Dept/rfspager/compare/v5.3.4...v5.3.5) (2026-10-07)
+
+
+### Bug Fixes
+
+* **mobile:** give the Android tab bar icons, labels and app colours ([a49a007](https://github.com/The-IT-Dept/rfspager/commit/a49a007de47c8ec8d39ef4639c61990787a62669))
+
 ## [5.3.4](https://github.com/The-IT-Dept/rfspager/compare/v5.3.3...v5.3.4) (2026-10-07)
 
 
