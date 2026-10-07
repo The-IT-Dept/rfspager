@@ -2,7 +2,7 @@ import { useState } from "react"
 import { Platform } from "react-native"
 import { NativeTabs } from "expo-router/unstable-native-tabs"
 import { isLiquidGlassAvailable } from "expo-glass-effect"
-import { useAppTheme } from "../../theme"
+import { useAppTheme, type AppTheme } from "../../theme"
 import { BannerAd } from "../../utils/admob"
 import { useShowsAds } from "../../stores"
 
@@ -33,24 +33,25 @@ export default function TabsLayout() {
     <NativeTabs
       tintColor={theme.colors.primary}
       minimizeBehavior="onScrollDown"
+      {...(Platform.OS === "android" ? androidTabBar(theme) : {})}
     >
       <NativeTabs.Trigger name="(pager)">
-        <NativeTabs.Trigger.Icon sf="antenna.radiowaves.left.and.right" />
+        <NativeTabs.Trigger.Icon sf="antenna.radiowaves.left.and.right" md="cell_tower" />
         <NativeTabs.Trigger.Label>Pager</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="(incidents)">
-        <NativeTabs.Trigger.Icon sf="flame" />
+        <NativeTabs.Trigger.Icon sf="flame" md="local_fire_department" />
         <NativeTabs.Trigger.Label>Incidents</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="(map)">
-        <NativeTabs.Trigger.Icon sf="map" />
+        <NativeTabs.Trigger.Icon sf="map" md="map" />
         <NativeTabs.Trigger.Label>Map</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="(settings)">
-        <NativeTabs.Trigger.Icon sf="gearshape" />
+        <NativeTabs.Trigger.Icon sf="gearshape" md="settings" />
         <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
@@ -78,4 +79,27 @@ function AccessoryAd({ onUnavailable }: { onUnavailable: () => void }) {
   // Both placements measure 322x48pt on device, so the same banner serves the
   // expanded capsule and the inline slot beside the minimised bar.
   return <BannerAd placement="accessory" onUnavailable={onUnavailable} />
+}
+
+/**
+ * Android draws a Material 3 navigation bar. Without these it fell back to
+ * Material's default lavender surface and indicator, and with only SF Symbols
+ * (iOS-only) the tabs had no icons, so with four tabs (labels shown only on the
+ * selected one) three of them were invisible. Icons come from each trigger's
+ * `md` Material Symbol; this styles the bar in the app's own colours.
+ */
+function androidTabBar(theme: AppTheme) {
+  const primary = theme.colors.primary
+  // 15% alpha of the brand colour for the selected-tab pill.
+  const indicator = /^#[0-9a-f]{6}$/i.test(primary) ? `${primary}26` : primary
+  return {
+    backgroundColor: theme.colors.backgroundSecondary,
+    indicatorColor: indicator,
+    iconColor: { default: theme.colors.textSecondary, selected: primary },
+    labelStyle: {
+      default: { color: theme.colors.textSecondary },
+      selected: { color: primary, fontWeight: "600" as const },
+    },
+    labelVisibilityMode: "labeled" as const,
+  }
 }
