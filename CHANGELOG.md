@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.3.6](https://github.com/The-IT-Dept/rfspager/compare/v5.3.5...v5.3.6) (2026-10-07)
+
+
+### Bug Fixes
+
+* **mobile:** show push notifications on iOS while the app is open ([815c242](https://github.com/The-IT-Dept/rfspager/commit/815c242a8406c3b2356c74dcee39a6b8324cc99e))
+
 ## [5.3.5](https://github.com/The-IT-Dept/rfspager/compare/v5.3.4...v5.3.5) (2026-10-07)
 
 
