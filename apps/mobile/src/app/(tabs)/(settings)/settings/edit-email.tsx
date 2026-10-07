@@ -60,7 +60,6 @@ export default function EditEmailScreen() {
           label="Email"
           value={email}
           onChangeText={setEmail}
-          autoFocus
           keyboardType="email-address"
           autoCapitalize="none"
           autoCorrect={false}

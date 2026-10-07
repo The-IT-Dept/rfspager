@@ -76,7 +76,6 @@ export default function DeleteAccountScreen() {
             label="Password"
             value={password}
             onChangeText={setPassword}
-            autoFocus
             secureTextEntry
             autoCapitalize="none"
             autoCorrect={false}

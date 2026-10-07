@@ -67,7 +67,6 @@ export default function ChangePasswordScreen() {
             label="Password"
             value={current}
             onChangeText={setCurrent}
-            autoFocus
             secureTextEntry
             autoCapitalize="none"
             autoCorrect={false}
@@ -88,7 +87,6 @@ export default function ChangePasswordScreen() {
           label="New"
           value={next}
           onChangeText={setNext}
-          autoFocus={!hasPassword}
           secureTextEntry
           autoCapitalize="none"
           autoCorrect={false}

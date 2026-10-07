@@ -1,7 +1,7 @@
 import React from "react"
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller"
 import {
   ActivityIndicator,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -15,24 +15,27 @@ import { useAppTheme, type AppTheme } from "../../theme"
  * Grouped form building blocks for the account editing screens, matching the
  * card-and-section look of My Account.
  *
- * FormScreen is a plain ScrollView on purpose: under the transparent iOS 26
- * header only a native ScrollView with contentInsetAdjustmentBehavior picks up
- * the header inset. The keyboard-controller scroll view used before did not,
- * so the first field sat under the navigation bar.
+ * FormScreen is react-native-keyboard-controller's KeyboardAwareScrollView with
+ * the same props as the Alert Zone create screen, which sits correctly under
+ * the transparent iOS 26 header and follows the keyboard. Two things broke the
+ * account screens: autoFocus (focusing as the screen pushes in scrolls the
+ * field into view before the header inset exists, leaving it under the bar),
+ * and a plain ScrollView's automaticallyAdjustKeyboardInsets fighting that
+ * inset when the keyboard opened. Fields here must not autoFocus.
  */
 export function FormScreen({ children }: { children: React.ReactNode }) {
   const theme = useAppTheme()
   return (
-    <ScrollView
+    <KeyboardAwareScrollView
       style={{ flex: 1, backgroundColor: theme.colors.backgroundTertiary }}
-      contentContainerStyle={{ paddingBottom: 48 }}
+      showsVerticalScrollIndicator={false}
       contentInsetAdjustmentBehavior="automatic"
       automaticallyAdjustKeyboardInsets
       keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="interactive"
+      contentContainerStyle={{ paddingBottom: 48 }}
     >
       {children}
-    </ScrollView>
+    </KeyboardAwareScrollView>
   )
 }
 

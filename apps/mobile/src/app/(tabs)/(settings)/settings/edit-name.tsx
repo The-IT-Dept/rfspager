@@ -33,7 +33,6 @@ export default function EditNameScreen() {
           label="Name"
           value={name}
           onChangeText={setName}
-          autoFocus
           autoCapitalize="words"
           textContentType="name"
           returnKeyType="done"
