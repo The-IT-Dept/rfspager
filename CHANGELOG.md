@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.3.7](https://github.com/The-IT-Dept/rfspager/compare/v5.3.6...v5.3.7) (2026-10-07)
+
+
+### Bug Fixes
+
+* **mobile:** ship x86_64 native libraries again on Android ([be89158](https://github.com/The-IT-Dept/rfspager/commit/be89158709d7823a84882ba2aeb01052050aae02))
+
 ## [5.3.6](https://github.com/The-IT-Dept/rfspager/compare/v5.3.5...v5.3.6) (2026-10-07)
 
 
