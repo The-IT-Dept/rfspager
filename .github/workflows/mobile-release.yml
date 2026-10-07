@@ -346,6 +346,11 @@ jobs:
             fastlane android release skip_upload:true
           fi
 
+      # Play accepts a misaligned bundle on testing tracks but refuses to
+      # release it to production; catch it here instead.
+      - name: Check 16 KB page alignment
+        run: python3 scripts/check-16kb-alignment.py android/app/build/outputs/bundle/release/app-release.aab
+
       - name: Keep the AAB
         if: steps.signing.outputs.signed == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
