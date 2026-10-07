@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.3.8](https://github.com/The-IT-Dept/rfspager/compare/v5.3.7...v5.3.8) (2026-10-07)
+
+
+### Bug Fixes
+
+* **mobile:** drop the unused react-native-keychain so Play accepts the bundle ([6a6560a](https://github.com/The-IT-Dept/rfspager/commit/6a6560a673f7036fbbdb75ea5f0bbd8413db365f))
+
 ## [5.3.7](https://github.com/The-IT-Dept/rfspager/compare/v5.3.6...v5.3.7) (2026-10-07)
 
 
