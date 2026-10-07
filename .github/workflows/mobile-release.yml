@@ -225,15 +225,37 @@ jobs:
       - name: Generate the native project
         run: npx expo prebuild --platform android --clean
 
-      # Gradle otherwise downloads NDKs mid-build, which has failed on the
-      # runner with a truncated archive. React Native pins one; native library
-      # modules that pin none fall back to the Android Gradle Plugin's default.
-      - name: Install the NDKs the build needs
+      # React Native pins one NDK; native library modules that pin none fall
+      # back to the Android Gradle Plugin's default. Google's SDK downloads
+      # intermittently arrive truncated ("Error on ZipFile unknown archive"),
+      # so the NDKs are cached between runs and installs are retried.
+      - name: Resolve NDK versions
+        id: ndk
         run: |
           rn_ndk="$(sed -nE 's/^ndkVersion = "([^"]+)"/\1/p' node_modules/react-native/gradle/libs.versions.toml)"
           test -n "$rn_ndk" || { echo "::error::could not read React Native's ndkVersion"; exit 1; }
-          echo "installing NDK $rn_ndk and the AGP default 27.0.12077973"
-          yes | sdkmanager --install "ndk;$rn_ndk" "ndk;27.0.12077973" > /dev/null
+          echo "versions=$rn_ndk 27.0.12077973" >> "$GITHUB_OUTPUT"
+          echo "key=ndk-${{ runner.os }}-$rn_ndk-27.0.12077973" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.ANDROID_SDK_ROOT }}/ndk
+          key: ${{ steps.ndk.outputs.key }}
+
+      - name: Install the NDKs the build needs
+        env:
+          VERSIONS: ${{ steps.ndk.outputs.versions }}
+        run: |
+          for v in $VERSIONS; do
+            if [ -f "$ANDROID_SDK_ROOT/ndk/$v/source.properties" ]; then echo "NDK $v present"; continue; fi
+            for attempt in 1 2 3; do
+              echo "installing NDK $v (attempt $attempt)"
+              if yes | sdkmanager --install "ndk;$v" > /dev/null; then break; fi
+              rm -rf "$ANDROID_SDK_ROOT/.temp" "$ANDROID_SDK_ROOT/.downloadIntermediates" "$ANDROID_SDK_ROOT/ndk/$v"
+              [ "$attempt" = 3 ] && { echo "::error::NDK $v failed to install after 3 attempts"; exit 1; }
+              sleep 15
+            done
+          done
 
       # The generated defaults (2 GB heap, 512 MB Metaspace, serial, no build
       # cache) starve the build: the Gradle and Kotlin daemons looped on
