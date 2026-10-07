@@ -3,6 +3,11 @@ import { useState, useEffect, useRef, useMemo } from "react";
 
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "~/components/ui/sheet";
 import type { Route } from "./+types/map";
+// maplibre's ESM build looks for its worker next to its own module, which Vite
+// renames into /assets/maplibre-gl-<hash>.js, so /assets/maplibre-gl-worker.mjs
+// 404s and the map never renders. Bundle the worker (it imports maplibre's
+// shared chunk) and hand maplibre its URL instead.
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 
 const API_BASE = process.env.API_URL || "http://localhost:8080";
 const heading = "font-[family-name:var(--font-heading)]";
@@ -324,6 +329,7 @@ function MapComponent({
 
     import("maplibre-gl").then((maplibregl) => {
       if (cancelled || !mapContainer.current) return;
+      maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
       map = new maplibregl.Map({
         container: mapContainer.current,
