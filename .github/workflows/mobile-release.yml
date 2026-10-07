@@ -176,6 +176,18 @@ jobs:
       run:
         working-directory: apps/mobile
     steps:
+      # The hosted runner has ~14 GB free; three ABIs of native output plus the
+      # NDKs and caches filled it ("No space left on device") and killed the
+      # runner mid-build. Drop large preinstalled toolchains this job never uses.
+      - name: Free disk space
+        working-directory: /
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/powershell /opt/az
+          sudo docker system prune -af > /dev/null 2>&1 || true
+          df -h / | tail -1
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.tag }}
@@ -234,13 +246,22 @@ jobs:
         run: |
           rn_ndk="$(sed -nE 's/^ndkVersion = "([^"]+)"/\1/p' node_modules/react-native/gradle/libs.versions.toml)"
           test -n "$rn_ndk" || { echo "::error::could not read React Native's ndkVersion"; exit 1; }
+          echo "rn=$rn_ndk" >> "$GITHUB_OUTPUT"
           echo "versions=$rn_ndk 27.0.12077973" >> "$GITHUB_OUTPUT"
+          # Remove the runner's other preinstalled NDKs; only these two are used.
+          for d in "$ANDROID_SDK_ROOT"/ndk/*; do
+            case "$(basename "$d")" in "$rn_ndk"|27.0.12077973) ;; *) sudo rm -rf "$d" ;; esac
+          done
           echo "key=ndk-${{ runner.os }}-$rn_ndk-27.0.12077973" >> "$GITHUB_OUTPUT"
 
+      # Only the two pinned NDKs: caching the whole ndk folder dragged several
+      # preinstalled versions (gigabytes each) along with it.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ env.ANDROID_SDK_ROOT }}/ndk
-          key: ${{ steps.ndk.outputs.key }}
+          path: |
+            ${{ env.ANDROID_SDK_ROOT }}/ndk/${{ steps.ndk.outputs.rn }}
+            ${{ env.ANDROID_SDK_ROOT }}/ndk/27.0.12077973
+          key: ${{ steps.ndk.outputs.key }}-only
 
       - name: Install the NDKs the build needs
         env:
