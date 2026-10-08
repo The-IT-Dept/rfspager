@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -90,6 +91,9 @@ type Client struct {
 	conn     *websocket.Conn
 	sendCh   chan Frame
 	welcomed chan Welcome // closed when we receive welcome
+
+	dropped    atomic.Int64 // frames dropped because sendCh was full
+	dropWarnAt atomic.Int64 // unix nanos of the last drop warning
 }
 
 func New(serverURL, apiKey string) *Client {
@@ -322,9 +326,21 @@ func (c *Client) Welcomed(ctx context.Context) (Welcome, error) {
 func (c *Client) enqueue(f Frame) {
 	select {
 	case c.sendCh <- f:
+		return
 	default:
-		slog.Warn("ws send buffer full, dropping", "type", f.Type)
 	}
+	n := c.dropped.Add(1)
+	// Never log a dropped log frame: the warning would itself be shipped as
+	// a log frame, find the buffer still full and recurse until the stack
+	// overflows. Other drops are summarised at most once every 10 s.
+	if f.Type == "log" {
+		return
+	}
+	now := time.Now().UnixNano()
+	if last := c.dropWarnAt.Load(); now-last < int64(10*time.Second) || !c.dropWarnAt.CompareAndSwap(last, now) {
+		return
+	}
+	slog.Warn("ws send buffer full, dropping frames", "type", f.Type, "dropped_total", n)
 }
 
 func writeFrame(ctx context.Context, conn *websocket.Conn, f Frame) error {
