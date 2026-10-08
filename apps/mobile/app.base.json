@@ -62,7 +62,9 @@
             "SKAdNetworkIdentifier": "cstr6suwn9.skadnetwork"
           }
         ],
-        "UIBackgroundModes": []
+        "UIBackgroundModes": [
+          "audio"
+        ]
       },
       "icon": {
         "light": "./assets/images/icon.png",
@@ -146,7 +148,22 @@
           }
         }
       ],
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "react-native-audio-api",
+        {
+          "iosBackgroundMode": true,
+          "androidForegroundService": true,
+          "androidFSTypes": [
+            "mediaPlayback"
+          ],
+          "androidPermissions": [
+            "android.permission.FOREGROUND_SERVICE",
+            "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+          ],
+          "disableFFmpeg": true
+        }
+      ]
     ],
     "extra": {},
     "userInterfaceStyle": "automatic"

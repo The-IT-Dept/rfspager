@@ -15,8 +15,8 @@ import { useShowsAds } from "../../stores"
  * UITabBar, which brings iOS 26 Liquid Glass for free — including the tab bar
  * shrinking as content scrolls, which cannot be reproduced from JS.
  *
- * Four tabs, because iOS collapses anything past five into a dated "More"
- * table. Capcodes, Alert Zones and Systems live under Settings: they are
+ * Five tabs at most, because iOS collapses anything past five into a dated
+ * "More" table. Capcodes, Alert Zones and Systems live under Settings: they are
  * configuration you visit occasionally, not daily destinations.
  *
  * Each `name` is a route group, so the URLs are unchanged — "(pager)" and the
@@ -38,6 +38,12 @@ export default function TabsLayout() {
       <NativeTabs.Trigger name="(pager)">
         <NativeTabs.Trigger.Icon sf="antenna.radiowaves.left.and.right" md="cell_tower" />
         <NativeTabs.Trigger.Label>Pager</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
+
+      {/* Subscriber-only, but always shown: free accounts get the paywall. */}
+      <NativeTabs.Trigger name="(radio)">
+        <NativeTabs.Trigger.Icon sf="radio" md="radio" />
+        <NativeTabs.Trigger.Label>Radio</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="(incidents)">

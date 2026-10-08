@@ -22,6 +22,28 @@ export function apiBaseUrl(): string {
 
 const API_BASE = `${getBaseUrl()}/api/v2/mobile`
 
+/**
+ * A non-2xx response. Still an Error with the server's message, so existing
+ * callers that only read `.message` are unaffected; `status` and `code` let a
+ * screen tell "subscribe to see this" (402 subscription_required) apart from a
+ * failure.
+ */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string | null,
+  ) {
+    super(message)
+    this.name = "ApiError"
+  }
+}
+
+/** True for the 402 the server sends a free account on a paid feature. */
+export function isSubscriptionRequired(e: unknown): boolean {
+  return e instanceof ApiError && (e.status === 402 || e.code === "subscription_required")
+}
+
 let _token: string | null = null
 let _onUnauthorized: (() => void) | null = null
 
@@ -55,7 +77,7 @@ async function request<T = any>(method: string, path: string, body?: any): Promi
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.error || `Request failed: ${res.status}`)
+    throw new ApiError(err.error || `Request failed: ${res.status}`, res.status, err.code ?? null)
   }
 
   // Handle 204 No Content
@@ -557,6 +579,106 @@ export const photos = {
   },
 }
 
+// --- Radio (P25) ---
+//
+// Subscriber-only: a free account gets 402 {code: "subscription_required"}
+// (see isSubscriptionRequired), never 401, so it does not log anyone out.
+
+export interface RadioCall {
+  id: number
+  sysid: number
+  rfss: number
+  site: number
+  site_id: number | null
+  site_name: string | null
+  tgid: number | null
+  tg_alpha_tag: string | null
+  tg_agency: string | null
+  tg_category: string | null
+  target_rid: number | null
+  target_alias: string | null
+  source_rid: number | null
+  source_alias: string | null
+  freq_hz: number | null
+  slot: number
+  encrypted: boolean
+  emergency: boolean
+  patch: boolean
+  started_at: string
+  ended_at: string | null
+  /** Relative path, e.g. /api/v2/mobile/radio/calls/5/audio (8 kHz mono WAV). */
+  audio_url: string | null
+  audio_ms: number | null
+  transcript: string | null
+  transcribed_at: string | null
+  /** Other talkgroups the same keyup went out on (a patch). */
+  patched_with: string[] | null
+}
+
+export interface RadioCallPage {
+  data: RadioCall[]
+  has_more: boolean
+}
+
+export interface Talkgroup {
+  id: number
+  sysid: number
+  tgid: number
+  alpha_tag: string | null
+  description: string | null
+  agency: string | null
+  category: string | null
+  first_seen_at: string | null
+  last_seen_at: string | null
+  calls_clear: number
+  calls_encrypted: number
+}
+
+/** One decoded voice chunk from /radio/live. */
+export interface RadioLiveChunk {
+  call_id: string
+  call: number
+  tgid: number
+  /** Counts a call's chunks from 0. */
+  seq: number
+  /** base64, 8 kHz mono s16le */
+  pcm: string
+}
+
+export interface RadioStreamToken {
+  token: string
+  expires_at: string
+}
+
+export const radio = {
+  calls: (params: { tg?: number | null; before_id?: number; limit?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (params.tg) q.set("tg", String(params.tg))
+    if (params.before_id) q.set("before_id", String(params.before_id))
+    if (params.limit) q.set("limit", String(params.limit))
+    return get<RadioCallPage>(`/radio/calls?${q}`)
+  },
+  talkgroups: () => get<{ data: Talkgroup[] }>(`/radio/talkgroups`),
+  /** A 15-minute, radio-only token for the URLs below. */
+  streamToken: () => post<RadioStreamToken>(`/radio/stream-token`),
+}
+
+/**
+ * Absolute URL for a radio stream or recording, authorised by a stream token
+ * in the query string: EventSource and the audio decoder's fetch don't carry
+ * our Authorization header. `path` is either a path under /radio ("/events",
+ * "/live") or a call's server-relative audio_url.
+ */
+export function radioStreamURL(
+  path: string,
+  token: string,
+  params: Record<string, string> = {},
+): string {
+  const q = new URLSearchParams({ ...params, token })
+  const full = path.startsWith("/api/") ? path : `/api/v2/mobile/radio${path}`
+  return `${getBaseUrl()}${full}${full.includes("?") ? "&" : "?"}${q}`
+}
+
 // --- Bundled export ---
 
 export const api = {
@@ -574,4 +696,5 @@ export const api = {
   incidents,
   photos,
   systems,
+  radio,
 }
