@@ -70,6 +70,8 @@ func main() {
 	center := flag.Float64("center", 0, "dongle centre, MHz (default: control channel + 200 kHz); "+
 		"set it between the control channel and the busiest voice channels to -record them")
 	record := flag.String("record", "", "directory to write each in-band clear call's channel IQ (48 kS/s cf32)")
+	analyzeFile := flag.String("analyze", "", "measure reception in a wideband rtl_sdr capture (u8 at 2.4 MS/s, centred on -center), then exit")
+	voiceFreqs := flag.String("voice-freqs", "420.55,421.3,421.8,422.05", "with -analyze: voice channels to measure, MHz")
 	voiceFile := flag.String("voice-file", "", "decode a -record capture (cf32) to WAV per slot in the current directory, then exit")
 	afcHz := flag.Float64("afc", 0, "with -voice-file: AFC seed in Hz (the control channel decoder's estimate)")
 	nacFlag := flag.String("nac", "2D2", "with -voice-file: site NAC (hex) for descrambling; WACN BEE00 / SysID 2D1 assumed")
@@ -92,6 +94,20 @@ func main() {
 		}()
 	}
 
+	if *analyzeFile != "" {
+		cc, err := parseFreqs(*freqs)
+		if err != nil {
+			fatal(err)
+		}
+		vf, err := parseFreqs(*voiceFreqs)
+		if err != nil {
+			fatal(err)
+		}
+		if err := analyze(*analyzeFile, uint32(*center*1e6+0.5), cc[0], vf); err != nil {
+			fatal(err)
+		}
+		return
+	}
 	if *voiceFile != "" {
 		nac, err := strconv.ParseUint(*nacFlag, 16, 16)
 		if err != nil {

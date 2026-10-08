@@ -52,3 +52,11 @@ func TestDebugTDMARecording(t *testing.T) {
 	d.Process(readCF32(t, path))
 	t.Logf("%+v afc=%.0fHz", d.Stats(), d.demod.FreqOffsetHz())
 }
+
+func TestNearestLevel(t *testing.T) {
+	for s, want := range map[float64]float64{3: 3, 2.1: 3, 1.9: 1, 0.2: 1, -0.2: -1, -1.7: -1, -2.3: -3, -5: -3, 5: 3} {
+		if got := nearestLevel(s); got != want {
+			t.Errorf("nearestLevel(%v) = %v, want %v", s, got, want)
+		}
+	}
+}

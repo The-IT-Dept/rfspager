@@ -178,6 +178,8 @@ type p2Framer struct {
 	onVoice func(slot int, dibits []uint8)
 	steer   func(radPerSample float64)
 	stats   TDMAStats
+	// debugSym, if set, sees every soft symbol and its position in the slot.
+	debugSym func(pos int, s float64)
 
 	ring [p2Ring]float64
 	n    int64
@@ -327,7 +329,7 @@ func (f *p2Framer) retime() {
 		var c float64
 		for k := range int64(p2SlotDibits - 2) {
 			s := (f.at(first+k*p2SPS+d) - f.offset) / f.gain
-			e := s - (2*math.Floor((s+3)/2) - 3 + 1) // distance to nearest odd level
+			e := s - nearestLevel(s)
 			c += e * e
 		}
 		return c
@@ -343,6 +345,9 @@ func (f *p2Framer) retime() {
 
 func (f *p2Framer) readSymbol(ph float64) {
 	s := (ph - f.offset) / f.gain
+	if f.debugSym != nil {
+		f.debugSym(f.pos, s)
+	}
 	var d uint8
 	switch {
 	case s > 2:
@@ -415,4 +420,9 @@ func abs64(x int64) int64 {
 		return -x
 	}
 	return x
+}
+
+// nearestLevel is the ideal symbol value (±1 or ±3) closest to s.
+func nearestLevel(s float64) float64 {
+	return max(-3, min(3, 2*math.Floor(s/2)+1))
 }

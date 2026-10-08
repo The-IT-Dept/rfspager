@@ -3,6 +3,7 @@ package p25
 // Stats counts what the decoder has seen since it started.
 type Stats struct {
 	Frames   int // frames with a valid NID
+	NIDErrs  int // bits corrected across those NIDs (signal quality)
 	Blocks   int // TSBK blocks attempted
 	BlocksOK int // ... that passed CRC
 	NAC      uint16
@@ -26,6 +27,7 @@ func NewDecoder(onMessage func(Message)) *Decoder {
 
 func (d *Decoder) frame(f Frame) {
 	d.stats.Frames++
+	d.stats.NIDErrs += f.NIDErrs
 	d.stats.NAC = f.NAC
 	if f.DUID != DUIDTSBK {
 		return

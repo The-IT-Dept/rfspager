@@ -14,8 +14,8 @@ import "math/bits"
 // nidGen is the BCH(63,16) generator polynomial, 6331 1413 6723 5453 (octal).
 const nidGen uint64 = 0o6331141367235453
 
-// nidCodewords[d] is the 63-bit codeword for data d (bits 62..0, data in the
-// top 16 bits), with the overall parity bit appended as bit 0 → 64 bits.
+// nidCodewords[d] is the 63-bit codeword for data d (data in the top 16
+// bits) shifted up one, with the always-zero 64th bit as bit 0.
 var nidCodewords [1 << 16]uint64
 
 func init() {
@@ -33,8 +33,10 @@ func encodeNID(data uint16) uint64 {
 		}
 	}
 	cw := uint64(data)<<47 | reg // 63 bits
-	// The 64th bit makes overall parity even.
-	return cw<<1 | uint64(bits.OnesCount64(cw)&1)
+	// The 64th bit is sent as 0 (not parity, as it's easy to assume: on the
+	// NSW PSN every NID ends in 0, and an even-parity rule miscounts one bit
+	// error in most frames).
+	return cw << 1
 }
 
 // maxNIDErrors bounds what we accept. Beyond 11 errors the nearest codeword
