@@ -2,6 +2,7 @@ package recvhub
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -14,14 +15,19 @@ import (
 // returns the ack status ("ok" / "dup" / "err") and an optional error.
 type PageHandler func(ctx context.Context, sys *models.System, p PagePayload) (string, error)
 
+// RadioHandler is called once per p25.* frame received from any agent, with
+// the frame type and its raw payload. See Conn.OnRadio.
+type RadioHandler func(ctx context.Context, sys *models.System, frameType string, data json.RawMessage) error
+
 // maxWSFrame caps a single inbound websocket frame. Kept in step with the
 // receiver client's own SetReadLimit and with maxIngressBody on the HTTP
 // ingress, so both transports accept the same pages.
 const maxWSFrame = 1 << 20 // 1 MiB
 
 // Handler builds the HTTP handler for GET /api/receiver/ws. apikey auth,
-// websocket upgrade, then off to Conn.run.
-func Handler(database *db.DB, hub *Hub, onPage PageHandler) http.HandlerFunc {
+// websocket upgrade, then off to Conn.run. onRadio may be nil, in which case
+// P25 frames are accepted and dropped.
+func Handler(database *db.DB, hub *Hub, onPage PageHandler, onRadio RadioHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		apiKey := r.Header.Get("apikey")
 		if apiKey == "" {
@@ -64,6 +70,7 @@ func Handler(database *db.DB, hub *Hub, onPage PageHandler) http.HandlerFunc {
 
 		c := newConn(hub, ws, sys)
 		c.OnPage = onPage
+		c.OnRadio = onRadio
 		c.run(ctx, database)
 	}
 }

@@ -65,6 +65,32 @@ func JWTUserAuth(db *sqlx.DB, jwtSecret string) func(http.Handler) http.Handler 
 	}
 }
 
+// RequireSubscription gates a paid feature. Mount it after JWTUserAuth.
+// Superusers pass, like a subscriber.
+//
+// Non-subscribers get 402 Payment Required with code "subscription_required".
+// Not 401: the app's API client logs the user out on any 401. Not 403: that
+// already means "not yours" elsewhere in this API (system ownership). 402
+// means exactly "subscribe to see this", so clients can show the paywall on
+// it without guessing.
+func RequireSubscription(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := GetUser(r.Context())
+		if user == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		if !user.SubscriptionValid && !user.Superuser {
+			writeJSON(w, http.StatusPaymentRequired, map[string]string{
+				"error": "an active subscription is required",
+				"code":  "subscription_required",
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func GetUser(ctx context.Context) *AuthUser {
 	u, _ := ctx.Value(UserContextKey).(*AuthUser)
 	return u

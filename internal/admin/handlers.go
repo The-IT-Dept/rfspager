@@ -12,15 +12,17 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/the-it-dept/rfspager/internal/install"
 	"github.com/the-it-dept/rfspager/internal/notify"
+	"github.com/the-it-dept/rfspager/internal/radio"
 )
 
 type Handlers struct {
 	store    *Store
 	notifier *notify.Notifier
+	radio    *radio.Store
 }
 
 func NewHandlers(store *Store, notifier *notify.Notifier) *Handlers {
-	return &Handlers{store: store, notifier: notifier}
+	return &Handlers{store: store, notifier: notifier, radio: radio.NewStore(store.db)}
 }
 
 // --- Dashboard ---

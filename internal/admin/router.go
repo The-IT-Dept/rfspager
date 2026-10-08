@@ -142,6 +142,20 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier) chi.Router
 			r.Delete("/{id}", h.DeleteHazardReduction)
 		})
 
+		// P25 radio. Rows come from receivers; admins name and place them.
+		r.Route("/radio", func(r chi.Router) {
+			r.Get("/talkgroups", h.ListRadioTalkgroups)
+			r.Post("/talkgroups/import", h.ImportRadioTalkgroups)
+			r.Get("/talkgroups/{id}", h.GetRadioTalkgroup)
+			r.Put("/talkgroups/{id}", h.UpdateRadioTalkgroup)
+			r.Get("/units", h.ListRadioUnits)
+			r.Get("/units/{id}", h.GetRadioUnit)
+			r.Put("/units/{id}", h.UpdateRadioUnit)
+			r.Get("/sites", h.ListRadioSites)
+			r.Get("/sites/{id}", h.GetRadioSite)
+			r.Put("/sites/{id}", h.UpdateRadioSite)
+		})
+
 		// Admin Users (self-management)
 		r.Route("/admin-users", func(r chi.Router) {
 			r.Use(auth.RequireSuperadmin)

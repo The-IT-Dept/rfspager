@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/the-it-dept/rfspager/internal/db"
 	"github.com/the-it-dept/rfspager/internal/models"
+	"github.com/the-it-dept/rfspager/internal/p25"
 )
 
 // Conn wraps one accepted websocket connection from a receiver agent. Each
@@ -49,7 +50,26 @@ type Conn struct {
 	// OnPage is called for every well-formed page frame the client sends.
 	// The handler returns the ack status to ship back.
 	OnPage func(ctx context.Context, sys *models.System, p PagePayload) (status string, err error)
+
+	// OnRadio is called for every p25.* frame (see internal/p25/wire.go)
+	// with the frame's raw payload. Radio frames are high-rate and
+	// fire-and-forget: they are never acked, and an error is only logged.
+	OnRadio func(ctx context.Context, sys *models.System, frameType string, data json.RawMessage) error
+
+	// radioAuthAt is when a radio frame last passed stillAuthorized; see
+	// radioAuthorized. Only touched from the read loop.
+	radioAuthAt time.Time
 }
+
+// radioAuthTTL is how long a radio frame's authorization check is reused.
+// Pages are checked one by one, but a busy P25 site sends several frames a
+// second, and a DB round trip for each would buy nothing: revocation still
+// closes the socket within this window (and the heartbeat checks too).
+const radioAuthTTL = 30 * time.Second
+
+// radioFrameTimeout bounds one radio frame's database work, so a stuck
+// database stalls the read loop for at most this long per frame.
+const radioFrameTimeout = 10 * time.Second
 
 // newConn is called from the HTTP handler after a successful upgrade + auth.
 func newConn(hub *Hub, ws *websocket.Conn, sys *models.System) *Conn {
@@ -262,6 +282,8 @@ func (c *Conn) handleFrame(ctx context.Context, database systemKeyLookup, f Fram
 		// these frames, so swallow them here rather than let them fall through
 		// to the unknown-frame warning below and spam the log once per frame.
 		// Safe to delete once every receiver in the field has been updated.
+	case p25.FrameSite, p25.FrameCallStart, p25.FrameCallEnd, p25.FrameUnit:
+		c.handleRadio(ctx, database, f)
 	case "log":
 		// Persist + fan out to live subscribers (owner / admin).
 		var lp LogPayload
@@ -272,6 +294,35 @@ func (c *Conn) handleFrame(ctx context.Context, database systemKeyLookup, f Fram
 	default:
 		slog.Warn("receiver sent unknown frame", "type", f.Type)
 	}
+}
+
+// handleRadio stores one P25 frame. Failures are logged and the socket
+// stays up: one bad frame shouldn't cost the receiver its connection.
+func (c *Conn) handleRadio(ctx context.Context, database systemKeyLookup, f Frame) {
+	if !c.radioAuthorized(ctx, database) {
+		c.closeWithReason("receiver authorization revoked")
+		return
+	}
+	if c.OnRadio == nil {
+		return
+	}
+	fctx, cancel := context.WithTimeout(ctx, radioFrameTimeout)
+	defer cancel()
+	if err := c.OnRadio(fctx, c.System, f.Type, f.Data); err != nil {
+		slog.Warn("receiver radio frame rejected", "system_id", c.SystemID, "type", f.Type, "err", err)
+	}
+}
+
+// radioAuthorized is stillAuthorized, reused for radioAuthTTL after a pass.
+func (c *Conn) radioAuthorized(ctx context.Context, database systemKeyLookup) bool {
+	if !c.radioAuthAt.IsZero() && time.Since(c.radioAuthAt) < radioAuthTTL {
+		return true
+	}
+	if !c.stillAuthorized(ctx, database) {
+		return false
+	}
+	c.radioAuthAt = time.Now()
+	return true
 }
 
 func (c *Conn) runWritePump(ctx context.Context) {

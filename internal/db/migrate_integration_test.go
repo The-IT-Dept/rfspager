@@ -136,6 +136,7 @@ func TestMigrateBootstrapsEmptyPostGISDatabase(t *testing.T) {
 		"iap_transactions", "system_connections",
 		"iap_subscription_ownership",
 		"emergency_stations", "system_events", "system_logs",
+		"radio_sites", "radio_talkgroups", "radio_units", "radio_calls", "radio_unit_events",
 	} {
 		requireTable(t, d, table)
 	}

@@ -30,6 +30,7 @@ import (
 	"github.com/the-it-dept/rfspager/internal/models"
 	"github.com/the-it-dept/rfspager/internal/notify"
 	"github.com/the-it-dept/rfspager/internal/public"
+	"github.com/the-it-dept/rfspager/internal/radio"
 	"github.com/the-it-dept/rfspager/internal/recvhub"
 	stripehandler "github.com/the-it-dept/rfspager/internal/stripe"
 )
@@ -167,11 +168,21 @@ func main() {
 		slog.Error("failed to listen rfs_dispatch", "error", err)
 		os.Exit(1)
 	}
+	radioCallCh, err := listener.Listen("radio_call", 256)
+	if err != nil {
+		slog.Error("failed to listen radio_call", "error", err)
+		os.Exit(1)
+	}
 
 	fanoutWorker := dispatch.NewFanoutWorker(database.Conn(), fanoutMessageCh)
 	dispatchWorker := dispatch.NewDispatchWorker(database.Conn(), notifier, dispatchCh)
 	mobileSSE := mobile.NewSSEBroker(database.Conn())
 	publicSSE := public.NewSSEBroker(database.Conn())
+
+	// P25 radio: receivers' p25.* frames are stored by radioStore; calls are
+	// streamed to subscribers by radioSSE off the radio_call NOTIFY.
+	radioStore := radio.NewStore(database.Conn())
+	radioSSE := radio.NewBroker(radioStore)
 
 	// Receiver-agent websocket hub. PodID identifies this process in the
 	// system_connections table so multi-pod takeovers Just Work.
@@ -191,11 +202,12 @@ func main() {
 
 	bgCtx, cancelBg := context.WithCancel(context.Background())
 	var bg sync.WaitGroup
-	bg.Add(4)
+	bg.Add(5)
 	go func() { defer bg.Done(); fanoutWorker.Run(bgCtx) }()
 	go func() { defer bg.Done(); dispatchWorker.Run(bgCtx) }()
 	go func() { defer bg.Done(); mobileSSE.Run(bgCtx, mobileSSEMessageCh) }()
 	go func() { defer bg.Done(); publicSSE.Run(bgCtx, publicSSEMessageCh) }()
+	go func() { defer bg.Done(); radioSSE.Run(bgCtx, radioCallCh) }()
 	if err := hub.Start(bgCtx); err != nil {
 		slog.Error("failed to start receiver hub workers", "error", err)
 		os.Exit(1)
@@ -230,7 +242,12 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Get("/receiver/ws", recvhub.Handler(database, hub, func(ctx context.Context, sys *models.System, p recvhub.PagePayload) (string, error) {
 				return msgHandler.IngestPage(ctx, sys, p.Address, p.Message, time.Unix(p.Datetime, 0))
-			}))
+			}, radioStore.HandleFrame))
+
+			// Radio (subscribers only). Mounted here because GET /events is
+			// an SSE stream; RadioRouter applies the 30s timeout to its other
+			// routes itself. The more specific mount wins over /v2/mobile.
+			r.Mount("/v2/mobile/radio", mobile.RadioRouter(database.Conn(), cfg.JWTSecret, radioStore, radioSSE))
 		})
 
 		// --- Everything else with a 30s per-request timeout ---
