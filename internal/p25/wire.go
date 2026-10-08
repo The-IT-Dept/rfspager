@@ -8,12 +8,19 @@ package p25
 //	p25.call_start — CallPayload with EndMS = 0
 //	p25.call_end   — CallPayload, same CallID, EndMS set
 //	p25.unit       — UnitPayload (affiliation / registration / deregistration)
+//	p25.audio      — AudioPayload, decoded voice for a call in progress; all
+//	                 of a call's chunks arrive before its p25.call_end
 const (
 	FrameSite      = "p25.site"
 	FrameCallStart = "p25.call_start"
 	FrameCallEnd   = "p25.call_end"
 	FrameUnit      = "p25.unit"
+	FrameAudio     = "p25.audio"
 )
+
+// AudioSampleRate is the rate of decoded P25 voice (IMBE and AMBE+2 both
+// synthesise 8 kHz).
+const AudioSampleRate = 8_000
 
 // SitePayload identifies the site a receiver is decoding, with what it
 // advertises: its channel plan and neighbours.
@@ -81,4 +88,13 @@ type UnitPayload struct {
 	Group  uint16 `json:"tg,omitempty"`
 	Result uint8  `json:"result,omitempty"` // 0 = accepted
 	TSMS   int64  `json:"ts_ms"`
+}
+
+// AudioPayload is a chunk of decoded voice: 8 kHz mono signed 16-bit
+// little-endian PCM (base64 in JSON). Seq starts at 0 for each call and
+// increments by one per chunk; a gap means chunks were dropped.
+type AudioPayload struct {
+	CallID string `json:"call_id"`
+	Seq    int    `json:"seq"`
+	PCM    []byte `json:"pcm"`
 }
