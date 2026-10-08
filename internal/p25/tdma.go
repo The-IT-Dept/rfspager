@@ -305,9 +305,17 @@ func (f *p2Framer) fitSync(end int64) syncFit {
 // of its offset — the residual carrier rotation per symbol.
 func (f *p2Framer) adopt(fit syncFit) {
 	f.gain, f.offset = fit.gain, fit.offset
-	if f.steer != nil {
-		f.steer(0.1 * fit.offset / p2SPS)
+	if f.steer == nil {
+		return
 	}
+	// Pull in hard over the first superframe or so after acquisition (the
+	// seed can be a few hundred Hz out: voice transmitters aren't on the
+	// control channel's oscillator), then settle to a gentle track.
+	k := 0.1
+	if f.stats.Syncs < 8 {
+		k = 0.5
+	}
+	f.steer(k * fit.offset / p2SPS)
 }
 
 // retime nudges symbol timing by up to a sample toward the widest eye,

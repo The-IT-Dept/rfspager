@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/the-it-dept/rfspager/internal/ambe"
 	"github.com/the-it-dept/rfspager/internal/p25"
 )
 
@@ -31,6 +32,10 @@ type follower struct {
 
 	chans map[uint64]*voiceChan // by frequency
 	calls map[string]*voiceCall // by call ID
+	// afc remembers each voice frequency's converged tuning error: every
+	// transmitter has its own small offset, and seeding from the last call
+	// on the same channel skips the pull-in at the start of the next one.
+	afc map[uint64]float64
 }
 
 type voiceChan struct {
@@ -47,7 +52,8 @@ type voiceCall struct {
 	pcm    []byte
 	seq    int
 	frames int
-	errs   int
+	errs   int // Golay-corrected bits over decodable frames
+	bad    int // uncorrectable frames
 }
 
 // chunkFrames: ship audio every 9 codewords (180 ms) — half a superframe,
@@ -59,7 +65,7 @@ const chunkFrames = 9
 const chanLinger = 10 * time.Second
 
 func newFollower(send func(string, any)) *follower {
-	return &follower{send: send, chans: map[uint64]*voiceChan{}, calls: map[string]*voiceCall{}}
+	return &follower{send: send, chans: map[uint64]*voiceChan{}, calls: map[string]*voiceCall{}, afc: map[uint64]float64{}}
 }
 
 // retune drops every voice channel; the new centre applies from now on.
@@ -89,8 +95,12 @@ func (f *follower) call(frameType string, c p25.CallPayload) {
 		vc.dec = p25.NewTDMADecoder(f.site.WACN, f.site.SysID, f.site.NAC, func(slot int, d []uint8) {
 			f.frame(vc, slot, d)
 		})
-		// Same crystal: scale the control channel's error to this frequency.
-		vc.dec.SetFreqOffsetHz(f.cc.FreqOffsetHz() * float64(c.FreqHz) / float64(f.ccHz))
+		if hz, ok := f.afc[c.FreqHz]; ok {
+			vc.dec.SetFreqOffsetHz(hz)
+		} else {
+			// Same crystal: scale the control channel's error to this frequency.
+			vc.dec.SetFreqOffsetHz(f.cc.FreqOffsetHz() * float64(c.FreqHz) / float64(f.ccHz))
+		}
 		f.chans[c.FreqHz] = vc
 	}
 	if old := vc.slots[c.Slot]; old != nil {
@@ -114,7 +124,11 @@ func (f *follower) frame(vc *voiceChan, slot int, d []uint8) {
 		return
 	}
 	pcm, errs := call.voc.DecodeP25P2Dibits(d)
-	call.errs += errs
+	if errs >= ambe.Uncorrectable {
+		call.bad++
+	} else {
+		call.errs += errs
+	}
 	for _, s := range pcm {
 		call.pcm = binary.LittleEndian.AppendUint16(call.pcm, uint16(s))
 	}
@@ -140,17 +154,20 @@ func (f *follower) finish(id string) {
 	delete(f.calls, id)
 	f.flush(c)
 	var st p25.TDMAStats
-	for _, vc := range f.chans {
+	afc := 0.0
+	for hz, vc := range f.chans {
 		for s := range vc.slots {
 			if vc.slots[s] == c {
 				vc.slots[s] = nil
 				st = vc.dec.Stats()
+				afc = vc.dec.FreqOffsetHz()
+				f.afc[hz] = afc
 			}
 		}
 	}
 	slog.Info("voice", "tg", c.tg, "frames", c.frames, "chunks", c.seq,
-		"avg_errs", float64(c.errs)/float64(max(c.frames, 1)),
-		"chan_syncs", st.Syncs, "chan_slots", st.Slots, "chan_isch_errs", st.ISCHErrors)
+		"avg_errs", float64(c.errs)/float64(max(c.frames-c.bad, 1)), "bad_frames", c.bad,
+		"chan_syncs", st.Syncs, "chan_slots", st.Slots, "chan_isch_errs", st.ISCHErrors, "afc_hz", int(afc))
 }
 
 // process runs every active voice channel over a block of wideband IQ.
