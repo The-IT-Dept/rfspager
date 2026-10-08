@@ -97,6 +97,9 @@ type Config struct {
 	ASRAPIKey   string
 	ASRLanguage string
 	ASRPrompt   string // vocabulary prompt; empty uses radio.DefaultASRPrompt
+	// RadioAgencies lists the agencies whose talkgroups subscribers get;
+	// empty keeps radio's default (RFS, FRNSW).
+	RadioAgencies string
 }
 
 func Load() (*Config, error) {
@@ -151,11 +154,12 @@ func Load() (*Config, error) {
 		RadioAudioS3SecretAccessKey: os.Getenv("RADIO_AUDIO_S3_SECRET_ACCESS_KEY"),
 		RadioAudioS3Region:          getEnv("RADIO_AUDIO_S3_REGION", "auto"),
 
-		ASRURL:      os.Getenv("ASR_URL"),
-		ASRModel:    os.Getenv("ASR_MODEL"),
-		ASRAPIKey:   os.Getenv("ASR_API_KEY"),
-		ASRLanguage: os.Getenv("ASR_LANGUAGE"),
-		ASRPrompt:   os.Getenv("ASR_PROMPT"),
+		ASRURL:        os.Getenv("ASR_URL"),
+		ASRModel:      os.Getenv("ASR_MODEL"),
+		ASRAPIKey:     os.Getenv("ASR_API_KEY"),
+		ASRLanguage:   os.Getenv("ASR_LANGUAGE"),
+		ASRPrompt:     os.Getenv("ASR_PROMPT"),
+		RadioAgencies: os.Getenv("RADIO_AGENCIES"),
 	}
 
 	if cfg.DatabaseURL == "" {

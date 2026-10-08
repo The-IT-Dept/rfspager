@@ -87,9 +87,11 @@ func (in *Ingest) HandleFrame(ctx context.Context, sys *models.System, frameType
 			if err != nil {
 				slog.Warn("radio audio: look up started call", "call_uid", p.CallID, "error", err)
 			}
-			if meta.PatchOf != 0 {
-				// A copy of a call we're already recording: close it now
-				// so its audio is dropped as it arrives.
+			if meta.Silent() {
+				// A copy of a call we're already recording, or a talkgroup
+				// subscribers don't get (see visibility.go): close it now so
+				// its audio is dropped as it arrives, never kept or
+				// transcribed.
 				in.asm.Finish(p.CallID, in.now())
 				return nil
 			}
@@ -106,8 +108,9 @@ func (in *Ingest) HandleFrame(ctx context.Context, sys *models.System, frameType
 		// and the pipeline looks the row up again before storing.
 		clip := in.asm.Finish(p.CallID, in.now())
 		if clip != nil {
-			// Only now known to be a copy (its talker arrived with the end).
-			if meta, merr := in.store.callMeta(ctx, p.CallID); merr == nil && meta.PatchOf != 0 {
+			// Only now known to be a copy (its talker arrived with the end),
+			// or never tied to a row at the start.
+			if meta, merr := in.store.callMeta(ctx, p.CallID); merr == nil && meta.Silent() {
 				clip = nil
 			}
 		}

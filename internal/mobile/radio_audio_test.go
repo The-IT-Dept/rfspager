@@ -63,7 +63,7 @@ func TestRadioCallAudio(t *testing.T) {
 		router.ServeHTTP(rr, req)
 		return rr
 	}
-	audioQuery := `SELECT c.audio_key[\s\S]*NOT COALESCE\(tg.hidden, false\)`
+	audioQuery := `SELECT c.audio_key[\s\S]*tg.hidden IS TRUE OR COALESCE\(tg.agency, ''\) NOT IN \('RFS', 'FRNSW'\)`
 	audioRow := func() *sqlmock.Rows {
 		return sqlmock.NewRows([]string{"audio_key", "audio_content_type", "audio_bytes"}).
 			AddRow("radio/2026/10/08/7.wav", "audio/wav", len(wav))

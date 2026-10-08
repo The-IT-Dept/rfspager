@@ -58,6 +58,15 @@ func radioTestDB(t *testing.T) (*sqlx.DB, string) {
 	return db, raw
 }
 
+// makePublic gives every talkgroup without an agency the RFS one:
+// subscribers only see public agencies' talkgroups (visibility.go).
+func makePublic(t *testing.T, db *sqlx.DB) {
+	t.Helper()
+	if _, err := db.Exec(`UPDATE radio_talkgroups SET agency = 'RFS' WHERE agency IS NULL`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 const testReceiver = 1 // the systems row radioTestDB inserts
 
 func testCall(id string, start time.Time) p25.CallPayload {
@@ -309,6 +318,7 @@ func TestListCallsPagesNewestFirstAndHidesHiddenTalkgroups(t *testing.T) {
 	if _, err := db.Exec(`UPDATE radio_talkgroups SET alpha_tag = 'RFS Central Coast A' WHERE tgid = 10047`); err != nil {
 		t.Fatal(err)
 	}
+	makePublic(t, db)
 
 	page1, more, err := s.ListCalls(ctx, CallFilter{Limit: 2})
 	if err != nil {
@@ -484,6 +494,10 @@ func TestIngestRecordsAndTranscribesCallAudio(t *testing.T) {
 			t.Fatalf("%s: %v", frameType, err)
 		}
 	}
+	// An RFS talkgroup: other agencies' audio is dropped (visibility.go).
+	if _, err := db.Exec(`INSERT INTO radio_talkgroups (sysid, tgid, agency) VALUES ($1, 10047, 'RFS')`, DefaultSysID); err != nil {
+		t.Fatal(err)
+	}
 	start := time.Now().Add(-10 * time.Second)
 	p := testCall("voice-1", start)
 	send(p25.FrameCallStart, p)
@@ -592,6 +606,7 @@ func TestPatchedKeyupIsStoredOnce(t *testing.T) {
 	if _, err := db.Exec(`UPDATE radio_talkgroups SET alpha_tag = 'RFS HNSBY A' WHERE sysid = $1 AND tgid = 10049`, DefaultSysID); err != nil {
 		t.Fatal(err)
 	}
+	makePublic(t, db)
 	calls, _, err := s.ListCalls(ctx, CallFilter{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
@@ -631,5 +646,48 @@ func TestPatchedKeyupIsStoredOnce(t *testing.T) {
 	}
 	if meta, err := s.callMeta(ctx, "f"); err != nil || !meta.Silent() {
 		t.Errorf("callMeta(f) = %+v, %v; want silent", meta, err)
+	}
+}
+
+func TestOnlyPublicAgenciesReachSubscribers(t *testing.T) {
+	db, _ := radioTestDB(t)
+	s := NewStore(db)
+	ctx := context.Background()
+	t0 := time.Date(2026, 10, 8, 14, 38, 0, 0, time.UTC)
+
+	rfs := testCall("rfs", t0)
+	rfs.Source = 2019977
+	amb := testCall("amb", t0.Add(time.Second))
+	amb.Group, amb.Source = 20303, 2331963
+	unnamed := testCall("unnamed", t0.Add(2*time.Second))
+	unnamed.Group, unnamed.Source = 39999, 2000001
+	for _, p := range []p25.CallPayload{rfs, amb, unnamed} {
+		if _, err := s.StartCall(ctx, testReceiver, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`UPDATE radio_talkgroups SET agency = CASE tgid WHEN 10047 THEN 'RFS' WHEN 20303 THEN 'NSWA' END`); err != nil {
+		t.Fatal(err)
+	}
+
+	calls, _, err := s.ListCalls(ctx, CallFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0].TGID == nil || *calls[0].TGID != 10047 {
+		t.Fatalf("feed = %+v, want only the RFS call", calls)
+	}
+	tgs, err := s.ListTalkgroups(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tgs) != 1 || tgs[0].TGID != 10047 {
+		t.Errorf("talkgroups = %+v, want only RFS", tgs)
+	}
+	for uid, silent := range map[string]bool{"rfs": false, "amb": true, "unnamed": true} {
+		meta, err := s.callMeta(ctx, uid)
+		if err != nil || meta.Silent() != silent {
+			t.Errorf("callMeta(%s) = %+v, %v; want silent=%v", uid, meta, err, silent)
+		}
 	}
 }

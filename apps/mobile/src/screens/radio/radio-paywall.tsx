@@ -8,7 +8,7 @@ const POINTS: { icon: keyof typeof Ionicons.glyphMap; title: string; body: strin
   {
     icon: "headset",
     title: "Listen live",
-    body: "Hear NSW emergency services traffic as it's spoken, one call at a time like a scanner — even with your screen locked.",
+    body: "Hear RFS and Fire and Rescue NSW traffic as it's spoken, one call at a time like a scanner — even with your screen locked.",
   },
   {
     icon: "chatbox-ellipses",
@@ -33,7 +33,7 @@ export function RadioPaywall({ onSubscribe }: { onSubscribe: () => void }) {
       </View>
       <Text style={styles.title}>Hear the radio behind the pages</Text>
       <Text style={styles.body}>
-        Radio lets you listen to NSW emergency services radio live and read every call as text, from
+        Radio lets you listen to Rural Fire Service and Fire and Rescue NSW radio live and read every call as text, from
         the same receivers that decode the pager feed. It's part of an RFSPager subscription.
       </Text>
       <View style={styles.points}>

@@ -33,13 +33,13 @@ func (s *Store) callMeta(ctx context.Context, uid string) (CallMeta, error) {
 		AlphaTag string `db:"alpha_tag"`
 		Agency   string `db:"agency"`
 	}
-	err := s.db.GetContext(ctx, &row,
+	err := s.db.GetContext(ctx, &row, vis(
 		`SELECT c.id, COALESCE(c.tgid, 0) AS tgid, COALESCE(tg.hidden, false) AS hidden,
 		        COALESCE(c.patch_of, 0) AS patch_of,
 		        COALESCE(tg.alpha_tag, '') AS alpha_tag, COALESCE(tg.agency, '') AS agency
 		   FROM radio_calls c
 		   LEFT JOIN radio_talkgroups tg ON tg.sysid = c.sysid AND tg.tgid = c.tgid
-		  WHERE c.call_uid = $1`, uid)
+		  WHERE c.call_uid = $1`), uid)
 	if err != nil {
 		return CallMeta{}, err
 	}
@@ -89,12 +89,12 @@ type CallAudio struct {
 // talkgroup, or one without a recording.
 func (s *Store) GetCallAudio(ctx context.Context, id int64) (*CallAudio, error) {
 	var a CallAudio
-	err := s.db.GetContext(ctx, &a,
+	err := s.db.GetContext(ctx, &a, vis(
 		`SELECT c.audio_key, COALESCE(c.audio_content_type, '') AS audio_content_type,
 		        COALESCE(c.audio_bytes, 0) AS audio_bytes
 		   FROM radio_calls c
 		   LEFT JOIN radio_talkgroups tg ON tg.sysid = c.sysid AND tg.tgid = c.tgid
-		  WHERE c.id = $1 AND c.audio_key IS NOT NULL AND NOT COALESCE(tg.hidden, false)`, id)
+		  WHERE c.id = $1 AND c.audio_key IS NOT NULL AND NOT COALESCE(tg.hidden, false)`), id)
 	if err != nil {
 		return nil, err
 	}

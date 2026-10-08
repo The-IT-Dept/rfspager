@@ -105,7 +105,7 @@ func (s *Store) ListCalls(ctx context.Context, f CallFilter) (calls []Call, hasM
 	if f.BeforeID != 0 {
 		where += " AND (c.started_at, c.id) < (SELECT started_at, id FROM radio_calls WHERE id = " + add(f.BeforeID) + ")"
 	}
-	query := callSelect + where + " ORDER BY c.started_at DESC, c.id DESC LIMIT " + add(f.Limit+1)
+	query := vis(callSelect) + where + " ORDER BY c.started_at DESC, c.id DESC LIMIT " + add(f.Limit+1)
 
 	calls = []Call{}
 	if err := s.db.SelectContext(ctx, &calls, query, args...); err != nil {
@@ -121,7 +121,7 @@ func (s *Store) ListCalls(ctx context.Context, f CallFilter) (calls []Call, hasM
 // talkgroup.
 func (s *Store) GetCall(ctx context.Context, id int64) (*Call, error) {
 	var c Call
-	if err := s.db.GetContext(ctx, &c, callSelect+" AND c.id = $1", id); err != nil {
+	if err := s.db.GetContext(ctx, &c, vis(callSelect)+" AND c.id = $1", id); err != nil {
 		return nil, err
 	}
 	return &c, nil
@@ -145,12 +145,12 @@ type Talkgroup struct {
 // ones only known by name (never heard) come last.
 func (s *Store) ListTalkgroups(ctx context.Context) ([]Talkgroup, error) {
 	tgs := []Talkgroup{}
-	err := s.db.SelectContext(ctx, &tgs,
+	err := s.db.SelectContext(ctx, &tgs, vis(
 		`SELECT id, sysid, tgid, alpha_tag, description, agency, category,
 		        first_seen_at, last_seen_at, calls_clear, calls_encrypted
-		   FROM radio_talkgroups
-		  WHERE NOT hidden
-		  ORDER BY last_seen_at DESC NULLS LAST, sysid, tgid`)
+		   FROM radio_talkgroups tg
+		  WHERE NOT COALESCE(tg.hidden, false)
+		  ORDER BY last_seen_at DESC NULLS LAST, sysid, tgid`))
 	return tgs, err
 }
 
@@ -217,31 +217,31 @@ type UnitDetail struct {
 // recently transmitted on, or sql.ErrNoRows if it has never been heard.
 func (s *Store) GetUnit(ctx context.Context, sysid, rid, limit int) (*UnitDetail, error) {
 	var d UnitDetail
-	err := s.db.GetContext(ctx, &d.Unit,
+	err := s.db.GetContext(ctx, &d.Unit, vis(
 		`SELECT u.id, u.sysid, u.rid, u.alias, u.agency, u.first_seen_at, u.last_seen_at,
 		        CASE WHEN COALESCE(tg.hidden, false) THEN NULL ELSE u.last_tgid END AS last_tgid,
 		        CASE WHEN COALESCE(tg.hidden, false) THEN NULL ELSE tg.alpha_tag END AS last_tg_alpha_tag
 		   FROM radio_units u
 		   LEFT JOIN radio_talkgroups tg ON tg.sysid = u.sysid AND tg.tgid = u.last_tgid
-		  WHERE u.sysid = $1 AND u.rid = $2`, sysid, rid)
+		  WHERE u.sysid = $1 AND u.rid = $2`), sysid, rid)
 	if err != nil {
 		return nil, err
 	}
 	d.Events = []UnitEvent{}
-	if err := s.db.SelectContext(ctx, &d.Events,
+	if err := s.db.SelectContext(ctx, &d.Events, vis(
 		`SELECT e.id, e.rfss, e.site, e.kind, e.tgid, tg.alpha_tag AS tg_alpha_tag, e.result, e.at
 		   FROM radio_unit_events e
 		   LEFT JOIN radio_talkgroups tg ON tg.sysid = e.sysid AND tg.tgid = e.tgid
 		  WHERE e.rid = $2 AND e.sysid = $1 AND NOT COALESCE(tg.hidden, false)
 		  ORDER BY e.at DESC
-		  LIMIT $3`, sysid, rid, limit); err != nil {
+		  LIMIT $3`), sysid, rid, limit); err != nil {
 		return nil, err
 	}
 	// Calls it transmitted. Calls it was the target of aren't indexed, and
 	// unit-to-unit calls are rare enough to leave out for now.
 	d.Calls = []Call{}
 	if err := s.db.SelectContext(ctx, &d.Calls,
-		callSelect+` AND c.source_rid = $2 AND c.sysid = $1 ORDER BY c.started_at DESC LIMIT $3`,
+		vis(callSelect)+` AND c.source_rid = $2 AND c.sysid = $1 ORDER BY c.started_at DESC LIMIT $3`,
 		sysid, rid, limit); err != nil {
 		return nil, err
 	}

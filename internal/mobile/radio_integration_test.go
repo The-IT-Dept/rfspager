@@ -80,6 +80,10 @@ func TestRadioAPIRequiresSubscriptionAndStreamsPastWriteTimeout(t *testing.T) {
 	t.Cleanup(cancel)
 
 	store := radio.NewStore(conn)
+	// Subscribers only get public agencies' talkgroups (radio/visibility.go).
+	if _, err := conn.Exec(`INSERT INTO radio_talkgroups (sysid, tgid, alpha_tag, agency) VALUES ($1, 10047, 'RFS CENCO A', 'RFS')`, radio.DefaultSysID); err != nil {
+		t.Fatal(err)
+	}
 	broker := radio.NewBroker(store)
 	listener, err := db.NewListener(raw)
 	if err != nil {

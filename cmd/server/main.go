@@ -186,6 +186,12 @@ func main() {
 	// radioAudio, transcribed if ASR is configured) while forwarding it live
 	// via radioLive. Calls are streamed to subscribers by radioSSE off the
 	// radio_call NOTIFY, which also fires as audio and transcripts land.
+	if cfg.RadioAgencies != "" {
+		if err := radio.SetPublicAgencies(strings.Split(cfg.RadioAgencies, ",")); err != nil {
+			slog.Error("RADIO_AGENCIES", "error", err)
+			os.Exit(1)
+		}
+	}
 	radioStore := radio.NewStore(database.Conn())
 	radioSSE := radio.NewBroker(radioStore)
 	radioLive := radio.NewLiveBroker()

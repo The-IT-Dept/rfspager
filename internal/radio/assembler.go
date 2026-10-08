@@ -85,7 +85,8 @@ type CallMeta struct {
 }
 
 // Silent reports whether the call's audio should be neither streamed nor
-// kept: its talkgroup is hidden, or it's a copy of another call.
+// kept: its talkgroup is hidden or not a public agency's, or it's a copy of
+// another call.
 func (m CallMeta) Silent() bool { return m.Hidden || m.PatchOf != 0 }
 
 // Clip is a finished call's audio.

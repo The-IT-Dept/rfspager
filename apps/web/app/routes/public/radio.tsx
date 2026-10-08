@@ -24,7 +24,7 @@ export function meta() {
     { title: "Radio — RFSPager" },
     {
       name: "description",
-      content: "Listen to NSW emergency services radio live and read every call as text, decoded by our own receivers.",
+      content: "Listen to Rural Fire Service and Fire and Rescue NSW radio live and read every call as text, decoded by our own receivers.",
     },
   ];
 }
@@ -133,7 +133,7 @@ function RadioFeed() {
           <div className="px-6 pb-5 pt-7">
             <h1 className={`${heading} text-2xl font-extrabold tracking-tight text-gray-900`}>Radio</h1>
             <p className="mt-2 text-sm leading-relaxed text-gray-500">
-              Emergency services radio on the NSW Public Safety Network, decoded by our receivers. Listen live, or read
+              Rural Fire Service and Fire and Rescue NSW radio, decoded by our receivers. Listen live, or read
               and replay every call.
             </p>
           </div>
@@ -215,7 +215,7 @@ function Paywall({ signedIn }: { signedIn: boolean }) {
       <div className="max-w-md">
         <h1 className={`${heading} text-3xl font-extrabold tracking-tight text-gray-900`}>Hear the radio behind the pages</h1>
         <p className="mt-4 text-[15px] leading-relaxed text-gray-600">
-          Radio lets you listen to NSW emergency services traffic live and read every call as text, from the same
+          Radio lets you listen to Rural Fire Service and Fire and Rescue NSW traffic live and read every call as text, from the same
           receivers that decode the pager feed. It's part of an RFSPager subscription.
         </p>
         <div className="mt-8 flex flex-wrap gap-3">
