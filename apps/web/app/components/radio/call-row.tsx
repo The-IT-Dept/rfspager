@@ -7,10 +7,18 @@ import type { RadioCall } from "./types";
 
 const heading = "font-[family-name:var(--font-heading)]";
 
-export function callTitle(c: { tg_alpha_tag: string | null; tgid: number | null; target_rid: number | null }) {
-  if (c.tg_alpha_tag) return c.tg_alpha_tag;
-  if (c.tgid) return `Talkgroup ${c.tgid}`;
-  return c.target_rid ? `Private call to ${c.target_rid}` : "Private call";
+export function callTitle(c: {
+  tg_alpha_tag: string | null;
+  tgid: number | null;
+  target_rid: number | null;
+  patched_with?: string[] | null;
+}) {
+  let title: string;
+  if (c.tg_alpha_tag) title = c.tg_alpha_tag;
+  else if (c.tgid) title = `Talkgroup ${c.tgid}`;
+  else return c.target_rid ? `Private call to ${c.target_rid}` : "Private call";
+  // A patched keyup is one call heard on several talkgroups.
+  return [title, ...(c.patched_with ?? [])].join(" + ");
 }
 
 function seconds(c: RadioCall): number | null {

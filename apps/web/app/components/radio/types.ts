@@ -26,6 +26,8 @@ export interface RadioCall {
   audio_ms: number | null;
   transcript: string | null;
   transcribed_at: string | null;
+  /** Other talkgroups the same keyup went out on (a patch). */
+  patched_with: string[] | null;
 }
 
 export interface CallPage {

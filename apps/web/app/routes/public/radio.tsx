@@ -1,5 +1,5 @@
 import { ListFilter } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import { DayDivider, SkeletonRows } from "~/components/pager/message-row";
@@ -14,6 +14,7 @@ import { useRadioFeed } from "~/components/radio/use-radio-feed";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "~/components/ui/sheet";
 import { getCustomerToken } from "~/lib/customer-api";
 import { useIsSubscriber } from "~/lib/subscriber";
+import type { RadioCall } from "~/components/radio/types";
 
 const heading = "font-[family-name:var(--font-heading)]";
 const STALE_ON_AIR_MS = 2 * 60_000;
@@ -47,7 +48,16 @@ function RadioFeed() {
   const tgParam = Number(searchParams.get("tg")) || null;
   const { fresh } = useStreamToken(true);
   const feed = useRadioFeed({ enabled: true, tgid: tgParam, freshToken: fresh });
-  const live = useLiveAudio({ tgid: tgParam, freshToken: fresh });
+  // The same keyup patched onto two talkgroups arrives as two calls: same
+  // radio, same moment. Live listening plays it once.
+  const callsRef = useRef(new Map<number, { src: number | null; at: number }>());
+  callsRef.current = new Map(feed.calls.map((c) => [c.id, { src: c.source_rid, at: Date.parse(c.started_at) }]));
+  const isDuplicate = useCallback((a: number, b: number) => {
+    const x = callsRef.current.get(a);
+    const y = callsRef.current.get(b);
+    return Boolean(x && y && x.src && x.src === y.src && Math.abs(x.at - y.at) < 2_000);
+  }, []);
+  const live = useLiveAudio({ tgid: tgParam, freshToken: fresh, isDuplicate });
   const player = useClipPlayer(fresh);
   const [sheetOpen, setSheetOpen] = useState(false);
 
@@ -63,7 +73,7 @@ function RadioFeed() {
   const active = useMemo(() => {
     const cutoff = Date.now() - STALE_ON_AIR_MS;
     const seen = new Set<number | null>();
-    return feed.calls.filter((c) => {
+    return withoutPatchCopies(feed.calls).filter((c) => {
       if (c.ended_at || Date.parse(c.started_at) < cutoff || seen.has(c.tgid)) return false;
       seen.add(c.tgid);
       return true;
@@ -73,10 +83,10 @@ function RadioFeed() {
   // By default the timeline shows what you can listen to: recorded calls,
   // and clear calls still on air (their recording lands when they end).
   const [showAll, setShowAll] = useState(false);
-  const shown = useMemo(
-    () => (showAll ? feed.calls : feed.calls.filter((c) => c.audio_url || (!c.ended_at && !c.encrypted))),
-    [feed.calls, showAll],
-  );
+  const shown = useMemo(() => {
+    const calls = withoutPatchCopies(feed.calls);
+    return showAll ? calls : calls.filter((c) => c.audio_url || (!c.ended_at && !c.encrypted));
+  }, [feed.calls, showAll]);
   const hiddenCount = feed.calls.length - shown.length;
 
   const rows = useMemo(() => {
@@ -236,4 +246,23 @@ function Paywall({ signedIn }: { signedIn: boolean }) {
       </div>
     </div>
   );
+}
+
+/**
+ * The server stores a patched keyup once, but a copy can show up live
+ * before the server knows it's one (its talker only arrives with the call's
+ * end). Same radio within two seconds: keep the first.
+ */
+function withoutPatchCopies(calls: RadioCall[]): RadioCall[] {
+  const firstBySource = new Map<number, number[]>(); // source → start times kept
+  const byAge = [...calls].sort((a, b) => a.id - b.id);
+  const drop = new Set<number>();
+  for (const c of byAge) {
+    if (!c.source_rid) continue;
+    const at = Date.parse(c.started_at);
+    const kept = firstBySource.get(c.source_rid) ?? [];
+    if (kept.some((t) => Math.abs(t - at) < 2_000)) drop.add(c.id);
+    else firstBySource.set(c.source_rid, [...kept, at]);
+  }
+  return drop.size ? calls.filter((c) => !drop.has(c.id)) : calls;
 }

@@ -89,17 +89,29 @@ export function OnAir({
 
       {live.listening && live.streams.length > 0 && (
         <ul className="space-y-2 px-4 pb-4 sm:px-6">
-          {live.streams.map((s) => {
+          {visibleStreams(live.streams).shown.map((s) => {
             const tg = tgByID.get(s.tgid);
             return (
-              <li key={s.callId} className={`flex items-center gap-3 transition-opacity duration-700 ${s.ended ? "opacity-40" : ""}`}>
+              <li
+                key={s.callId}
+                className={`flex items-center gap-3 transition-opacity duration-700 ${s.state === "playing" ? "" : "opacity-40"}`}
+              >
                 <span className={`${heading} w-36 shrink-0 truncate text-sm font-bold text-gray-900 sm:w-44`}>
                   {tg?.alpha_tag ?? `Talkgroup ${s.tgid}`}
                 </span>
-                <Trace levels={s.levels} colour={agencyColour(tg?.agency)} />
+                {s.state === "queued" ? (
+                  <span className="text-sm text-gray-500">Waiting, {s.bufferedS.toFixed(1)} s held</span>
+                ) : (
+                  <Trace levels={s.levels} colour={agencyColour(tg?.agency)} />
+                )}
               </li>
             );
           })}
+          {visibleStreams(live.streams).more > 0 && (
+            <li className="pl-[9.75rem] text-sm text-gray-400 sm:pl-[11.75rem]">
+              {visibleStreams(live.streams).more} more waiting
+            </li>
+          )}
         </ul>
       )}
 
@@ -131,4 +143,14 @@ function Trace({ levels, colour }: { levels: number[]; colour: string }) {
       })}
     </svg>
   );
+}
+
+// The playing call (and the one that just finished, fading), then the next
+// two in line; the rest of the queue is just a count.
+const SHOW_WAITING = 2;
+function visibleStreams(streams: LiveStream[]) {
+  const finished = streams.filter((s) => s.state === "done" && s.levels.length > 0);
+  const playing = streams.filter((s) => s.state === "playing");
+  const waiting = streams.filter((s) => s.state === "queued");
+  return { shown: [...finished, ...playing, ...waiting.slice(0, SHOW_WAITING)], more: Math.max(0, waiting.length - SHOW_WAITING) };
 }
