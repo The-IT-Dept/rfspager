@@ -48,6 +48,8 @@ type voiceChan struct {
 type voiceCall struct {
 	id     string
 	tg     uint16
+	src    uint32
+	start  int64 // unix ms
 	voc    vocoder
 	pcm    []byte
 	seq    int
@@ -59,6 +61,10 @@ type voiceCall struct {
 // chunkFrames: ship audio every 9 codewords (180 ms) — half a superframe,
 // small enough for live listening, large enough not to flood the socket.
 const chunkFrames = 9
+
+// patchWindowMS: grants for the same radio this close together are one
+// keyup on several talkgroups. Matches internal/radio's linkPatchSQL.
+const patchWindowMS = 2_000
 
 // chanLinger keeps an idle voice channel's decoder alive briefly: talkers
 // key up again within the hang time on the same channel.
@@ -89,6 +95,16 @@ func (f *follower) call(frameType string, c p25.CallPayload) {
 		f.cc == nil || f.site.SysID == 0 {
 		return
 	}
+	// A patch grants one keyup on several talkgroups (often both slots of
+	// the same channel). It's the same voice: decode and ship it once. The
+	// server links the copies the same way.
+	if c.Source != 0 {
+		for _, other := range f.calls {
+			if other.src == c.Source && abs(other.start-c.StartMS) < patchWindowMS {
+				return
+			}
+		}
+	}
 	vc := f.chans[c.FreqHz]
 	if vc == nil {
 		vc = &voiceChan{ch: p25.NewChannelizer(float64(off), inputRate)}
@@ -106,7 +122,7 @@ func (f *follower) call(frameType string, c p25.CallPayload) {
 	if old := vc.slots[c.Slot]; old != nil {
 		f.finish(old.id)
 	}
-	call := &voiceCall{id: c.CallID, tg: c.Group}
+	call := &voiceCall{id: c.CallID, tg: c.Group, src: c.Source, start: c.StartMS}
 	if newVocoder != nil {
 		call.voc = newVocoder()
 	}

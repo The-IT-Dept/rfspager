@@ -2,6 +2,7 @@ package radio
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/url"
 	"os"
@@ -44,7 +45,7 @@ func radioTestDB(t *testing.T) (*sqlx.DB, string) {
 		t.Fatalf("schema: %v", err)
 	}
 	for i := 0; i < 2; i++ {
-		for _, name := range []string{"032_radio.sql", "033_radio_audio.sql"} {
+		for _, name := range []string{"032_radio.sql", "033_radio_audio.sql", "034_radio_patches.sql"} {
 			migration, err := os.ReadFile("../db/migrations/" + name)
 			if err != nil {
 				t.Fatal(err)
@@ -540,5 +541,95 @@ func TestIngestRecordsAndTranscribesCallAudio(t *testing.T) {
 	}
 	if _, err := s.GetCallAudio(ctx, id); !IsNotFound(err) {
 		t.Errorf("hidden talkgroup call audio: %v, want not found", err)
+	}
+}
+
+func TestPatchedKeyupIsStoredOnce(t *testing.T) {
+	db, _ := radioTestDB(t)
+	s := NewStore(db)
+	ctx := context.Background()
+	t0 := time.Date(2026, 10, 8, 13, 33, 58, 0, time.UTC)
+
+	// One keyup granted on 10047 and 10049 (a patch), plus an unrelated call
+	// from another radio at the same moment.
+	a := testCall("a", t0)
+	a.Source = 2035264
+	b := testCall("b", t0.Add(40*time.Millisecond))
+	b.Group, b.Source, b.Slot = 10049, 2035264, 1
+	other := testCall("c", t0.Add(100*time.Millisecond))
+	other.Group, other.Source = 20303, 2331963
+	// The same radio again 10 s later is a new transmission, not a copy.
+	later := testCall("d", t0.Add(10*time.Second))
+	later.Group, later.Source = 10049, 2035264
+	for _, p := range []p25.CallPayload{a, b, other, later} {
+		if _, err := s.StartCall(ctx, testReceiver, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	patchOf := func(uid string) int64 {
+		var v sql.NullInt64
+		if err := db.Get(&v, `SELECT patch_of FROM radio_calls WHERE call_uid = $1`, uid); err != nil {
+			t.Fatal(err)
+		}
+		return v.Int64
+	}
+	var aID int64
+	if err := db.Get(&aID, `SELECT id FROM radio_calls WHERE call_uid = 'a'`); err != nil {
+		t.Fatal(err)
+	}
+	if got := patchOf("b"); got != aID {
+		t.Errorf("b.patch_of = %d, want %d", got, aID)
+	}
+	for _, uid := range []string{"a", "c", "d"} {
+		if got := patchOf(uid); got != 0 {
+			t.Errorf("%s.patch_of = %d, want none", uid, got)
+		}
+	}
+
+	// The feed shows the keyup once, naming both talkgroups, and it's on
+	// 10049's timeline as well as 10047's.
+	if _, err := db.Exec(`UPDATE radio_talkgroups SET alpha_tag = 'RFS HNSBY A' WHERE sysid = $1 AND tgid = 10049`, DefaultSysID); err != nil {
+		t.Fatal(err)
+	}
+	calls, _, err := s.ListCalls(ctx, CallFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 3 {
+		t.Fatalf("feed has %d calls, want 3 (a, c, d)", len(calls))
+	}
+	for _, c := range calls {
+		if c.ID == aID && (len(c.PatchedWith) != 1 || c.PatchedWith[0] != "RFS HNSBY A") {
+			t.Errorf("a.patched_with = %v", c.PatchedWith)
+		}
+	}
+	on10049, _, err := s.ListCalls(ctx, CallFilter{TGID: 10049, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(on10049) != 2 { // d itself, and a via its copy
+		t.Errorf("10049 timeline has %d calls, want 2", len(on10049))
+	}
+
+	// A copy whose talker only arrives with its end is linked then.
+	e := testCall("e", t0.Add(20*time.Second))
+	e.Source = 2019977
+	f := testCall("f", t0.Add(20*time.Second+30*time.Millisecond))
+	f.Group = 10049
+	for _, p := range []p25.CallPayload{e, f} {
+		if _, err := s.StartCall(ctx, testReceiver, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.Source, f.EndMS = 2019977, f.StartMS+4000
+	if _, err := s.EndCall(ctx, testReceiver, f); err != nil {
+		t.Fatal(err)
+	}
+	if patchOf("f") == 0 {
+		t.Error("f not linked at call end")
+	}
+	if meta, err := s.callMeta(ctx, "f"); err != nil || !meta.Silent() {
+		t.Errorf("callMeta(f) = %+v, %v; want silent", meta, err)
 	}
 }

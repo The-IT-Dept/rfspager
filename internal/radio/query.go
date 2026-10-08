@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx/types"
+	"github.com/lib/pq"
 )
 
 // Read side, for the subscriber API. Everything here leaves out hidden
@@ -43,6 +44,8 @@ type Call struct {
 	// Transcript is null until transcribed, and "" if no speech was heard.
 	Transcript    *string    `db:"transcript" json:"transcript"`
 	TranscribedAt *time.Time `db:"transcribed_at" json:"transcribed_at"`
+	// PatchedWith names the other talkgroups the same keyup went out on.
+	PatchedWith pq.StringArray `db:"patched_with" json:"patched_with"`
 }
 
 const callSelect = `
@@ -50,13 +53,17 @@ const callSelect = `
 	       c.tgid, tg.alpha_tag AS tg_alpha_tag, tg.agency AS tg_agency, tg.category AS tg_category,
 	       c.target_rid, tu.alias AS target_alias, c.source_rid, su.alias AS source_alias,
 	       c.freq_hz, c.slot, c.encrypted, c.emergency, c.patch, c.started_at, c.ended_at,
-	       c.audio_url, c.audio_ms, c.transcript, c.transcribed_at
+	       c.audio_url, c.audio_ms, c.transcript, c.transcribed_at,
+	       COALESCE((SELECT array_agg(COALESCE(dt.alpha_tag, 'Talkgroup ' || d.tgid) ORDER BY d.started_at, d.id)
+	                   FROM radio_calls d
+	                   LEFT JOIN radio_talkgroups dt ON dt.sysid = d.sysid AND dt.tgid = d.tgid
+	                  WHERE d.patch_of = c.id AND d.tgid IS NOT NULL), '{}') AS patched_with
 	  FROM radio_calls c
 	  LEFT JOIN radio_sites s       ON s.sysid = c.sysid AND s.rfss = c.rfss AND s.site = c.site
 	  LEFT JOIN radio_talkgroups tg ON tg.sysid = c.sysid AND tg.tgid = c.tgid
 	  LEFT JOIN radio_units su      ON su.sysid = c.sysid AND su.rid = c.source_rid
 	  LEFT JOIN radio_units tu      ON tu.sysid = c.sysid AND tu.rid = c.target_rid
-	 WHERE NOT COALESCE(tg.hidden, false)`
+	 WHERE NOT COALESCE(tg.hidden, false) AND c.patch_of IS NULL`
 
 // CallFilter narrows ListCalls. Zero values mean "any".
 type CallFilter struct {
@@ -83,7 +90,11 @@ func (s *Store) ListCalls(ctx context.Context, f CallFilter) (calls []Call, hasM
 		if sysid == 0 {
 			sysid = DefaultSysID
 		}
-		where += " AND c.sysid = " + add(sysid) + " AND c.tgid = " + add(f.TGID)
+		// A patched keyup is stored once, under the first talkgroup; it
+		// belongs to the others' timelines too.
+		sp, tp := add(sysid), add(f.TGID)
+		where += " AND c.sysid = " + sp + " AND (c.tgid = " + tp +
+			" OR EXISTS (SELECT 1 FROM radio_calls d WHERE d.patch_of = c.id AND d.tgid = " + tp + "))"
 	}
 	if f.SiteID != 0 {
 		where += " AND (c.sysid, c.rfss, c.site) = (SELECT sysid, rfss, site FROM radio_sites WHERE id = " + add(f.SiteID) + ")"

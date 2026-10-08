@@ -26,19 +26,21 @@ func (s *Store) CallIDByUID(ctx context.Context, uid string) (int64, error) {
 // callMeta looks up the row a call's audio belongs to, for the live stream.
 func (s *Store) callMeta(ctx context.Context, uid string) (CallMeta, error) {
 	var row struct {
-		ID     int64 `db:"id"`
-		TGID   int   `db:"tgid"`
-		Hidden bool  `db:"hidden"`
+		ID      int64 `db:"id"`
+		TGID    int   `db:"tgid"`
+		Hidden  bool  `db:"hidden"`
+		PatchOf int64 `db:"patch_of"`
 	}
 	err := s.db.GetContext(ctx, &row,
-		`SELECT c.id, COALESCE(c.tgid, 0) AS tgid, COALESCE(tg.hidden, false) AS hidden
+		`SELECT c.id, COALESCE(c.tgid, 0) AS tgid, COALESCE(tg.hidden, false) AS hidden,
+		        COALESCE(c.patch_of, 0) AS patch_of
 		   FROM radio_calls c
 		   LEFT JOIN radio_talkgroups tg ON tg.sysid = c.sysid AND tg.tgid = c.tgid
 		  WHERE c.call_uid = $1`, uid)
 	if err != nil {
 		return CallMeta{}, err
 	}
-	return CallMeta{Known: true, ID: row.ID, TGID: row.TGID, Hidden: row.Hidden}, nil
+	return CallMeta{Known: true, ID: row.ID, TGID: row.TGID, Hidden: row.Hidden, PatchOf: row.PatchOf}, nil
 }
 
 // SetCallAudio records a call's stored recording. Changing audio_url fires

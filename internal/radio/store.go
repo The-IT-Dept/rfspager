@@ -186,6 +186,41 @@ func newCallRow(p p25.CallPayload, ended bool, now time.Time) (callRow, error) {
 	return row, nil
 }
 
+// linkPatchSQL marks a call as a copy of an earlier one from the same radio
+// within two seconds: one keyup granted on several talkgroups (a patch or
+// multi-select). It points at the first call in the window, or at whatever
+// that one is itself a copy of, and returns the primary's id.
+const linkPatchSQL = `
+	WITH me AS (
+	    SELECT id, sysid, source_rid, started_at FROM radio_calls
+	     WHERE call_uid = $1 AND patch_of IS NULL AND source_rid IS NOT NULL),
+	twin AS (
+	    SELECT COALESCE(p.patch_of, p.id) AS id FROM radio_calls p, me
+	     WHERE p.sysid = me.sysid AND p.source_rid = me.source_rid AND p.id <> me.id
+	       AND p.started_at BETWEEN me.started_at - INTERVAL '2 seconds' AND me.started_at + INTERVAL '2 seconds'
+	       AND (p.started_at, p.id) < (me.started_at, me.id)
+	     ORDER BY p.started_at, p.id
+	     LIMIT 1)
+	UPDATE radio_calls c SET patch_of = twin.id
+	  FROM me, twin
+	 WHERE c.id = me.id
+	RETURNING twin.id`
+
+// linkPatch links the call if it's a copy, and re-announces the primary so
+// open feeds pick up the extra talkgroup.
+func linkPatch(ctx context.Context, tx *sqlx.Tx, uid string) error {
+	var primary int64
+	err := tx.GetContext(ctx, &primary, linkPatchSQL, uid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `SELECT pg_notify('radio_call', $1::text)`, primary)
+	return err
+}
+
 const insertCallSQL = `
 	INSERT INTO radio_calls (receiver_system_id, call_uid, sysid, rfss, site, tgid, target_rid,
 	                         source_rid, freq_hz, slot, encrypted, emergency, patch, started_at, ended_at)
@@ -219,6 +254,9 @@ func (s *Store) StartCall(ctx context.Context, receiverID int64, p p25.CallPaylo
 
 	inserted, err := insertCall(ctx, tx, receiverID, c)
 	if err != nil || !inserted {
+		return false, err
+	}
+	if err := linkPatch(ctx, tx, c.uid); err != nil {
 		return false, err
 	}
 	if c.tgid.Valid {
@@ -321,6 +359,10 @@ func (s *Store) EndCall(ctx context.Context, receiverID int64, p p25.CallPayload
 		if err := touchUnit(ctx, tx, e.SysID, e.Source.Int64, e.EndedAt, sql.NullInt64{}); err != nil {
 			return false, err
 		}
+	}
+	// The talker may only be known now (the start was a late-joined update).
+	if err := linkPatch(ctx, tx, c.uid); err != nil {
+		return false, err
 	}
 	return true, tx.Commit()
 }

@@ -76,7 +76,14 @@ type CallMeta struct {
 	ID     int64
 	TGID   int // 0 for unit-to-unit calls
 	Hidden bool
+	// PatchOf is the call this one is a copy of (the same keyup on another
+	// talkgroup), or 0. Copies get no recording and aren't streamed.
+	PatchOf int64
 }
+
+// Silent reports whether the call's audio should be neither streamed nor
+// kept: its talkgroup is hidden, or it's a copy of another call.
+func (m CallMeta) Silent() bool { return m.Hidden || m.PatchOf != 0 }
 
 // Clip is a finished call's audio.
 type Clip struct {

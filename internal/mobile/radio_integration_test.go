@@ -59,7 +59,7 @@ func radioIntegrationDB(t *testing.T) (*sqlx.DB, string) {
 	`); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
-	for _, name := range []string{"032_radio.sql", "033_radio_audio.sql"} {
+	for _, name := range []string{"032_radio.sql", "033_radio_audio.sql", "034_radio_patches.sql"} {
 		migration, err := os.ReadFile("../db/migrations/" + name)
 		if err != nil {
 			t.Fatal(err)

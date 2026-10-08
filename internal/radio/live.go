@@ -88,7 +88,7 @@ func (b *LiveBroker) Subscribe(tgs []int) (*LiveSub, func()) {
 // Audio for calls not yet tied to a row, or on hidden talkgroups, is never
 // sent: we can't tell subscribers what it is, or they mustn't hear it.
 func (b *LiveBroker) PublishAudio(meta CallMeta, uid string, seq int, pcm []byte) {
-	if !meta.Known || meta.Hidden {
+	if !meta.Known || meta.Silent() {
 		return
 	}
 	b.publish(meta.TGID, "audio", func() any {
@@ -98,7 +98,7 @@ func (b *LiveBroker) PublishAudio(meta CallMeta, uid string, seq int, pcm []byte
 
 // PublishEnd tells listeners a call's audio is over.
 func (b *LiveBroker) PublishEnd(meta CallMeta, uid string) {
-	if !meta.Known || meta.Hidden {
+	if !meta.Known || meta.Silent() {
 		return
 	}
 	b.publish(meta.TGID, "end", func() any {
