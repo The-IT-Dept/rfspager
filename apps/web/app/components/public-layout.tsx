@@ -5,6 +5,7 @@ import { useEffect, useState, useMemo } from "react";
 
 const NAV_LINKS = [
   { label: "Pager", path: "/pager" },
+  { label: "Radio", path: "/radio" },
   { label: "Map", path: "/map" },
   { label: "Capcodes", path: "/capcodes" },
   // Systems (public receiver-network page) gated off for now — see
@@ -80,6 +81,7 @@ export function PublicLayout() {
   const navigate = useNavigate();
   const isToolPage =
     location.pathname === "/pager" ||
+    location.pathname === "/radio" ||
     location.pathname === "/map" ||
     location.pathname === "/systems" ||
     location.pathname === "/capcodes";

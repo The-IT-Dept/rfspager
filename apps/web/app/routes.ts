@@ -5,6 +5,7 @@ export default [
   layout("routes/public/layout.tsx", [
     index("routes/public/home.tsx"),
     route("pager", "routes/public/pager.tsx"),
+    route("radio", "routes/public/radio.tsx"),
     route("map", "routes/public/map.tsx"),
     route("systems", "routes/public/systems.tsx"),
     route("capcodes", "routes/public/capcodes.tsx"),
