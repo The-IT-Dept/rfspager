@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/the-it-dept/rfspager/internal/authjwt"
@@ -47,20 +48,63 @@ func JWTUserAuth(db *sqlx.DB, jwtSecret string) func(http.Handler) http.Handler 
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
 				return
 			}
+			serveAsUser(w, r, next, db, claims)
+		})
+	}
+}
 
-			var user AuthUser
-			err = db.GetContext(r.Context(), &user,
-				`SELECT id, user_id, name, email, subscription_valid,
-				 subscription_product_id, subscription_expiry, will_renew,
-				 subscription_platform, superuser, token_version
-				 FROM users WHERE id = $1`, claims.Subject)
-			if err != nil || user.TokenVersion != claims.Version {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "user not found"})
+// serveAsUser loads the token's user, checks the token hasn't been revoked
+// (token_version bumps on password change / logout everywhere), and serves
+// the request with the user in context.
+func serveAsUser(w http.ResponseWriter, r *http.Request, next http.Handler, db *sqlx.DB, claims authjwt.Claims) {
+	var user AuthUser
+	err := db.GetContext(r.Context(), &user,
+		`SELECT id, user_id, name, email, subscription_valid,
+		 subscription_product_id, subscription_expiry, will_renew,
+		 subscription_platform, superuser, token_version
+		 FROM users WHERE id = $1`, claims.Subject)
+	if err != nil || user.TokenVersion != claims.Version {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "user not found"})
+		return
+	}
+	ctx := context.WithValue(r.Context(), UserContextKey, &user)
+	next.ServeHTTP(w, r.WithContext(ctx))
+}
+
+// Stream tokens let a browser reach the radio audio and event streams:
+// <audio src> and EventSource can't send an Authorization header, so the
+// page swaps its login token for a short-lived, radio-only one it can put in
+// the URL. A leaked stream token expires in minutes and opens nothing else.
+const (
+	streamTokenType     = "radio-stream"
+	streamTokenLifetime = 15 * time.Minute
+)
+
+// issueStreamToken mints a stream token for user.
+func issueStreamToken(jwtSecret string, user *AuthUser) (string, time.Time, error) {
+	exp := time.Now().Add(streamTokenLifetime)
+	tok, err := authjwt.Issue([]byte(jwtSecret), "rfspager-mobile", streamTokenType, user.ID, user.TokenVersion, streamTokenLifetime, nil)
+	return tok, exp, err
+}
+
+// StreamOrBearerAuth accepts either the normal Bearer login token or a
+// ?token= stream token. Mount it only on the routes browsers load directly.
+func StreamOrBearerAuth(db *sqlx.DB, jwtSecret string) func(http.Handler) http.Handler {
+	bearer := JWTUserAuth(db, jwtSecret)
+	return func(next http.Handler) http.Handler {
+		viaBearer := bearer(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			tok := r.URL.Query().Get("token")
+			if r.Header.Get("Authorization") != "" || tok == "" {
+				viaBearer.ServeHTTP(w, r)
 				return
 			}
-
-			ctx := context.WithValue(r.Context(), UserContextKey, &user)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			claims, err := authjwt.Validate([]byte(jwtSecret), tok, "rfspager-mobile", streamTokenType)
+			if err != nil {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
+				return
+			}
+			serveAsUser(w, r, next, db, claims)
 		})
 	}
 }

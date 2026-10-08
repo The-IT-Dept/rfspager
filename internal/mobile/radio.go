@@ -40,33 +40,47 @@ const sseWriteTimeout = 30 * time.Second
 // live and audio may be nil, in which case /live answers 503 and
 // /calls/{id}/audio 404.
 func RadioRouter(db *sqlx.DB, jwtSecret string, store *radio.Store, broker *radio.Broker, live *radio.LiveBroker, audio blobstore.Store) chi.Router {
-	h := &radioHandlers{db: db, store: store, broker: broker, live: live, audio: audio}
+	h := &radioHandlers{db: db, jwtSecret: jwtSecret, store: store, broker: broker, live: live, audio: audio}
 
 	r := chi.NewRouter()
-	r.Use(JWTUserAuth(db, jwtSecret))
-	r.Use(RequireSubscription)
-
-	r.Get("/events", h.Events)
-	r.Get("/live", h.Live)
-
+	// Bearer only.
 	r.Group(func(r chi.Router) {
-		r.Use(chimw.Timeout(30 * time.Second))
+		r.Use(JWTUserAuth(db, jwtSecret), RequireSubscription, chimw.Timeout(30*time.Second))
+		r.Post("/stream-token", h.StreamToken)
 		r.Get("/calls", h.ListCalls)
 		r.Get("/calls/{id}", h.GetCall)
-		r.Get("/calls/{id}/audio", h.Audio)
 		r.Get("/talkgroups", h.ListTalkgroups)
 		r.Get("/sites", h.ListSites)
 		r.Get("/units/{rid}", h.GetUnit)
 	})
+	// What a browser loads directly (EventSource, <audio>) also takes a
+	// ?token= stream token.
+	r.Group(func(r chi.Router) {
+		r.Use(StreamOrBearerAuth(db, jwtSecret), RequireSubscription)
+		r.Get("/events", h.Events)
+		r.Get("/live", h.Live)
+		r.With(chimw.Timeout(30*time.Second)).Get("/calls/{id}/audio", h.Audio)
+	})
 	return r
 }
 
+// StreamToken: POST /stream-token → {token, expires_at}. See issueStreamToken.
+func (h *radioHandlers) StreamToken(w http.ResponseWriter, r *http.Request) {
+	tok, exp, err := issueStreamToken(h.jwtSecret, GetUser(r.Context()))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"token": tok, "expires_at": exp.UTC()})
+}
+
 type radioHandlers struct {
-	db     *sqlx.DB
-	store  *radio.Store
-	broker *radio.Broker
-	live   *radio.LiveBroker
-	audio  blobstore.Store
+	db        *sqlx.DB
+	jwtSecret string
+	store     *radio.Store
+	broker    *radio.Broker
+	live      *radio.LiveBroker
+	audio     blobstore.Store
 }
 
 // ListCalls: GET /calls?tg=&sysid=&site=&before_id=&limit=
