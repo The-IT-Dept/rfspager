@@ -68,6 +68,16 @@ module.exports = () => {
   if (easProjectID) cfg.extra = { ...cfg.extra, eas: { projectId: easProjectID } };
   else if (cfg.extra) delete cfg.extra.eas;
 
+  // APP_VARIANT=dev installs alongside the store app instead of over it.
+  // Firebase is configured for the store bundle ID only, so push won't work
+  // in the dev variant.
+  if (process.env.APP_VARIANT === "dev") {
+    if (isRelease) throw new Error("APP_VARIANT=dev is for development builds only");
+    cfg.name = `${cfg.name} Dev`;
+    cfg.ios.bundleIdentifier = `${cfg.ios.bundleIdentifier}.dev`;
+    cfg.android.package = `${cfg.android.package}.dev`;
+  }
+
   const iosPlist = process.env.GOOGLE_SERVICE_INFO_PLIST;
   const androidJson = process.env.GOOGLE_SERVICES_JSON;
 
