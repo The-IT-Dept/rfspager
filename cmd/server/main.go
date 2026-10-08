@@ -17,6 +17,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/the-it-dept/rfspager/internal/admin"
+	"github.com/the-it-dept/rfspager/internal/asr"
+	"github.com/the-it-dept/rfspager/internal/blobstore"
 	"github.com/the-it-dept/rfspager/internal/config"
 	"github.com/the-it-dept/rfspager/internal/db"
 	"github.com/the-it-dept/rfspager/internal/dispatch"
@@ -179,10 +181,45 @@ func main() {
 	mobileSSE := mobile.NewSSEBroker(database.Conn())
 	publicSSE := public.NewSSEBroker(database.Conn())
 
-	// P25 radio: receivers' p25.* frames are stored by radioStore; calls are
-	// streamed to subscribers by radioSSE off the radio_call NOTIFY.
+	// P25 radio: receivers' p25.* frames go through radioIngest, which stores
+	// calls in radioStore and assembles p25.audio into recordings (stored in
+	// radioAudio, transcribed if ASR is configured) while forwarding it live
+	// via radioLive. Calls are streamed to subscribers by radioSSE off the
+	// radio_call NOTIFY, which also fires as audio and transcripts land.
 	radioStore := radio.NewStore(database.Conn())
 	radioSSE := radio.NewBroker(radioStore)
+	radioLive := radio.NewLiveBroker()
+	var radioAudio blobstore.Store
+	if cfg.RadioAudioS3Endpoint != "" {
+		radioAudio, err = blobstore.NewS3(blobstore.S3Config{
+			Endpoint:        cfg.RadioAudioS3Endpoint,
+			Bucket:          cfg.RadioAudioS3Bucket,
+			AccessKeyID:     cfg.RadioAudioS3AccessKeyID,
+			SecretAccessKey: cfg.RadioAudioS3SecretAccessKey,
+			Region:          cfg.RadioAudioS3Region,
+		})
+		if err == nil {
+			slog.Info("radio audio stored in S3", "endpoint", cfg.RadioAudioS3Endpoint, "bucket", cfg.RadioAudioS3Bucket)
+		}
+	} else {
+		radioAudio, err = blobstore.NewLocal(cfg.RadioAudioDir)
+		if err == nil {
+			slog.Info("radio audio stored on disk", "dir", cfg.RadioAudioDir)
+		}
+	}
+	if err != nil {
+		slog.Error("failed to set up radio audio storage", "error", err)
+		os.Exit(1)
+	}
+	pipelineCfg := radio.PipelineConfig{Blobs: radioAudio}
+	if asrClient := asr.New(asr.Config{URL: cfg.ASRURL, Model: cfg.ASRModel, APIKey: cfg.ASRAPIKey, Language: cfg.ASRLanguage}); asrClient != nil {
+		pipelineCfg.ASR = asrClient
+		slog.Info("radio transcription enabled", "model", cfg.ASRModel)
+	} else {
+		slog.Info("radio transcription disabled (ASR_URL / ASR_API_KEY not set)")
+	}
+	radioIngest := radio.NewIngest(radioStore, radio.NewAssembler(radio.AssemblerConfig{}), radioLive,
+		radio.NewAudioPipeline(radioStore, pipelineCfg))
 
 	// Receiver-agent websocket hub. PodID identifies this process in the
 	// system_connections table so multi-pod takeovers Just Work.
@@ -202,12 +239,13 @@ func main() {
 
 	bgCtx, cancelBg := context.WithCancel(context.Background())
 	var bg sync.WaitGroup
-	bg.Add(5)
+	bg.Add(6)
 	go func() { defer bg.Done(); fanoutWorker.Run(bgCtx) }()
 	go func() { defer bg.Done(); dispatchWorker.Run(bgCtx) }()
 	go func() { defer bg.Done(); mobileSSE.Run(bgCtx, mobileSSEMessageCh) }()
 	go func() { defer bg.Done(); publicSSE.Run(bgCtx, publicSSEMessageCh) }()
 	go func() { defer bg.Done(); radioSSE.Run(bgCtx, radioCallCh) }()
+	go func() { defer bg.Done(); radioIngest.Run(bgCtx) }()
 	if err := hub.Start(bgCtx); err != nil {
 		slog.Error("failed to start receiver hub workers", "error", err)
 		os.Exit(1)
@@ -242,12 +280,13 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Get("/receiver/ws", recvhub.Handler(database, hub, func(ctx context.Context, sys *models.System, p recvhub.PagePayload) (string, error) {
 				return msgHandler.IngestPage(ctx, sys, p.Address, p.Message, time.Unix(p.Datetime, 0))
-			}, radioStore.HandleFrame))
+			}, radioIngest.HandleFrame))
 
-			// Radio (subscribers only). Mounted here because GET /events is
-			// an SSE stream; RadioRouter applies the 30s timeout to its other
-			// routes itself. The more specific mount wins over /v2/mobile.
-			r.Mount("/v2/mobile/radio", mobile.RadioRouter(database.Conn(), cfg.JWTSecret, radioStore, radioSSE))
+			// Radio (subscribers only). Mounted here because GET /events and
+			// /live are SSE streams; RadioRouter applies the 30s timeout to
+			// its other routes itself. The more specific mount wins over
+			// /v2/mobile. radio.AudioURL assumes this path.
+			r.Mount("/v2/mobile/radio", mobile.RadioRouter(database.Conn(), cfg.JWTSecret, radioStore, radioSSE, radioLive, radioAudio))
 		})
 
 		// --- Everything else with a 30s per-request timeout ---

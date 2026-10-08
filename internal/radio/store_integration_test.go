@@ -2,8 +2,10 @@ package radio
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -11,11 +13,13 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
+	"github.com/the-it-dept/rfspager/internal/blobstore"
 	"github.com/the-it-dept/rfspager/internal/p25"
 )
 
-// radioTestDB resets the test database to just what migration 032 needs (a
-// systems table) and applies 032 twice, which also proves it idempotent.
+// radioTestDB resets the test database to just what migrations 032 and 033
+// need (a systems table) and applies both twice, which also proves them
+// idempotent.
 func radioTestDB(t *testing.T) (*sqlx.DB, string) {
 	t.Helper()
 	raw := os.Getenv("RFSPAGER_TEST_DATABASE_URL")
@@ -39,13 +43,15 @@ func radioTestDB(t *testing.T) (*sqlx.DB, string) {
 	`); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
-	migration, err := os.ReadFile("../db/migrations/032_radio.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
 	for i := 0; i < 2; i++ {
-		if _, err := db.Exec(string(migration)); err != nil {
-			t.Fatalf("apply 032 (pass %d): %v", i+1, err)
+		for _, name := range []string{"032_radio.sql", "033_radio_audio.sql"} {
+			migration, err := os.ReadFile("../db/migrations/" + name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(string(migration)); err != nil {
+				t.Fatalf("apply %s (pass %d): %v", name, i+1, err)
+			}
 		}
 	}
 	return db, raw
@@ -374,7 +380,7 @@ func TestImportTalkgroupsKeepsCountersAndBlankCells(t *testing.T) {
 	}
 }
 
-func TestCallTriggerNotifiesOnStartAndRealEndOnly(t *testing.T) {
+func TestCallTriggerNotifiesOnEachStageOnce(t *testing.T) {
 	db, raw := radioTestDB(t)
 	s := NewStore(db)
 	ctx := context.Background()
@@ -420,11 +426,119 @@ func TestCallTriggerNotifiesOnStartAndRealEndOnly(t *testing.T) {
 	if got, ok := next(); ok {
 		t.Errorf("duplicate call_end notified again (%s)", got)
 	}
-	// Admin-side edits that don't touch ended_at stay quiet.
-	if _, err := db.Exec(`UPDATE radio_calls SET transcript = 'x'`); err != nil {
+	// Audio landing and a transcript each notify once (033).
+	idNum, _ := strconv.ParseInt(id, 10, 64)
+	audio := StoredAudio{Key: "radio/k.wav", ContentType: "audio/wav", URL: AudioURL(idNum), MS: 1000, Bytes: 16044}
+	for i := 0; i < 2; i++ {
+		if err := s.SetCallAudio(ctx, idNum, audio); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, ok := next(); !ok || got != id {
+		t.Fatalf("audio notify = %q, %v; want %s", got, ok, id)
+	}
+	if got, ok := next(); ok {
+		t.Errorf("re-storing the same audio notified again (%s)", got)
+	}
+	if err := s.SetTranscript(ctx, idNum, "x"); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := next(); !ok || got != id {
+		t.Fatalf("transcript notify = %q, %v; want %s", got, ok, id)
+	}
+	// Edits that touch none of those stay quiet, including transcription
+	// failures.
+	if err := s.SetTranscriptError(ctx, idNum, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE radio_calls SET emergency = true`); err != nil {
 		t.Fatal(err)
 	}
 	if got, ok := next(); ok {
 		t.Errorf("unrelated update notified (%s)", got)
+	}
+}
+
+// A call's start, voice and end through Ingest, as a receiver sends them:
+// the clip is stored, the row points at the API path and gets a transcript,
+// and GetCall serves both. An encrypted call ends with no audio.
+func TestIngestRecordsAndTranscribesCallAudio(t *testing.T) {
+	db, _ := radioTestDB(t)
+	s := NewStore(db)
+	blobs, err := blobstore.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	asr := &fakeASR{}
+	in := NewIngest(s, NewAssembler(AssemblerConfig{}), NewLiveBroker(),
+		NewAudioPipeline(s, PipelineConfig{Blobs: blobs, ASR: asr}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go in.Run(ctx)
+
+	send := func(frameType string, v any) {
+		t.Helper()
+		data, _ := json.Marshal(v)
+		if err := in.HandleFrame(ctx, nil, frameType, data); err != nil {
+			t.Fatalf("%s: %v", frameType, err)
+		}
+	}
+	start := time.Now().Add(-10 * time.Second)
+	p := testCall("voice-1", start)
+	send(p25.FrameCallStart, p)
+	for seq := 0; seq < 5; seq++ {
+		send(p25.FrameAudio, p25.AudioPayload{CallID: p.CallID, Seq: seq, PCM: make([]byte, 3200)}) // 200ms each
+	}
+	p.EndMS = start.Add(time.Second).UnixMilli()
+	send(p25.FrameCallEnd, p)
+
+	enc := testCall("enc-1", start)
+	enc.Encrypted = true
+	send(p25.FrameCallStart, enc)
+	enc.EndMS = start.Add(time.Second).UnixMilli()
+	send(p25.FrameCallEnd, enc)
+
+	id, err := s.CallIDByUID(ctx, "voice-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var call *Call
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if call, err = s.GetCall(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+		if call.TranscribedAt != nil {
+			break
+		}
+	}
+	if call.AudioURL == nil || *call.AudioURL != AudioURL(id) || call.AudioMS == nil || *call.AudioMS != 1000 {
+		t.Errorf("audio_url %v audio_ms %v", call.AudioURL, call.AudioMS)
+	}
+	if call.Transcript == nil || *call.Transcript != "Gosford two five responding" || call.TranscribedAt == nil {
+		t.Errorf("transcript %v at %v", call.Transcript, call.TranscribedAt)
+	}
+	a, err := s.GetCallAudio(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.ContentType != "audio/wav" || a.Bytes != 44+16000 {
+		t.Errorf("call audio = %+v", a)
+	}
+	obj, err := blobs.Open(ctx, a.Key)
+	if err != nil {
+		t.Fatalf("stored object: %v", err)
+	}
+	obj.Close()
+
+	encID, _ := s.CallIDByUID(ctx, "enc-1")
+	if _, err := s.GetCallAudio(ctx, encID); !IsNotFound(err) {
+		t.Errorf("encrypted call audio: %v, want not found", err)
+	}
+	// Hidden talkgroups hide the recording too.
+	if _, err := db.Exec(`UPDATE radio_talkgroups SET hidden = true WHERE tgid = 10047`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetCallAudio(ctx, id); !IsNotFound(err) {
+		t.Errorf("hidden talkgroup call audio: %v, want not found", err)
 	}
 }

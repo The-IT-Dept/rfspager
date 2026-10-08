@@ -36,8 +36,13 @@ type Call struct {
 	Patch       bool       `db:"patch" json:"patch"`
 	StartedAt   time.Time  `db:"started_at" json:"started_at"`
 	EndedAt     *time.Time `db:"ended_at" json:"ended_at"`
-	AudioURL    *string    `db:"audio_url" json:"audio_url"`
-	Transcript  *string    `db:"transcript" json:"transcript"`
+	// AudioURL is the API path of the recording (GET /calls/{id}/audio),
+	// null until the call has ended and its audio is stored.
+	AudioURL *string `db:"audio_url" json:"audio_url"`
+	AudioMS  *int    `db:"audio_ms" json:"audio_ms"`
+	// Transcript is null until transcribed, and "" if no speech was heard.
+	Transcript    *string    `db:"transcript" json:"transcript"`
+	TranscribedAt *time.Time `db:"transcribed_at" json:"transcribed_at"`
 }
 
 const callSelect = `
@@ -45,7 +50,7 @@ const callSelect = `
 	       c.tgid, tg.alpha_tag AS tg_alpha_tag, tg.agency AS tg_agency, tg.category AS tg_category,
 	       c.target_rid, tu.alias AS target_alias, c.source_rid, su.alias AS source_alias,
 	       c.freq_hz, c.slot, c.encrypted, c.emergency, c.patch, c.started_at, c.ended_at,
-	       c.audio_url, c.transcript
+	       c.audio_url, c.audio_ms, c.transcript, c.transcribed_at
 	  FROM radio_calls c
 	  LEFT JOIN radio_sites s       ON s.sysid = c.sysid AND s.rfss = c.rfss AND s.site = c.site
 	  LEFT JOIN radio_talkgroups tg ON tg.sysid = c.sysid AND tg.tgid = c.tgid

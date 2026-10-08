@@ -53,7 +53,7 @@ func TestRequireSubscription(t *testing.T) {
 func TestRadioRouterMountTakesPrecedenceOverMobileMount(t *testing.T) {
 	r := chi.NewRouter()
 	r.Group(func(r chi.Router) {
-		r.Mount("/v2/mobile/radio", RadioRouter(nil, "test-secret", nil, nil))
+		r.Mount("/v2/mobile/radio", RadioRouter(nil, "test-secret", nil, nil, nil, nil))
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(chimw.Timeout(1))
@@ -61,7 +61,7 @@ func TestRadioRouterMountTakesPrecedenceOverMobileMount(t *testing.T) {
 			w.WriteHeader(http.StatusTeapot)
 		}))
 	})
-	for _, path := range []string{"/v2/mobile/radio/events", "/v2/mobile/radio/calls", "/v2/mobile/radio/units/1234567"} {
+	for _, path := range []string{"/v2/mobile/radio/events", "/v2/mobile/radio/calls", "/v2/mobile/radio/units/1234567", "/v2/mobile/radio/live", "/v2/mobile/radio/calls/1/audio"} {
 		rr := httptest.NewRecorder()
 		r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
 		// No token: RadioRouter's JWTUserAuth answers 401. The mobile mount

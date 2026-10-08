@@ -79,6 +79,23 @@ type Config struct {
 	GitHubToken   string
 	GitHubRepo    string
 	PublicBaseURL string
+
+	// P25 call recordings. Kept in RadioAudioDir unless an S3-compatible
+	// bucket (Cloudflare R2) is configured, in which case they go there.
+	RadioAudioDir               string
+	RadioAudioS3Endpoint        string
+	RadioAudioS3Bucket          string
+	RadioAudioS3AccessKeyID     string
+	RadioAudioS3SecretAccessKey string
+	RadioAudioS3Region          string
+
+	// Transcription of P25 calls through an OpenAI-compatible
+	// /v1/audio/transcriptions endpoint. Off unless ASR_URL and ASR_API_KEY
+	// are both set.
+	ASRURL      string
+	ASRModel    string
+	ASRAPIKey   string
+	ASRLanguage string
 }
 
 func Load() (*Config, error) {
@@ -125,6 +142,18 @@ func Load() (*Config, error) {
 		GitHubToken:              os.Getenv("GITHUB_TOKEN"),
 		GitHubRepo:               getEnv("GITHUB_REPO", "the-it-dept/rfspager"),
 		PublicBaseURL:            os.Getenv("PUBLIC_BASE_URL"),
+
+		RadioAudioDir:               getEnv("RADIO_AUDIO_DIR", "./data/radio-audio"),
+		RadioAudioS3Endpoint:        os.Getenv("RADIO_AUDIO_S3_ENDPOINT"),
+		RadioAudioS3Bucket:          os.Getenv("RADIO_AUDIO_S3_BUCKET"),
+		RadioAudioS3AccessKeyID:     os.Getenv("RADIO_AUDIO_S3_ACCESS_KEY_ID"),
+		RadioAudioS3SecretAccessKey: os.Getenv("RADIO_AUDIO_S3_SECRET_ACCESS_KEY"),
+		RadioAudioS3Region:          getEnv("RADIO_AUDIO_S3_REGION", "auto"),
+
+		ASRURL:      os.Getenv("ASR_URL"),
+		ASRModel:    os.Getenv("ASR_MODEL"),
+		ASRAPIKey:   os.Getenv("ASR_API_KEY"),
+		ASRLanguage: os.Getenv("ASR_LANGUAGE"),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -207,6 +236,25 @@ func Load() (*Config, error) {
 	}
 	if cfg.GoogleIAPEnvironment != "Production" && cfg.GoogleIAPEnvironment != "Test" {
 		return nil, fmt.Errorf("GOOGLE_IAP_ENVIRONMENT must be Production or Test")
+	}
+	if cfg.RadioAudioS3Endpoint != "" || cfg.RadioAudioS3Bucket != "" || cfg.RadioAudioS3AccessKeyID != "" || cfg.RadioAudioS3SecretAccessKey != "" {
+		if cfg.RadioAudioS3Endpoint == "" || cfg.RadioAudioS3Bucket == "" || cfg.RadioAudioS3AccessKeyID == "" || cfg.RadioAudioS3SecretAccessKey == "" {
+			return nil, fmt.Errorf("RADIO_AUDIO_S3_ENDPOINT, RADIO_AUDIO_S3_BUCKET, RADIO_AUDIO_S3_ACCESS_KEY_ID and RADIO_AUDIO_S3_SECRET_ACCESS_KEY must all be set, or all omitted")
+		}
+		if u, err := url.Parse(cfg.RadioAudioS3Endpoint); err != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && isLoopback(u.Hostname()))) {
+			return nil, fmt.Errorf("RADIO_AUDIO_S3_ENDPOINT must be an HTTPS URL")
+		}
+	}
+	if (cfg.ASRURL == "") != (cfg.ASRAPIKey == "") {
+		return nil, fmt.Errorf("ASR_URL and ASR_API_KEY must both be set, or both omitted")
+	}
+	if cfg.ASRURL != "" {
+		if u, err := url.Parse(cfg.ASRURL); err != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && isLoopback(u.Hostname()))) {
+			return nil, fmt.Errorf("ASR_URL must be an HTTPS URL")
+		}
+		if cfg.ASRModel == "" {
+			return nil, fmt.Errorf("ASR_MODEL is required when ASR_URL is set")
+		}
 	}
 	return cfg, nil
 }

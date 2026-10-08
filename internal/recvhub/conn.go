@@ -282,7 +282,7 @@ func (c *Conn) handleFrame(ctx context.Context, database systemKeyLookup, f Fram
 		// these frames, so swallow them here rather than let them fall through
 		// to the unknown-frame warning below and spam the log once per frame.
 		// Safe to delete once every receiver in the field has been updated.
-	case p25.FrameSite, p25.FrameCallStart, p25.FrameCallEnd, p25.FrameUnit:
+	case p25.FrameSite, p25.FrameCallStart, p25.FrameCallEnd, p25.FrameUnit, p25.FrameAudio:
 		c.handleRadio(ctx, database, f)
 	case "log":
 		// Persist + fan out to live subscribers (owner / admin).

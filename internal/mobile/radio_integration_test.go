@@ -59,12 +59,14 @@ func radioIntegrationDB(t *testing.T) (*sqlx.DB, string) {
 	`); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
-	migration, err := os.ReadFile("../db/migrations/032_radio.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := conn.Exec(string(migration)); err != nil {
-		t.Fatalf("apply 032: %v", err)
+	for _, name := range []string{"032_radio.sql", "033_radio_audio.sql"} {
+		migration, err := os.ReadFile("../db/migrations/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := conn.Exec(string(migration)); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
 	}
 	return conn, raw
 }
@@ -91,7 +93,7 @@ func TestRadioAPIRequiresSubscriptionAndStreamsPastWriteTimeout(t *testing.T) {
 	go broker.Run(ctx, wake)
 
 	r := chi.NewRouter()
-	r.Mount("/radio", RadioRouter(conn, "test-secret", store, broker))
+	r.Mount("/radio", RadioRouter(conn, "test-secret", store, broker, nil, nil))
 	srv := httptest.NewUnstartedServer(r)
 	srv.Config.WriteTimeout = time.Second
 	srv.Start()

@@ -136,6 +136,8 @@ apps/web/.vite/
 
 # Receiver build artefacts + agent-side runtime files
 /bin/
+# P25 call recordings (RADIO_AUDIO_DIR default); data/radio/ is tracked
+/data/radio-audio/
 /receiver
 /pager.log
 .claude/

@@ -4,14 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jmoiron/sqlx"
+	"github.com/the-it-dept/rfspager/internal/blobstore"
 	"github.com/the-it-dept/rfspager/internal/radio"
 )
 
@@ -27,24 +30,30 @@ const radioEntitlementRecheck = 5 * time.Minute
 const sseWriteTimeout = 30 * time.Second
 
 // RadioRouter serves /api/v2/mobile/radio: P25 calls, talkgroups, sites and
-// units. Radio is a paid feature, so every route needs a subscription.
+// units, call recordings and live audio. Radio is a paid feature, so every
+// route needs a subscription.
 //
 // Mount it OUTSIDE the server's chimw.Timeout group (cmd/server/main.go):
-// /events is a long-lived SSE stream that a 30s request timeout would cut.
-// The other routes get the usual 30s timeout here instead.
-func RadioRouter(db *sqlx.DB, jwtSecret string, store *radio.Store, broker *radio.Broker) chi.Router {
-	h := &radioHandlers{db: db, store: store, broker: broker}
+// /events and /live are long-lived SSE streams that a 30s request timeout
+// would cut. The other routes get the usual 30s timeout here instead.
+//
+// live and audio may be nil, in which case /live answers 503 and
+// /calls/{id}/audio 404.
+func RadioRouter(db *sqlx.DB, jwtSecret string, store *radio.Store, broker *radio.Broker, live *radio.LiveBroker, audio blobstore.Store) chi.Router {
+	h := &radioHandlers{db: db, store: store, broker: broker, live: live, audio: audio}
 
 	r := chi.NewRouter()
 	r.Use(JWTUserAuth(db, jwtSecret))
 	r.Use(RequireSubscription)
 
 	r.Get("/events", h.Events)
+	r.Get("/live", h.Live)
 
 	r.Group(func(r chi.Router) {
 		r.Use(chimw.Timeout(30 * time.Second))
 		r.Get("/calls", h.ListCalls)
 		r.Get("/calls/{id}", h.GetCall)
+		r.Get("/calls/{id}/audio", h.Audio)
 		r.Get("/talkgroups", h.ListTalkgroups)
 		r.Get("/sites", h.ListSites)
 		r.Get("/units/{rid}", h.GetUnit)
@@ -56,6 +65,8 @@ type radioHandlers struct {
 	db     *sqlx.DB
 	store  *radio.Store
 	broker *radio.Broker
+	live   *radio.LiveBroker
+	audio  blobstore.Store
 }
 
 // ListCalls: GET /calls?tg=&sysid=&site=&before_id=&limit=
@@ -168,23 +179,68 @@ func (h *radioHandlers) GetUnit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, unit)
 }
 
-// Events streams calls as they start and end:
-//
-//	event: call
-//	data: {...same shape as GET /calls/{id}...}
-//
-// A call is sent twice, on start (ended_at null) and on end; clients upsert
-// by id. Calls on hidden talkgroups are not sent.
-func (h *radioHandlers) Events(w http.ResponseWriter, r *http.Request) {
-	user := GetUser(r.Context())
+// Audio: GET /calls/{id}/audio — the call's recording (8 kHz mono WAV
+// today), with Range support for seeking. 404 until the call has ended and
+// its audio is stored, for calls without audio (encrypted, or voice not
+// followed), and for hidden talkgroups.
+func (h *radioHandlers) Audio(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	if h.audio == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	a, err := h.store.GetCallAudio(r.Context(), id)
+	if radio.IsNotFound(err) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if err != nil {
+		slog.Error("get radio call audio failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load audio"})
+		return
+	}
+	obj, err := h.audio.Open(r.Context(), a.Key)
+	if errors.Is(err, blobstore.ErrNotFound) {
+		slog.Warn("radio call audio missing from storage", "call", id, "key", a.Key)
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if err != nil {
+		slog.Error("open radio call audio failed", "call", id, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load audio"})
+		return
+	}
+	defer obj.Close()
+
+	contentType := a.ContentType
+	if contentType == "" {
+		contentType = obj.ContentType
+	}
+	if contentType == "" {
+		contentType = "audio/wav"
+	}
+	w.Header().Set("Content-Type", contentType)
+	// A recording never changes once stored.
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("ETag", fmt.Sprintf(`"radio-call-%d-%d"`, id, obj.Size))
+	http.ServeContent(w, r, "", obj.ModTime, obj)
+}
+
+// startSSE writes the headers of an SSE response and returns a func that
+// sends chunks, each write under its own deadline (replacing the server's
+// 30s WriteTimeout, which would otherwise end the stream), then flushes.
+// The func returns false once the client is gone.
+func startSSE(w http.ResponseWriter) (func(chunks ...[]byte) bool, bool) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
-		return
+		return nil, false
 	}
 	rc := http.NewResponseController(w)
-	// write sends one chunk under its own deadline, replacing the server's
-	// 30s WriteTimeout which would otherwise end the stream.
 	write := func(chunks ...[]byte) bool {
 		_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
 		for _, c := range chunks {
@@ -202,6 +258,24 @@ func (h *radioHandlers) Events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	if !write([]byte(": connected\n\n")) {
+		return nil, false
+	}
+	return write, true
+}
+
+// Events streams calls as they start and end, and as their audio and
+// transcript land:
+//
+//	event: call
+//	data: {...same shape as GET /calls/{id}...}
+//
+// A call is sent on start (ended_at null), on end, when its audio is stored
+// (audio_url set) and when it is transcribed; clients upsert by id. Calls on
+// hidden talkgroups are not sent.
+func (h *radioHandlers) Events(w http.ResponseWriter, r *http.Request) {
+	user := GetUser(r.Context())
+	write, ok := startSSE(w)
+	if !ok {
 		return
 	}
 
@@ -231,6 +305,94 @@ func (h *radioHandlers) Events(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// maxLiveTalkgroups bounds the ?tg= list on /live.
+const maxLiveTalkgroups = 100
+
+// Live streams decoded voice as receivers send it:
+//
+//	event: audio
+//	data: {"call_id":"<receiver call id>","call":123,"tgid":10047,"seq":0,"pcm":"<base64>"}
+//
+//	event: end
+//	data: {"call_id":"...","call":123,"tgid":10047}
+//
+// pcm is 8 kHz mono signed 16-bit little-endian. seq counts a call's chunks
+// from 0; a gap means chunks were lost. "end" follows a call's last chunk.
+// ?tg=10047,10048 limits the stream to those talkgroups (unit-to-unit calls
+// are only in the unfiltered stream). Hidden talkgroups are never sent.
+//
+// Each active call is about 21 kB/s of base64. A client that can't keep up
+// is disconnected rather than sent audio with holes; it should reconnect.
+// Audio is fanned out in memory, so only receivers connected to this server
+// instance are heard.
+func (h *radioHandlers) Live(w http.ResponseWriter, r *http.Request) {
+	tgs, ok := parseTalkgroupList(w, r.URL.Query().Get("tg"))
+	if !ok {
+		return
+	}
+	if h.live == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "live audio is not available"})
+		return
+	}
+	user := GetUser(r.Context())
+	// Subscribe first so nothing published after ": connected" is missed.
+	sub, unsubscribe := h.live.Subscribe(tgs)
+	defer unsubscribe()
+	write, ok := startSSE(w)
+	if !ok {
+		return
+	}
+
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+	recheck := time.NewTicker(radioEntitlementRecheck)
+	defer recheck.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-sub.Gone():
+			return // fell behind; the client reconnects
+		case ev := <-sub.Events():
+			if !write([]byte("event: "+ev.Event+"\ndata: "), ev.Data, []byte("\n\n")) {
+				return
+			}
+		case <-keepalive.C:
+			if !write([]byte(": keepalive\n\n")) {
+				return
+			}
+		case <-recheck.C:
+			if !h.stillEntitled(r.Context(), user) {
+				return
+			}
+		}
+	}
+}
+
+// parseTalkgroupList parses "10047,10048" (empty: none). On a bad value it
+// writes a 400 and returns false.
+func parseTalkgroupList(w http.ResponseWriter, raw string) ([]int, bool) {
+	if raw == "" {
+		return nil, true
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) > maxLiveTalkgroups {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "too many talkgroups"})
+		return nil, false
+	}
+	tgs := make([]int, 0, len(parts))
+	for _, p := range parts {
+		tg, err := strconv.Atoi(strings.TrimSpace(p))
+		if err != nil || tg < 1 || tg > 0xFFFF {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tg"})
+			return nil, false
+		}
+		tgs = append(tgs, tg)
+	}
+	return tgs, true
 }
 
 // stillEntitled re-applies JWTUserAuth's token check and RequireSubscription

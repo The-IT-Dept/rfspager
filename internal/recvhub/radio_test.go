@@ -34,14 +34,14 @@ func TestRadioFramesReachOnRadioWithoutAcks(t *testing.T) {
 		got = append(got, frameType)
 		return nil
 	}
-	for _, typ := range []string{p25.FrameSite, p25.FrameCallStart, p25.FrameCallEnd, p25.FrameUnit} {
+	for _, typ := range []string{p25.FrameSite, p25.FrameCallStart, p25.FrameCallEnd, p25.FrameUnit, p25.FrameAudio} {
 		connection.handleFrame(context.Background(), store, Frame{Type: typ, ID: "x", Data: json.RawMessage(`{}`)})
 	}
-	if len(got) != 4 {
-		t.Fatalf("OnRadio saw %v, want all four p25 frame types", got)
+	if len(got) != 5 {
+		t.Fatalf("OnRadio saw %v, want all five p25 frame types", got)
 	}
 	if store.calls != 1 {
-		t.Errorf("authorization looked up %d times for 4 frames, want 1 (cached)", store.calls)
+		t.Errorf("authorization looked up %d times for 5 frames, want 1 (cached)", store.calls)
 	}
 	if n := len(connection.sendCh); n != 0 {
 		t.Errorf("%d frames queued back to the receiver, want none (radio frames are not acked)", n)
