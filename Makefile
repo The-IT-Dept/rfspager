@@ -1,4 +1,4 @@
-.PHONY: receiver run-receiver
+.PHONY: receiver run-receiver p25receiver
 
 # Build the RTL-SDR receiver agent. Requires librtlsdr installed (brew install librtlsdr).
 # We pull -I / -L from pkg-config so gortlsdr's cgo can find rtl-sdr.h.
@@ -22,3 +22,10 @@ run-receiver:
 	CGO_CFLAGS="$(RECEIVER_CGO_CFLAGS)" \
 	CGO_LDFLAGS="$(RECEIVER_CGO_LDFLAGS)" \
 	go run -tags rtlsdr -ldflags "$(RECEIVER_LDFLAGS)" ./cmd/receiver | tee -a pager.log
+
+# P25 control-channel monitor (NSW PSN). Separate binary + dongle from the
+# POCSAG receiver; see cmd/p25receiver.
+p25receiver:
+	CGO_CFLAGS="$(RECEIVER_CGO_CFLAGS)" \
+	CGO_LDFLAGS="$(RECEIVER_CGO_LDFLAGS)" \
+	go build -tags rtlsdr -ldflags "$(RECEIVER_LDFLAGS)" -o bin/p25receiver ./cmd/p25receiver

@@ -1,0 +1,25 @@
+# P25 control-channel monitor. Runs alongside (never instead of) the POCSAG
+# rfspager-receiver.service: its own dongle (P25_DONGLE_SERIAL) and its own
+# systems row / API key, so the hub never evicts the pager receiver.
+#
+# Install:
+#   sudo install -m0755 p25receiver /opt/rfspager/p25receiver
+#   sudo install -m0600 p25.env /etc/rfspager/p25.env
+#   sudo cp rfspager-p25.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now rfspager-p25
+[Unit]
+Description=RFSPager P25 control channel monitor
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/opt/rfspager/p25receiver
+EnvironmentFile=/etc/rfspager/p25.env
+Restart=always
+RestartSec=5s
+# librtlsdr needs raw USB access to the dongle.
+User=root
+
+[Install]
+WantedBy=multi-user.target

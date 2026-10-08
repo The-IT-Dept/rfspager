@@ -34,7 +34,11 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=1 GOOS=linux \
     go build -tags rtlsdr -trimpath \
         -ldflags="-s -w -X github.com/the-it-dept/rfspager/internal/receiver/buildinfo.InjectedVersion=${VERSION}-${COMMIT}" \
-        -o /out/receiver ./cmd/receiver
+        -o /out/receiver ./cmd/receiver && \
+    CGO_ENABLED=1 GOOS=linux \
+    go build -tags rtlsdr -trimpath \
+        -ldflags="-s -w -X github.com/the-it-dept/rfspager/internal/receiver/buildinfo.InjectedVersion=${VERSION}-${COMMIT}" \
+        -o /out/p25receiver ./cmd/p25receiver
 
 # ─── binary export stage ────────────────────────────────────────────────────
 # `docker buildx build --target binary --output type=local` lifts the compiled
@@ -43,6 +47,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # the image was.
 FROM scratch AS binary
 COPY --from=build /out/receiver /receiver
+COPY --from=build /out/p25receiver /p25receiver
 
 # ─── runtime stage ──────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -57,6 +62,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out/receiver /usr/local/bin/receiver
+COPY --from=build /out/p25receiver /usr/local/bin/p25receiver
 COPY LICENSE.md NOTICE THIRD_PARTY_NOTICES.md /usr/share/doc/rfspager/
 LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
 

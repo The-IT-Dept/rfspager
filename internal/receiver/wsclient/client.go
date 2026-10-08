@@ -298,6 +298,12 @@ func (c *Client) SendLog(level, source, message string, raw map[string]any) {
 	})})
 }
 
+// Send queues an arbitrary typed frame (e.g. the P25 receiver's p25.*
+// frames). Fire-and-forget like SendLog: dropped if the buffer is full.
+func (c *Client) Send(frameType string, payload any) {
+	c.enqueue(Frame{Type: frameType, Data: mustJSON(payload)})
+}
+
 // Welcomed blocks until the server has sent a welcome frame (or ctx done).
 func (c *Client) Welcomed(ctx context.Context) (Welcome, error) {
 	select {
