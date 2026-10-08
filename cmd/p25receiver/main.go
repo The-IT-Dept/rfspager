@@ -70,6 +70,7 @@ func main() {
 	center := flag.Float64("center", 0, "dongle centre, MHz (default: control channel + 200 kHz); "+
 		"set it between the control channel and the busiest voice channels to -record them")
 	record := flag.String("record", "", "directory to write each in-band clear call's channel IQ (48 kS/s cf32)")
+	voice := flag.Bool("voice", envOr("P25_VOICE", "true") == "true", "decode and ship audio of in-band clear calls")
 	flag.Parse()
 
 	base := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
@@ -117,11 +118,27 @@ func main() {
 			fatal(err)
 		}
 		rec = newRecorder(*record)
-		t.onCall = rec.call
+		t.hooks = append(t.hooks, func(ft string, p any) {
+			if c, ok := p.(p25.CallPayload); ok {
+				rec.call(ft, c)
+			}
+		})
+	}
+	var fol *follower
+	if *voice {
+		fol = newFollower(t.send)
+		t.hooks = append(t.hooks, func(ft string, p any) {
+			switch v := p.(type) {
+			case p25.CallPayload:
+				fol.call(ft, v)
+			case p25.SitePayload:
+				fol.site = v
+			}
+		})
 	}
 	backoff := time.Second
 	for ctx.Err() == nil {
-		err := run(ctx, t, list, uint32(*center*1e6+0.5), rec, *serial, *ppm, *gain)
+		err := run(ctx, t, list, uint32(*center*1e6+0.5), rec, fol, *serial, *ppm, *gain)
 		if ctx.Err() != nil {
 			break
 		}
@@ -136,7 +153,7 @@ func main() {
 
 // run opens the dongle and decodes until ctx ends or the dongle fails,
 // hunting through freqs whenever the control channel is lost.
-func run(ctx context.Context, t *tally, freqs []uint32, center uint32, rec *recorder, serial string, ppm, gain int) error {
+func run(ctx context.Context, t *tally, freqs []uint32, center uint32, rec *recorder, fol *follower, serial string, ppm, gain int) error {
 	idx, err := dongleIndex(serial)
 	if err != nil {
 		return err
@@ -188,6 +205,9 @@ func run(ctx context.Context, t *tally, freqs []uint32, center uint32, rec *reco
 			rep.Handle(m, time.Now())
 		})
 		lastLock, frames = time.Now(), 0
+		if fol != nil {
+			fol.retune(tuned, cc, dec)
+		}
 		slog.Info("tuned", "dongle", dev.Name(), "freq_mhz", float64(cc)/1e6, "center_mhz", float64(tuned)/1e6)
 		return nil
 	}
@@ -232,6 +252,9 @@ func run(ctx context.Context, t *tally, freqs []uint32, center uint32, rec *reco
 			if rec != nil {
 				rec.process(work)
 			}
+			if fol != nil {
+				fol.process(work, lastBuf)
+			}
 		}
 	}
 }
@@ -239,8 +262,10 @@ func run(ctx context.Context, t *tally, freqs []uint32, center uint32, rec *reco
 // tally logs and forwards every payload, and keeps running totals for the
 // periodic stats line.
 type tally struct {
-	ws         *wsclient.Client
-	onCall     func(frameType string, c p25.CallPayload)
+	ws *wsclient.Client
+	// hooks see every payload before it's sent, so the voice follower can
+	// flush a call's last audio ahead of its call_end.
+	hooks      []func(frameType string, payload any)
 	site       string
 	clear, enc int
 	byGroup    map[uint16][2]int // clear, encrypted
@@ -250,6 +275,9 @@ type tally struct {
 func newTally(ws *wsclient.Client) *tally { return &tally{ws: ws, byGroup: map[uint16][2]int{}} }
 
 func (t *tally) send(frameType string, payload any) {
+	for _, h := range t.hooks {
+		h(frameType, payload)
+	}
 	if t.ws != nil {
 		t.ws.Send(frameType, payload)
 	}
@@ -263,9 +291,6 @@ func (t *tally) send(frameType string, payload any) {
 				"cc_mhz", float64(p.ControlHz)/1e6, "plan_entries", len(p.Plan), "neighbours", len(p.Neighbors))
 		}
 	case p25.CallPayload:
-		if t.onCall != nil {
-			t.onCall(frameType, p)
-		}
 		if frameType == p25.FrameCallStart {
 			slog.Info("call start", "tg", p.Group, "target", p.Target, "src", p.Source,
 				"freq_mhz", float64(p.FreqHz)/1e6, "slot", p.Slot, "encrypted", p.Encrypted,
