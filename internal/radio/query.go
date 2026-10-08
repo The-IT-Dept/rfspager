@@ -44,6 +44,9 @@ type Call struct {
 	// Transcript is null until transcribed, and "" if no speech was heard.
 	Transcript    *string    `db:"transcript" json:"transcript"`
 	TranscribedAt *time.Time `db:"transcribed_at" json:"transcribed_at"`
+	// TranscriptError says why there's no transcript; "poor_audio" means the
+	// recording was too broken up to try.
+	TranscriptError *string `db:"transcript_error" json:"transcript_error"`
 	// PatchedWith names the other talkgroups the same keyup went out on.
 	PatchedWith pq.StringArray `db:"patched_with" json:"patched_with"`
 }
@@ -53,7 +56,7 @@ const callSelect = `
 	       c.tgid, tg.alpha_tag AS tg_alpha_tag, tg.agency AS tg_agency, tg.category AS tg_category,
 	       c.target_rid, tu.alias AS target_alias, c.source_rid, su.alias AS source_alias,
 	       c.freq_hz, c.slot, c.encrypted, c.emergency, c.patch, c.started_at, c.ended_at,
-	       c.audio_url, c.audio_ms, c.transcript, c.transcribed_at,
+	       c.audio_url, c.audio_ms, c.transcript, c.transcribed_at, c.transcript_error,
 	       COALESCE((SELECT array_agg(COALESCE(dt.alpha_tag, 'Talkgroup ' || d.tgid) ORDER BY d.started_at, d.id)
 	                   FROM radio_calls d
 	                   LEFT JOIN radio_talkgroups dt ON dt.sysid = d.sysid AND dt.tgid = d.tgid

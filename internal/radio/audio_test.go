@@ -360,15 +360,17 @@ func (f *fakeRecorder) wait(t *testing.T, n int) {
 }
 
 type fakeASR struct {
-	mu    sync.Mutex
-	files []string
-	err   error
+	mu      sync.Mutex
+	files   []string
+	prompts []string
+	err     error
 }
 
-func (f *fakeASR) Transcribe(_ context.Context, filename string, audio []byte) (string, error) {
+func (f *fakeASR) Transcribe(_ context.Context, filename string, audio []byte, prompt string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.files = append(f.files, filename)
+	f.prompts = append(f.prompts, prompt)
 	if !bytes.HasPrefix(audio, []byte("RIFF")) {
 		return "", errors.New("not a WAV")
 	}
@@ -511,5 +513,31 @@ func TestIngestForwardsAudioOfKnownCallsLive(t *testing.T) {
 		if err := in.HandleFrame(ctx, nil, p25.FrameAudio, json.RawMessage(bad)); !errors.Is(err, ErrInvalidPayload) {
 			t.Errorf("%s: err = %v, want ErrInvalidPayload", bad, err)
 		}
+	}
+}
+
+func TestPipelineGatesBrokenAudioAndPromptsWithTalkgroup(t *testing.T) {
+	blobs, _ := blobstore.NewLocal(t.TempDir())
+	rec := newFakeRecorder()
+	asr := &fakeASR{}
+	p := newAudioPipeline(rec, PipelineConfig{Blobs: blobs, ASR: asr})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.Run(ctx)
+	twoSec := chunk(0, p25.AudioSampleRate*4)
+
+	// 30% of frames uncorrectable: stored, but not sent to the ASR.
+	p.Enqueue(&Clip{UID: "bad", Meta: CallMeta{Known: true, ID: 7}, PCM: twoSec, StartedAt: t0, Frames: 100, BadFrames: 30})
+	rec.wait(t, 2) // audio, then the poor_audio marker
+	if rec.errs[7] != PoorAudio {
+		t.Errorf("broken clip: transcript_error = %q", rec.errs[7])
+	}
+
+	// A clean one is transcribed with its talkgroup in the prompt.
+	meta := CallMeta{Known: true, ID: 8, AlphaTag: "RFS CENCO A", Agency: "RFS"}
+	p.Enqueue(&Clip{UID: "good", Meta: meta, PCM: twoSec, StartedAt: t0, Frames: 100, BadFrames: 2})
+	rec.wait(t, 2)
+	if len(asr.files) != 1 || asr.prompts[0] != "Talkgroup: RFS CENCO A (RFS)." {
+		t.Errorf("asr calls %v prompts %q", asr.files, asr.prompts)
 	}
 }

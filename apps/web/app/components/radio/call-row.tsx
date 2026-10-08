@@ -102,6 +102,9 @@ function Transcript({ call, inProgress, failed }: { call: RadioCall; inProgress:
   if (call.transcript) {
     return <p className="mt-1.5 max-w-[68ch] text-[15px] leading-[1.6] text-gray-800">“{call.transcript}”</p>;
   }
+  if (call.transcript_error === "poor_audio") {
+    return <p className="mt-1.5 text-[14px] text-gray-400">Too broken up to transcribe.</p>;
+  }
   if (call.transcribed_at) return <p className="mt-1.5 text-[14px] text-gray-400">No speech recognised.</p>;
   if (inProgress) return <p className="mt-1.5 text-[14px] text-gray-400">On air now.</p>;
   if (call.audio_url) return <p className="mt-1.5 text-[14px] text-gray-400">Transcribing…</p>;

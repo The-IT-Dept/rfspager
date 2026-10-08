@@ -611,6 +611,8 @@ export interface RadioCall {
   audio_ms: number | null
   transcript: string | null
   transcribed_at: string | null
+  /** Why there's no transcript; "poor_audio" means too broken up to try. */
+  transcript_error?: string | null
   /** Other talkgroups the same keyup went out on (a patch). */
   patched_with: string[] | null
 }

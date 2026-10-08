@@ -212,7 +212,11 @@ func main() {
 		os.Exit(1)
 	}
 	pipelineCfg := radio.PipelineConfig{Blobs: radioAudio}
-	if asrClient := asr.New(asr.Config{URL: cfg.ASRURL, Model: cfg.ASRModel, APIKey: cfg.ASRAPIKey, Language: cfg.ASRLanguage}); asrClient != nil {
+	asrPrompt := cfg.ASRPrompt
+	if asrPrompt == "" {
+		asrPrompt = radio.DefaultASRPrompt
+	}
+	if asrClient := asr.New(asr.Config{URL: cfg.ASRURL, Model: cfg.ASRModel, APIKey: cfg.ASRAPIKey, Language: cfg.ASRLanguage, Prompt: asrPrompt}); asrClient != nil {
 		pipelineCfg.ASR = asrClient
 		slog.Info("radio transcription enabled", "model", cfg.ASRModel)
 	} else {

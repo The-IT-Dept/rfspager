@@ -21,7 +21,8 @@ func AudioURL(callID int64) string {
 
 // Transcriber turns a WAV file into text; *asr.Client implements it.
 type Transcriber interface {
-	Transcribe(ctx context.Context, filename string, audio []byte) (string, error)
+	// context is extra prompt text for this call (its talkgroup, say).
+	Transcribe(ctx context.Context, filename string, audio []byte, context string) (string, error)
 }
 
 // audioRecorder is the database side of the pipeline; *Store implements it.
@@ -40,9 +41,14 @@ type PipelineConfig struct {
 	StoreWorkers int // default 2
 	ASRWorkers   int // default 2
 	QueueSize    int // per stage; default 64
-	// Clips shorter than this aren't worth transcribing (key-ups, squelch
-	// tails). Default 500ms.
+	// Clips shorter than this aren't worth transcribing: key-ups and
+	// one-word acknowledgements, which the ASR mostly invents words for.
+	// Default 1s.
 	MinTranscribe time.Duration
+	// Clips where more than this fraction of vocoder frames were
+	// uncorrectable are too broken up to transcribe usefully; they're
+	// marked with transcript_error "poor_audio" instead. Default 0.15.
+	MaxBadFrames float64
 	// StoreTimeout bounds storing one clip (blob put + row update).
 	// Default 60s. Transcription has its own timeouts in the ASR client.
 	StoreTimeout time.Duration
@@ -64,6 +70,7 @@ type AudioPipeline struct {
 type asrJob struct {
 	callID int64
 	wav    []byte
+	prompt string
 }
 
 func NewAudioPipeline(store *Store, cfg PipelineConfig) *AudioPipeline {
@@ -84,7 +91,10 @@ func newAudioPipeline(db audioRecorder, cfg PipelineConfig) *AudioPipeline {
 		cfg.QueueSize = 64
 	}
 	if cfg.MinTranscribe <= 0 {
-		cfg.MinTranscribe = 500 * time.Millisecond
+		cfg.MinTranscribe = time.Second
+	}
+	if cfg.MaxBadFrames <= 0 {
+		cfg.MaxBadFrames = 0.15
 	}
 	if cfg.StoreTimeout <= 0 {
 		cfg.StoreTimeout = 60 * time.Second
@@ -185,12 +195,16 @@ func (p *AudioPipeline) store(ctx context.Context, c *Clip) error {
 	if p.cfg.ASR == nil || time.Duration(ms)*time.Millisecond < p.cfg.MinTranscribe {
 		return nil
 	}
+	if c.Frames > 0 && float64(c.BadFrames)/float64(c.Frames) > p.cfg.MaxBadFrames {
+		slog.Debug("radio audio: too broken up to transcribe", "call", id, "frames", c.Frames, "bad", c.BadFrames)
+		return p.db.SetTranscriptError(ctx, id, PoorAudio)
+	}
 	wav := enc.Data
 	if enc.ContentType != "audio/wav" {
 		wav = EncodeWAV(c.PCM, p25.AudioSampleRate)
 	}
 	select {
-	case p.asr <- asrJob{callID: id, wav: wav}:
+	case p.asr <- asrJob{callID: id, wav: wav, prompt: callPrompt(c.Meta)}:
 	default:
 		slog.Warn("radio audio: transcription queue full, skipping", "call", id)
 		_ = p.db.SetTranscriptError(ctx, id, "transcription queue full")
@@ -199,7 +213,7 @@ func (p *AudioPipeline) store(ctx context.Context, c *Clip) error {
 }
 
 func (p *AudioPipeline) transcribe(ctx context.Context, j asrJob) {
-	text, err := p.cfg.ASR.Transcribe(ctx, fmt.Sprintf("call-%d.wav", j.callID), j.wav)
+	text, err := p.cfg.ASR.Transcribe(ctx, fmt.Sprintf("call-%d.wav", j.callID), j.wav, j.prompt)
 	if ctx.Err() != nil {
 		return // shutting down; leave the call untranscribed
 	}
@@ -221,3 +235,28 @@ func (p *AudioPipeline) transcribe(ctx context.Context, j asrJob) {
 		slog.Warn("radio audio: store transcript", "call", j.callID, "error", err)
 	}
 }
+
+// PoorAudio is the transcript_error for clips too broken up to transcribe.
+const PoorAudio = "poor_audio"
+
+// callPrompt tells the ASR which channel a call was on, so it expects that
+// service's vocabulary.
+func callPrompt(m CallMeta) string {
+	switch {
+	case m.AlphaTag != "" && m.Agency != "":
+		return fmt.Sprintf("Talkgroup: %s (%s).", m.AlphaTag, m.Agency)
+	case m.AlphaTag != "":
+		return fmt.Sprintf("Talkgroup: %s.", m.AlphaTag)
+	}
+	return ""
+}
+
+// DefaultASRPrompt primes speech recognition with NSW emergency services
+// radio vocabulary; without it the model hears "Ausgrid" as "Osgrid" and
+// so on. Override with ASR_PROMPT.
+const DefaultASRPrompt = "NSW emergency services radio traffic: Rural Fire Service, Fire and Rescue NSW, " +
+	"SES, NSW Ambulance, Transport for NSW. Radio procedure and terms: copy, over, out, roger, affirm, " +
+	"negative, say again, standby, go ahead, Firecom, VKG, sitrep, ETA, on scene, responding, returning, " +
+	"available, Cat 1, tanker, pumper, brigade, captain, group officer, incident controller, Ausgrid, " +
+	"Essential Energy, MVA, AFA, hazard reduction, backburn, spot fire, Central Coast, Gosford, Wyong, " +
+	"Lake Macquarie, Hornsby, Hawkesbury."

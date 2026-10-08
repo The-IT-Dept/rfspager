@@ -157,7 +157,7 @@ func (f *follower) flush(c *voiceCall) {
 	if len(c.pcm) == 0 {
 		return
 	}
-	f.send(p25.FrameAudio, p25.AudioPayload{CallID: c.id, Seq: c.seq, PCM: c.pcm})
+	f.send(p25.FrameAudio, p25.AudioPayload{CallID: c.id, Seq: c.seq, PCM: c.pcm, Frames: c.frames, BadFrames: c.bad})
 	c.seq++
 	c.pcm = nil
 }

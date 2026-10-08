@@ -33,7 +33,8 @@ func TestTranscribeSendsOpenAIRequest(t *testing.T) {
 		if err := r.ParseMultipartForm(1 << 20); err != nil {
 			t.Fatal(err)
 		}
-		if r.FormValue("model") != "Qwen/Qwen3-ASR-1.7B" || r.FormValue("response_format") != "json" || r.FormValue("language") != "en" {
+		if r.FormValue("model") != "Qwen/Qwen3-ASR-1.7B" || r.FormValue("response_format") != "json" || r.FormValue("language") != "en" ||
+			r.FormValue("prompt") != "Talkgroup: RFS CENCO A." {
 			t.Errorf("form = %v", r.MultipartForm.Value)
 		}
 		f, hdr, err := r.FormFile("file")
@@ -48,7 +49,7 @@ func TestTranscribeSendsOpenAIRequest(t *testing.T) {
 		io.WriteString(w, `{"text":"Central Coast A Gosford Two Five Responding.","usage":{"type":"duration","seconds":4}}`)
 	}))
 	defer srv.Close()
-	got, err := testClient(srv.URL).Transcribe(context.Background(), "call.wav", []byte("RIFFdata"))
+	got, err := testClient(srv.URL).Transcribe(context.Background(), "call.wav", []byte("RIFFdata"), "Talkgroup: RFS CENCO A.")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,7 @@ func TestTranscribeRetriesThen503Succeeds(t *testing.T) {
 		io.WriteString(w, `{"text":"ok"}`)
 	}))
 	defer srv.Close()
-	got, err := testClient(srv.URL).Transcribe(context.Background(), "a.wav", []byte("x"))
+	got, err := testClient(srv.URL).Transcribe(context.Background(), "a.wav", []byte("x"), "")
 	if err != nil || got != "ok" || n.Load() != 3 {
 		t.Fatalf("got %q, %v after %d requests; want ok after 3", got, err, n.Load())
 	}
@@ -80,7 +81,7 @@ func TestTranscribeGivesUpAfterMaxAttempts(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer srv.Close()
-	_, err := testClient(srv.URL).Transcribe(context.Background(), "a.wav", []byte("x"))
+	_, err := testClient(srv.URL).Transcribe(context.Background(), "a.wav", []byte("x"), "")
 	var se *StatusError
 	if !errors.As(err, &se) || se.Status != 429 || n.Load() != 3 {
 		t.Fatalf("err = %v after %d requests; want a 429 StatusError after 3", err, n.Load())
@@ -94,7 +95,7 @@ func TestTranscribeDoesNotRetryClientErrors(t *testing.T) {
 		http.Error(w, `{"error":{"code":"unauthorized","message":"login required"}}`, http.StatusUnauthorized)
 	}))
 	defer srv.Close()
-	_, err := testClient(srv.URL).Transcribe(context.Background(), "a.wav", []byte("x"))
+	_, err := testClient(srv.URL).Transcribe(context.Background(), "a.wav", []byte("x"), "")
 	if err == nil || n.Load() != 1 {
 		t.Fatalf("err = %v after %d requests; want an error after 1", err, n.Load())
 	}
@@ -117,7 +118,7 @@ func TestTranscribeTimesOutEachAttempt(t *testing.T) {
 	defer srv.Close()
 	defer close(release) // before Close, which waits for the handlers
 	start := time.Now()
-	_, err := testClient(srv.URL).Transcribe(context.Background(), "a.wav", []byte("x"))
+	_, err := testClient(srv.URL).Transcribe(context.Background(), "a.wav", []byte("x"), "")
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want a deadline exceeded", err)
 	}
@@ -137,7 +138,7 @@ func TestTranscribeStopsOnContextCancel(t *testing.T) {
 	c := New(Config{URL: srv.URL, APIKey: "k", Backoff: time.Hour})
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if _, err := c.Transcribe(ctx, "a.wav", []byte("x")); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := c.Transcribe(ctx, "a.wav", []byte("x"), ""); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want the context's error during backoff", err)
 	}
 }
@@ -147,7 +148,7 @@ func TestTranscribeRejectsUnexpectedBody(t *testing.T) {
 		io.WriteString(w, `{"result":"?"}`)
 	}))
 	defer srv.Close()
-	if _, err := testClient(srv.URL).Transcribe(context.Background(), "a.wav", []byte("x")); err == nil {
+	if _, err := testClient(srv.URL).Transcribe(context.Background(), "a.wav", []byte("x"), ""); err == nil {
 		t.Fatal("accepted a response without text")
 	}
 }

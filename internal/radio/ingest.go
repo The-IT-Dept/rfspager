@@ -134,6 +134,9 @@ func (in *Ingest) handleAudio(ctx context.Context, data json.RawMessage) error {
 		return fmt.Errorf("%w: audio chunk of %d bytes", ErrInvalidPayload, len(p.PCM))
 	}
 	res := in.asm.Append(p.CallID, p.Seq, p.PCM, in.now())
+	if p.Frames > 0 {
+		in.asm.SetQuality(p.CallID, p.Frames, p.BadFrames)
+	}
 	if res.New {
 		// Audio for a call whose start we never saw (we restarted, say).
 		// Its row may exist anyway; tie it up once so it can go out live.

@@ -25,6 +25,10 @@ type Config struct {
 	Model    string
 	APIKey   string
 	Language string // optional ISO-639-1 hint, e.g. "en"
+	// Prompt is vocabulary and context sent with every request (the
+	// OpenAI-style "prompt" field; Qwen3-ASR on vLLM honours it). Each
+	// call can add its own context after it.
+	Prompt string
 
 	// Optional; zero means the default.
 	AttemptTimeout time.Duration // per request, default 60s
@@ -81,11 +85,12 @@ func (e *StatusError) retryable() bool {
 // when no speech was recognised. 429s, 5xxs, network errors and attempt
 // timeouts are retried with backoff up to MaxAttempts; other failures and
 // ctx cancellation return at once.
-func (c *Client) Transcribe(ctx context.Context, filename string, audio []byte) (string, error) {
+func (c *Client) Transcribe(ctx context.Context, filename string, audio []byte, context string) (string, error) {
+	prompt := strings.TrimSpace(c.cfg.Prompt + " " + context)
 	var lastErr error
 	wait := c.cfg.Backoff
 	for attempt := 1; attempt <= c.cfg.MaxAttempts; attempt++ {
-		text, retryAfter, err := c.attempt(ctx, filename, audio)
+		text, retryAfter, err := c.attempt(ctx, filename, audio, prompt)
 		if err == nil {
 			return text, nil
 		}
@@ -116,8 +121,8 @@ func (c *Client) Transcribe(ctx context.Context, filename string, audio []byte) 
 	return "", fmt.Errorf("asr: gave up after %d attempts: %w", c.cfg.MaxAttempts, lastErr)
 }
 
-func (c *Client) attempt(ctx context.Context, filename string, audio []byte) (string, time.Duration, error) {
-	body, contentType, err := c.form(filename, audio)
+func (c *Client) attempt(ctx context.Context, filename string, audio []byte, prompt string) (string, time.Duration, error) {
+	body, contentType, err := c.form(filename, audio, prompt)
 	if err != nil {
 		return "", 0, err
 	}
@@ -154,7 +159,7 @@ func (c *Client) attempt(ctx context.Context, filename string, audio []byte) (st
 	return Normalize(*out.Text), 0, nil
 }
 
-func (c *Client) form(filename string, audio []byte) (*bytes.Buffer, string, error) {
+func (c *Client) form(filename string, audio []byte, prompt string) (*bytes.Buffer, string, error) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	h := textproto.MIMEHeader{}
@@ -170,6 +175,9 @@ func (c *Client) form(filename string, audio []byte) (*bytes.Buffer, string, err
 	fields := [][2]string{{"model", c.cfg.Model}, {"response_format", "json"}}
 	if c.cfg.Language != "" {
 		fields = append(fields, [2]string{"language", c.cfg.Language})
+	}
+	if prompt != "" {
+		fields = append(fields, [2]string{"prompt", prompt})
 	}
 	for _, f := range fields {
 		if f[1] == "" {

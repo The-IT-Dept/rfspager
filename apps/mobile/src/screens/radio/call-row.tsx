@@ -106,6 +106,7 @@ function Transcript({
   }
   if (failed) return <Text style={styles.stateText}>Couldn't load this recording. Try again.</Text>
   if (call.transcript) return <Text style={styles.transcript}>“{call.transcript}”</Text>
+  if (call.transcript_error === "poor_audio") return <Text style={styles.stateText}>Too broken up to transcribe.</Text>
   if (call.transcribed_at) return <Text style={styles.stateText}>No speech recognised.</Text>
   if (!call.ended_at) return <Text style={styles.stateText}>On air now.</Text>
   if (call.audio_url) return <Text style={styles.stateText}>Transcribing…</Text>

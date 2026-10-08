@@ -96,6 +96,7 @@ type Config struct {
 	ASRModel    string
 	ASRAPIKey   string
 	ASRLanguage string
+	ASRPrompt   string // vocabulary prompt; empty uses radio.DefaultASRPrompt
 }
 
 func Load() (*Config, error) {
@@ -154,6 +155,7 @@ func Load() (*Config, error) {
 		ASRModel:    os.Getenv("ASR_MODEL"),
 		ASRAPIKey:   os.Getenv("ASR_API_KEY"),
 		ASRLanguage: os.Getenv("ASR_LANGUAGE"),
+		ASRPrompt:   os.Getenv("ASR_PROMPT"),
 	}
 
 	if cfg.DatabaseURL == "" {

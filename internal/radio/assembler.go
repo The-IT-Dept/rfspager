@@ -79,6 +79,9 @@ type CallMeta struct {
 	// PatchOf is the call this one is a copy of (the same keyup on another
 	// talkgroup), or 0. Copies get no recording and aren't streamed.
 	PatchOf int64
+	// The talkgroup's name and agency, for the transcription prompt.
+	AlphaTag string
+	Agency   string
 }
 
 // Silent reports whether the call's audio should be neither streamed nor
@@ -95,6 +98,9 @@ type Clip struct {
 	Missing   int       // chunks missing (filled with silence)
 	Truncated bool      // hit a byte cap; later audio was dropped
 	Evicted   bool      // never ended; flushed by Sweep
+	// Vocoder frames decoded and how many were uncorrectable, as the
+	// receiver last reported them (0, 0 from receivers that don't).
+	Frames, BadFrames int
 }
 
 type pendingCall struct {
@@ -154,6 +160,15 @@ type AppendResult struct {
 }
 
 // Append adds one chunk. pcm must be whole 16-bit samples.
+// SetQuality records the receiver's running frame counts for a call.
+func (a *Assembler) SetQuality(uid string, frames, bad int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if e := a.calls[uid]; e != nil && frames >= e.clip.Frames {
+		e.clip.Frames, e.clip.BadFrames = frames, bad
+	}
+}
+
 func (a *Assembler) Append(uid string, seq int, pcm []byte, now time.Time) AppendResult {
 	a.mu.Lock()
 	defer a.mu.Unlock()

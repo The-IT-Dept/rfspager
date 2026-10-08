@@ -97,4 +97,9 @@ type AudioPayload struct {
 	CallID string `json:"call_id"`
 	Seq    int    `json:"seq"`
 	PCM    []byte `json:"pcm"`
+	// Running totals for the call so far: vocoder frames decoded, and how
+	// many of those were uncorrectable (repeated or muted). The server uses
+	// the last chunk's figures to judge whether a clip is worth transcribing.
+	Frames    int `json:"frames,omitempty"`
+	BadFrames int `json:"bad_frames,omitempty"`
 }
