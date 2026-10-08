@@ -70,6 +70,9 @@ func main() {
 	center := flag.Float64("center", 0, "dongle centre, MHz (default: control channel + 200 kHz); "+
 		"set it between the control channel and the busiest voice channels to -record them")
 	record := flag.String("record", "", "directory to write each in-band clear call's channel IQ (48 kS/s cf32)")
+	voiceFile := flag.String("voice-file", "", "decode a -record capture (cf32) to WAV per slot in the current directory, then exit")
+	afcHz := flag.Float64("afc", 0, "with -voice-file: AFC seed in Hz (the control channel decoder's estimate)")
+	nacFlag := flag.String("nac", "2D2", "with -voice-file: site NAC (hex) for descrambling; WACN BEE00 / SysID 2D1 assumed")
 	voice := flag.Bool("voice", envOr("P25_VOICE", "true") == "true", "decode and ship audio of in-band clear calls")
 	flag.Parse()
 
@@ -87,6 +90,17 @@ func main() {
 				slog.Error("ws transport stopped", "err", err)
 			}
 		}()
+	}
+
+	if *voiceFile != "" {
+		nac, err := strconv.ParseUint(*nacFlag, 16, 16)
+		if err != nil {
+			fatal(err)
+		}
+		if err := decodeVoiceFile(*voiceFile, ".", 0xBEE00, 0x2D1, uint16(nac), *afcHz); err != nil {
+			fatal(err)
+		}
+		return
 	}
 
 	t := newTally(ws)
