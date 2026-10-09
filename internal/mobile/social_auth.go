@@ -69,6 +69,7 @@ func (h *AuthHandler) SocialLogin(w http.ResponseWriter, r *http.Request) {
 	user, err := h.findOrCreateSocialUser(r, req.Provider, identity)
 	if err != nil {
 		if errors.Is(err, errSocialIdentityAlreadyOwned) {
+			slog.Info("social-login: refused, email belongs to an account not linked to this identity", "provider", strings.ToLower(req.Provider))
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "social identity must be linked from an authenticated account"})
 			return
 		}
@@ -92,8 +93,9 @@ func (h *AuthHandler) SocialLogin(w http.ResponseWriter, r *http.Request) {
 
 var errProviderEmailNotVerified = errors.New("provider did not return a verified email")
 
-// findOrCreateSocialUser permits an existing provider link, but never creates
-// a link from an unauthenticated request merely because its email matches.
+// findOrCreateSocialUser permits an existing provider link. It links a
+// provider to an existing account by email only for Apple (see linkAppleByEmail);
+// other providers must be linked from an authenticated session.
 func (h *AuthHandler) findOrCreateSocialUser(r *http.Request, provider string, identity providerIdentity) (*AuthUser, error) {
 	ctx := r.Context()
 	provider = strings.ToLower(provider)
@@ -130,15 +132,21 @@ func (h *AuthHandler) findOrCreateSocialUser(r *http.Request, provider string, i
 	if !identity.EmailVerified || identity.Email == "" {
 		return nil, errProviderEmailNotVerified
 	}
-	// Existing users must link a provider from an authenticated session; never
-	// use an email match as proof that this caller owns the account.
 	{
 		var id int64
-		err := h.db.QueryRowContext(ctx, `SELECT id FROM users WHERE lower(email) = lower($1) LIMIT 1`, identity.Email).Scan(&id)
-		if err == nil {
+		err := h.db.QueryRowContext(ctx, `SELECT id FROM users WHERE lower(email) = lower($1) `+emailMatchOrder+` LIMIT 1`, identity.Email).Scan(&id)
+		switch {
+		case err == nil && provider == "apple":
+			if err := h.linkAppleByEmail(ctx, id, identity.ID); err != nil {
+				return nil, err
+			}
+			if err := loadUser(id); err != nil {
+				return nil, fmt.Errorf("loading linked user: %w", err)
+			}
+			return user, nil
+		case err == nil:
 			return nil, errSocialIdentityAlreadyOwned
-		}
-		if err != sql.ErrNoRows {
+		case err != sql.ErrNoRows:
 			return nil, fmt.Errorf("querying users by email: %w", err)
 		}
 	}
@@ -168,6 +176,32 @@ func (h *AuthHandler) findOrCreateSocialUser(r *http.Request, provider string, i
 		return nil, fmt.Errorf("loading new user: %w", err)
 	}
 	return user, nil
+}
+
+// linkAppleByEmail links an Apple ID to the existing account holding the
+// email Apple verified. Apple checks that email itself, and a Hide My Email
+// relay address belongs to exactly one Apple ID, so the match proves as much
+// as a password-reset link sent to that address would. The old app signed
+// Apple users in by email alone and never recorded the Apple ID, which left
+// them unable to sign in here. An account already linked to a different
+// Apple ID is refused rather than re-pointed.
+func (h *AuthHandler) linkAppleByEmail(ctx context.Context, userID int64, appleSub string) error {
+	var linkedElsewhere bool
+	if err := h.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM social_providers WHERE user_id = $1 AND provider = 'apple')`, userID).Scan(&linkedElsewhere); err != nil {
+		return fmt.Errorf("checking existing Apple link: %w", err)
+	}
+	if linkedElsewhere {
+		return errSocialIdentityAlreadyOwned
+	}
+	if _, err := h.db.ExecContext(ctx,
+		`INSERT INTO social_providers (user_id, provider, provider_id, created_at, updated_at)
+		 SELECT $1::bigint, 'apple', $2::varchar, NOW(), NOW()
+		 WHERE NOT EXISTS (SELECT 1 FROM social_providers WHERE provider = 'apple' AND provider_id = $2::varchar)`, userID, appleSub); err != nil {
+		return fmt.Errorf("recording Apple link: %w", err)
+	}
+	slog.Info("social-login: linked Apple ID to existing account by verified email", "user_id", userID)
+	return nil
 }
 
 // --- Apple identity token verification -------------------------------------

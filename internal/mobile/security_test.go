@@ -175,6 +175,77 @@ func TestSecuritySocialLoginCannotLinkEmailMatchedAccount(t *testing.T) {
 	}
 }
 
+// appleEmailMatchDB serves an Apple sign-in whose verified email belongs to
+// account 42, which has no Apple link (or one, when alreadyLinked).
+func appleEmailMatchDB(t *testing.T, alreadyLinked bool, inserted *[]any) *sqlx.DB {
+	t.Helper()
+	return securityDB(t, &securityDriver{
+		query: func(q string, a []driver.NamedValue) (driver.Rows, error) {
+			switch {
+			case strings.Contains(q, "SELECT user_id FROM social_providers WHERE provider = $1 AND provider_id = $2"):
+				return &securityRows{cols: []string{"user_id"}}, nil
+			case strings.Contains(q, "SELECT id FROM users WHERE lower(email) = lower($1)"):
+				if a[0].Value != "abc123@privaterelay.appleid.com" {
+					return nil, fmt.Errorf("email=%v", a[0].Value)
+				}
+				return &securityRows{cols: []string{"id"}, values: [][]driver.Value{{int64(42)}}}, nil
+			case strings.Contains(q, "SELECT EXISTS(SELECT 1 FROM social_providers WHERE user_id = $1 AND provider = 'apple')"):
+				return &securityRows{cols: []string{"exists"}, values: [][]driver.Value{{alreadyLinked}}}, nil
+			case strings.Contains(q, "FROM users WHERE id = $1"):
+				return &securityRows{
+					cols:   []string{"id", "user_id", "name", "email", "subscription_valid", "subscription_product_id", "subscription_expiry", "will_renew", "subscription_platform", "superuser", "token_version"},
+					values: [][]driver.Value{{int64(42), "uuid-42", "Member", "abc123@privaterelay.appleid.com", true, nil, nil, nil, nil, false, int64(0)}},
+				}, nil
+			default:
+				return nil, fmt.Errorf("unexpected query %q", q)
+			}
+		},
+		exec: func(q string, a []driver.NamedValue) (driver.Result, error) {
+			if !strings.Contains(q, "INSERT INTO social_providers") {
+				return nil, fmt.Errorf("unexpected exec %q", q)
+			}
+			for _, v := range a {
+				*inserted = append(*inserted, v.Value)
+			}
+			return driver.RowsAffected(1), nil
+		},
+	})
+}
+
+func appleSignIn(t *testing.T, db *sqlx.DB) *httptest.ResponseRecorder {
+	t.Helper()
+	h := NewAuthHandler(db, "test-secret", "app.example")
+	h.appleVerifier = func(string, string) (providerIdentity, error) {
+		return providerIdentity{ID: "001234.apple-sub.0001", Email: "abc123@privaterelay.appleid.com", EmailVerified: true}, nil
+	}
+	req := httptest.NewRequest(http.MethodPost, "/auth/social-login", strings.NewReader(`{"provider":"apple","token":"apple-token"}`))
+	rr := httptest.NewRecorder()
+	h.SocialLogin(rr, req)
+	return rr
+}
+
+func TestSecurityAppleLinksExistingAccountByVerifiedEmail(t *testing.T) {
+	var inserted []any
+	rr := appleSignIn(t, appleEmailMatchDB(t, false, &inserted))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if len(inserted) != 2 || inserted[0] != int64(42) || inserted[1] != "001234.apple-sub.0001" {
+		t.Fatalf("link inserted with %v", inserted)
+	}
+	if !strings.Contains(rr.Body.String(), `"token"`) {
+		t.Fatalf("no session token: %s", rr.Body.String())
+	}
+}
+
+func TestSecurityAppleDoesNotRepointAccountLinkedToAnotherAppleID(t *testing.T) {
+	var inserted []any
+	rr := appleSignIn(t, appleEmailMatchDB(t, true, &inserted))
+	if rr.Code != http.StatusConflict || len(inserted) != 0 {
+		t.Fatalf("status=%d inserted=%v body=%s", rr.Code, inserted, rr.Body.String())
+	}
+}
+
 func TestSecuritySocialLoginRequiresVerifiedProviderEmailForNewAccount(t *testing.T) {
 	db := securityDB(t, &securityDriver{query: func(q string, a []driver.NamedValue) (driver.Rows, error) {
 		if !strings.Contains(q, "FROM social_providers") {
