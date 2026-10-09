@@ -93,9 +93,9 @@ func (h *AuthHandler) SocialLogin(w http.ResponseWriter, r *http.Request) {
 
 var errProviderEmailNotVerified = errors.New("provider did not return a verified email")
 
-// findOrCreateSocialUser permits an existing provider link. It links a
-// provider to an existing account by email only for Apple (see linkAppleByEmail);
-// other providers must be linked from an authenticated session.
+// findOrCreateSocialUser permits an existing provider link, and links a
+// provider to the existing account holding the provider's email (see
+// linkProviderByEmail).
 func (h *AuthHandler) findOrCreateSocialUser(r *http.Request, provider string, identity providerIdentity) (*AuthUser, error) {
 	ctx := r.Context()
 	provider = strings.ToLower(provider)
@@ -136,16 +136,14 @@ func (h *AuthHandler) findOrCreateSocialUser(r *http.Request, provider string, i
 		var id int64
 		err := h.db.QueryRowContext(ctx, `SELECT id FROM users WHERE lower(email) = lower($1) `+emailMatchOrder+` LIMIT 1`, identity.Email).Scan(&id)
 		switch {
-		case err == nil && provider == "apple":
-			if err := h.linkAppleByEmail(ctx, id, identity.ID); err != nil {
+		case err == nil:
+			if err := h.linkProviderByEmail(ctx, provider, id, identity.ID); err != nil {
 				return nil, err
 			}
 			if err := loadUser(id); err != nil {
 				return nil, fmt.Errorf("loading linked user: %w", err)
 			}
 			return user, nil
-		case err == nil:
-			return nil, errSocialIdentityAlreadyOwned
 		case err != sql.ErrNoRows:
 			return nil, fmt.Errorf("querying users by email: %w", err)
 		}
@@ -178,29 +176,32 @@ func (h *AuthHandler) findOrCreateSocialUser(r *http.Request, provider string, i
 	return user, nil
 }
 
-// linkAppleByEmail links an Apple ID to the existing account holding the
-// email Apple verified. Apple checks that email itself, and a Hide My Email
-// relay address belongs to exactly one Apple ID, so the match proves as much
-// as a password-reset link sent to that address would. The old app signed
-// Apple users in by email alone and never recorded the Apple ID, which left
-// them unable to sign in here. An account already linked to a different
-// Apple ID is refused rather than re-pointed.
-func (h *AuthHandler) linkAppleByEmail(ctx context.Context, userID int64, appleSub string) error {
+// linkProviderByEmail links a provider identity to the existing account
+// holding the email the provider returned. The old app signed Apple and
+// Facebook users in by email alone (firstOrCreate on that email) and never
+// recorded the provider ID, which left them unable to sign in here; this
+// keeps that behaviour but records the link. Apple verifies the email and a
+// Hide My Email relay address belongs to one Apple ID. Facebook's email is
+// weaker proof (it is the account's primary address but Facebook does not
+// assert it is verified), accepted deliberately to match the old app. An
+// account already linked to a different identity of the same provider is
+// refused rather than re-pointed.
+func (h *AuthHandler) linkProviderByEmail(ctx context.Context, provider string, userID int64, providerID string) error {
 	var linkedElsewhere bool
 	if err := h.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM social_providers WHERE user_id = $1 AND provider = 'apple')`, userID).Scan(&linkedElsewhere); err != nil {
-		return fmt.Errorf("checking existing Apple link: %w", err)
+		`SELECT EXISTS(SELECT 1 FROM social_providers WHERE user_id = $1 AND provider = $2::varchar)`, userID, provider).Scan(&linkedElsewhere); err != nil {
+		return fmt.Errorf("checking existing %s link: %w", provider, err)
 	}
 	if linkedElsewhere {
 		return errSocialIdentityAlreadyOwned
 	}
 	if _, err := h.db.ExecContext(ctx,
 		`INSERT INTO social_providers (user_id, provider, provider_id, created_at, updated_at)
-		 SELECT $1::bigint, 'apple', $2::varchar, NOW(), NOW()
-		 WHERE NOT EXISTS (SELECT 1 FROM social_providers WHERE provider = 'apple' AND provider_id = $2::varchar)`, userID, appleSub); err != nil {
-		return fmt.Errorf("recording Apple link: %w", err)
+		 SELECT $1::bigint, $2::varchar, $3::varchar, NOW(), NOW()
+		 WHERE NOT EXISTS (SELECT 1 FROM social_providers WHERE provider = $2::varchar AND provider_id = $3::varchar)`, userID, provider, providerID); err != nil {
+		return fmt.Errorf("recording %s link: %w", provider, err)
 	}
-	slog.Info("social-login: linked Apple ID to existing account by verified email", "user_id", userID)
+	slog.Info("social-login: linked provider to existing account by email", "provider", provider, "user_id", userID)
 	return nil
 }
 
