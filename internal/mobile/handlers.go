@@ -737,8 +737,17 @@ func (h *Handlers) CreateAlertzone(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) DeleteAlertzone(w http.ResponseWriter, r *http.Request) {
 	user := GetUser(r.Context())
-	id := chi.URLParam(r, "id")
-	h.db.ExecContext(r.Context(), `DELETE FROM alertzones WHERE id = $1 AND user_id = $2`, id, user.ID)
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id < 1 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid alert zone id"})
+		return
+	}
+	// Deleting a zone that is already gone (a double tap) still succeeds.
+	if _, err := h.db.ExecContext(r.Context(), `DELETE FROM alertzones WHERE id = $1 AND user_id = $2`, id, user.ID); err != nil {
+		slog.Error("failed to delete alert zone", "user_id", user.ID, "alertzone_id", id, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
