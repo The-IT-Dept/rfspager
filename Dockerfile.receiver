@@ -3,12 +3,12 @@
 # Multi-stage build for the RFSPager RTL-SDR receiver agent.
 #
 # The receiver uses cgo to talk to librtlsdr (which itself uses libusb), so
-# unlike the server we can't go fully static. We build on golang:1.27.1 +
+# unlike the server we can't go fully static. We build on golang:1.27.2 +
 # Debian 12's librtlsdr-dev for headers/lib, then ship on the matching
 # Debian 12 runtime to keep glibc and librtlsdr ABI versions compatible.
 
 # ─── build stage ────────────────────────────────────────────────────────────
-FROM golang:1.27.1-bookworm AS build
+FROM golang:1.27.2-bookworm AS build
 WORKDIR /src
 
 # librtlsdr-dev pulls in libusb-1.0-0-dev too; pkg-config is used by the

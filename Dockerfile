@@ -3,7 +3,7 @@
 # Multi-stage build for the RFSPager Go API server.
 # Final image is distroless, ~25 MB, runs as non-root.
 
-FROM golang:1.27.1-alpine AS build
+FROM golang:1.27.2-alpine AS build
 WORKDIR /src
 
 # Cache module downloads
