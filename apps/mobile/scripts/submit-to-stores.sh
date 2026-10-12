@@ -38,6 +38,8 @@ chmod 700 "$WORK"
 trap 'rm -rf "$WORK"' EXIT
 
 export APP_VERSION="$VERSION" BUILD_NUMBER RELEASE_NOTES_PATH="$NOTES"
+# Keep fastlane's output to the release itself.
+export FASTLANE_SKIP_UPDATE_CHECK=1 FASTLANE_HIDE_CHANGELOG=1 FASTLANE_HIDE_TIMESTAMP=1
 echo "Submitting $VERSION (build $BUILD_NUMBER) to: $PLATFORM"
 echo "Notes ($(wc -c < "$NOTES" | tr -d ' ') chars): $(cat "$NOTES")"
 
@@ -58,8 +60,11 @@ if [ "$PLATFORM" != "ios" ]; then
   [ -n "$RUN_ID" ] || { echo "no android-aab-v$VERSION artifact: has mobile-release finished for this tag?" >&2; exit 1; }
   gh run download "$RUN_ID" -R "$REPO" -n "android-aab-v$VERSION" -D "$WORK/aab"
   AAB="$WORK/aab/app-release.aab"
-  echo "AAB native libraries:"; unzip -l "$AAB" | grep -oE "base/lib/[^/]+/" | sort | uniq -c
-  unzip -l "$AAB" | grep -q "base/lib/x86_64/" || { echo "STOP: no x86_64 libraries in the AAB" >&2; exit 1; }
+  # Read the listing once: piping unzip into `grep -q` under pipefail fails
+  # the pipeline when grep exits early, even on a match.
+  LIBS="$(unzip -l "$AAB" | grep -oE "base/lib/[^/]+/" | sort | uniq -c)"
+  echo "AAB native libraries:"; echo "$LIBS"
+  [[ "$LIBS" == *"base/lib/x86_64/"* ]] || { echo "STOP: no x86_64 libraries in the AAB" >&2; exit 1; }
   python3 -I "$MOBILE_DIR/scripts/check-16kb-alignment.py" "$AAB" || { echo "STOP: 16 KB alignment check failed" >&2; exit 1; }
 
   if [ -z "${PLAY_JSON_KEY_PATH:-}" ]; then
