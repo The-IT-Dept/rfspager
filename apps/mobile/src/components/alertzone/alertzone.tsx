@@ -9,9 +9,11 @@ import MapView, { Circle, Marker } from "react-native-maps"
 import { MaterialCommunityIcons } from "@expo/vector-icons"
 import { makeStyles } from "./styles"
 import { useAppTheme } from "../../theme"
+import { useDeleteAlertzone } from "../../hooks/use-alertzones"
+import type { Alertzone as AlertzoneData } from "../../services/api-client"
 
 export interface AlertzoneProps {
-  alertzone: any
+  alertzone: AlertzoneData | undefined
   onDelete: () => void
 }
 
@@ -19,6 +21,7 @@ export function Alertzone(props: AlertzoneProps) {
   const { alertzone, onDelete } = props
   const theme = useAppTheme()
   const styles = makeStyles(theme)
+  const deleteAlertzone = useDeleteAlertzone()
 
   if (typeof alertzone === "undefined") {
     return (
@@ -46,13 +49,19 @@ export function Alertzone(props: AlertzoneProps) {
               <Text style={styles.zoneSubtitle}>{radiusKm} km radius</Text>
             </View>
             <TouchableOpacity
+              disabled={deleteAlertzone.isPending}
               onPress={() =>
                 Alert.alert("Delete Alert Zone", "This action cannot be undone.", [
                   { text: "Cancel", style: "cancel" },
                   {
                     text: "Delete",
                     style: "destructive",
-                    onPress: () => alertzone.delete(onDelete),
+                    onPress: () =>
+                      deleteAlertzone.mutate(alertzone.id, {
+                        onSuccess: onDelete,
+                        onError: () =>
+                          Alert.alert("Couldn't delete alert zone", "Please check your connection and try again."),
+                      }),
                   },
                 ])
               }
