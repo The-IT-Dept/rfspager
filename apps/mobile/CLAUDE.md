@@ -159,3 +159,7 @@ REST API via typed client in `src/services/api-client.ts`. TanStack Query hooks 
 - API keys and secrets managed through EAS secrets
 - Firebase configuration files excluded from version control
 - Authentication tokens stored securely
+
+## Releasing
+
+Shipping to the App Store and Google Play (release PR, CI builds, `scripts/submit-to-stores.sh`, server deploy, troubleshooting) is documented in [docs/mobile-releases.md](../../docs/mobile-releases.md). Store release notes live in `fastlane/release-notes/<version>.txt`.

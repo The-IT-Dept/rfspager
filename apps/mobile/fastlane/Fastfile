@@ -1,17 +1,44 @@
-# Release lanes for the RFSPager app, run by .github/workflows/mobile-release.yml
-# on GitHub-hosted runners against the native projects `expo prebuild` writes.
-# Nothing here talks to Expo's build or submit services.
+# Release lanes for the RFSPager app. The build lanes (ios release, android
+# release) are run by .github/workflows/mobile-release.yml on GitHub-hosted
+# runners against the native projects `expo prebuild` writes; they end in
+# TestFlight and the Play internal track. The store lanes (ios
+# submit_for_review, android promote_to_production) take an already-uploaded
+# build to the public stores and are run locally by
+# scripts/submit-to-stores.sh. Nothing here talks to Expo's build or submit
+# services. The whole process is in docs/mobile-releases.md.
 #
 # Inputs come from the environment (see docs/ci-secrets.md):
 #   iOS      ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH,
 #            IOS_DIST_CERT_PATH, IOS_DIST_CERT_PASSWORD, IOS_PROFILE_PATH, APPLE_TEAM_ID
 #   Android  ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS,
 #            ANDROID_KEY_PASSWORD, PLAY_JSON_KEY_PATH, PLAY_TRACK
+#   Stores   APP_VERSION, BUILD_NUMBER, RELEASE_NOTES_PATH (plus the ASC_* or
+#            PLAY_JSON_KEY_PATH keys above)
+
+require "tmpdir"
 
 opt_out_usage
 default_platform(:ios)
 
 BUNDLE_ID = "io.devlan.rfspager"
+
+# Store release notes, also used as the Play changelog (500-character limit).
+def release_notes
+  require_env("RELEASE_NOTES_PATH")
+  notes = File.read(ENV["RELEASE_NOTES_PATH"]).strip
+  UI.user_error!("Release notes are empty") if notes.empty?
+  UI.user_error!("Release notes are #{notes.length} characters; Play allows 500") if notes.length > 500
+  notes
+end
+
+def asc_api_key
+  require_env("ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_PATH")
+  app_store_connect_api_key(
+    key_id: ENV["ASC_KEY_ID"],
+    issuer_id: ENV["ASC_ISSUER_ID"],
+    key_filepath: ENV["ASC_KEY_PATH"]
+  )
+end
 
 def require_env(*names)
   missing = names.reject { |n| ENV[n].to_s.strip != "" }
@@ -82,6 +109,29 @@ platform :ios do
       skip_waiting_for_build_processing: true
     )
   end
+
+  # Takes a build already in TestFlight to App Store review: creates (or
+  # reuses) the App Store version, attaches the build, sets the release notes
+  # for every locale, and submits with automatic release once Apple approves.
+  # The metadata step runs separately first so a submission failure (Apple
+  # wants an age-rating or compliance answer) leaves a ready version behind.
+  lane :submit_for_review do
+    require_env("APP_VERSION", "BUILD_NUMBER")
+    api_key = asc_api_key
+    notes = release_notes
+    common = {
+      api_key: api_key, app_identifier: BUNDLE_ID, platform: "ios",
+      app_version: ENV["APP_VERSION"], build_number: ENV["BUILD_NUMBER"],
+      skip_binary_upload: true, skip_screenshots: true, force: true,
+      run_precheck_before_submit: false, precheck_include_in_app_purchases: false
+    }
+    upload_to_app_store(**common, skip_metadata: false,
+                        release_notes: { "default" => notes, "en-AU" => notes },
+                        submit_for_review: false)
+    upload_to_app_store(**common, skip_metadata: true,
+                        submit_for_review: true, automatic_release: true, phased_release: false,
+                        submission_information: { export_compliance_uses_encryption: false, add_id_info_uses_idfa: false })
+  end
 end
 
 platform :android do
@@ -124,5 +174,28 @@ platform :android do
       skip_upload_images: true,
       skip_upload_screenshots: true
     )
+  end
+
+  # Promotes a build from the internal track to production for everyone,
+  # with the release notes as its en-AU changelog (the listing's only
+  # language).
+  lane :promote_to_production do
+    require_env("BUILD_NUMBER", "PLAY_JSON_KEY_PATH")
+    notes = release_notes
+    metadata = Dir.mktmpdir("play-metadata")
+    FileUtils.mkdir_p(File.join(metadata, "en-AU", "changelogs"))
+    File.write(File.join(metadata, "en-AU", "changelogs", "#{ENV['BUILD_NUMBER']}.txt"), notes)
+    upload_to_play_store(
+      package_name: BUNDLE_ID,
+      json_key: ENV["PLAY_JSON_KEY_PATH"],
+      track: "internal", track_promote_to: "production",
+      version_code: ENV["BUILD_NUMBER"].to_i, release_status: "completed",
+      metadata_path: metadata,
+      skip_upload_apk: true, skip_upload_aab: true,
+      skip_upload_metadata: true, skip_upload_images: true, skip_upload_screenshots: true,
+      skip_upload_changelogs: false
+    )
+  ensure
+    FileUtils.rm_rf(metadata) if metadata
   end
 end

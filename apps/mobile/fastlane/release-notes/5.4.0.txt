@@ -1,0 +1,1 @@
+Fixes a crash when deleting an alert zone. If you used Sign in with Apple or Facebook in the previous version of RFSPager, you can sign in again with the same button and pick up your account and subscription. Password reset emails now arrive reliably.
