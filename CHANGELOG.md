@@ -1,5 +1,26 @@
 # Changelog
 
+## [5.4.0](https://github.com/The-IT-Dept/rfspager/compare/v5.3.8...v5.4.0) (2026-10-12)
+
+
+### Features
+
+* **admin:** show app version adoption on the dashboard ([4df4033](https://github.com/The-IT-Dept/rfspager/commit/4df403327b798e10ac69448e63e2207183aa85ac))
+* **auth:** send password resets through Libredesk ([1223c46](https://github.com/The-IT-Dept/rfspager/commit/1223c467a1011e7868cb7fa038b0e15bf5b06174))
+
+
+### Bug Fixes
+
+* **api:** report failed alert zone deletes instead of always succeeding ([fc7fe73](https://github.com/The-IT-Dept/rfspager/commit/fc7fe73f2369d8c2c67696a0aa80b6ed2069dfb8))
+* **auth:** let old-app Apple users sign in by linking their verified email ([1132aed](https://github.com/The-IT-Dept/rfspager/commit/1132aed8beb8fcb307e4724ffc2b9e3b97c91474))
+* **auth:** link old-app Facebook users by email too ([31176e5](https://github.com/The-IT-Dept/rfspager/commit/31176e5c00d14a67a0ba90304fd26153c45f8212))
+* **auth:** match account emails case-insensitively ([7d0ff2b](https://github.com/The-IT-Dept/rfspager/commit/7d0ff2bfc655f4b7e2ee35f853154f00e88fc6df))
+* **deps:** build with Go 1.27.2 and golang.org/x/net 0.60.0 ([7aca474](https://github.com/The-IT-Dept/rfspager/commit/7aca4749c2196328fd79a92cf94649390e906138))
+* **iap:** expire subscriptions that lapsed without a store event ([1108bb2](https://github.com/The-IT-Dept/rfspager/commit/1108bb26d5eb1de59f72e4ec5602af4ac52a2ce0))
+* **mobile:** stop the app crashing when an alert zone is deleted ([6f8f941](https://github.com/The-IT-Dept/rfspager/commit/6f8f9410515ac0ba7448d2ced256927da390dbb1))
+* **push:** retire dead Android tokens instead of retrying them ([f4a05f5](https://github.com/The-IT-Dept/rfspager/commit/f4a05f5c5739d97f2283876c4e18d8d5f5d583a9))
+* **web:** load the maplibre worker so the public map renders ([9714140](https://github.com/The-IT-Dept/rfspager/commit/9714140e8c8199d6e69e3e4f63802fdd84d3d82f))
+
 ## [5.3.8](https://github.com/The-IT-Dept/rfspager/compare/v5.3.7...v5.3.8) (2026-10-07)
 
 
