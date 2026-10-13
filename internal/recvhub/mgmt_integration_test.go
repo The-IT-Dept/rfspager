@@ -348,3 +348,34 @@ func TestCommandsWaitForAProtoTwoConnection(t *testing.T) {
 		t.Fatalf("config frame = %+v", frame)
 	}
 }
+
+// RecentLogs must hand jsonb raw back as JSON: MapScan yields []byte, which
+// json.Marshal would base64-encode, and the admin and owner log views then
+// lose every decoded page detail in the backfill.
+func TestRecentLogsReturnRawAsJSON(t *testing.T) {
+	hub, database, sys := testHub(t)
+	ctx := context.Background()
+	hub.Logs.Publish(ctx, sys.ID, LogPayload{
+		TS: time.Now().UnixMilli(), Level: "info", Message: "page",
+		Raw: map[string]any{"msg": "FRINC TYPE: AFA TURNOUT: 72", "address": "0107211", "channel": "FRNSW"},
+	})
+	rows, err := hub.Logs.RecentLogs(ctx, sys.ID, 5)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("recent logs = %d err=%v", len(rows), err)
+	}
+	encoded, err := json.Marshal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded []struct {
+		Message string         `json:"message"`
+		Raw     map[string]any `json:"raw"`
+	}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("raw did not round-trip as an object: %v\n%s", err, encoded)
+	}
+	if decoded[0].Message != "page" || decoded[0].Raw["msg"] != "FRINC TYPE: AFA TURNOUT: 72" || decoded[0].Raw["channel"] != "FRNSW" {
+		t.Fatalf("unexpected row: %s", encoded)
+	}
+	_ = database
+}
