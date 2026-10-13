@@ -86,9 +86,9 @@ func (h *Hub) watchdogTick(ctx context.Context) {
 		   AND (last_event_type IS NULL OR last_event_type != 'receiver_offline')
 	`
 	type row struct {
-		SystemID      int64        `db:"system_id"`
-		SystemName    string       `db:"system_name"`
-		LastSeenAt    time.Time    `db:"last_seen_at"`
+		SystemID      int64          `db:"system_id"`
+		SystemName    string         `db:"system_name"`
+		LastSeenAt    time.Time      `db:"last_seen_at"`
 		LastEventType sql.NullString `db:"last_event_type"`
 	}
 	var toOffline []row
@@ -127,9 +127,9 @@ func (h *Hub) watchdogTick(ctx context.Context) {
 		   AND last_event_type = 'receiver_offline'
 	`
 	type rrow struct {
-		SystemID    int64     `db:"system_id"`
-		SystemName  string    `db:"system_name"`
-		LastPingAt  time.Time `db:"last_ping_at"`
+		SystemID   int64     `db:"system_id"`
+		SystemName string    `db:"system_name"`
+		LastPingAt time.Time `db:"last_ping_at"`
 	}
 	var toOnline []rrow
 	// Use a fresh-ping window of 2× the ping interval so we don't reverse

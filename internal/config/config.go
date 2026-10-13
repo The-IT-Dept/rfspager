@@ -79,6 +79,9 @@ type Config struct {
 	GitHubToken   string
 	GitHubRepo    string
 	PublicBaseURL string
+	// CaptureDir is where receiver spectrum/audio/IQ captures are stored,
+	// one subdirectory per system. Prod uses /var/lib/rfspager-go/captures.
+	CaptureDir string
 }
 
 func Load() (*Config, error) {
@@ -125,6 +128,7 @@ func Load() (*Config, error) {
 		GitHubToken:              os.Getenv("GITHUB_TOKEN"),
 		GitHubRepo:               getEnv("GITHUB_REPO", "the-it-dept/rfspager"),
 		PublicBaseURL:            os.Getenv("PUBLIC_BASE_URL"),
+		CaptureDir:               getEnv("CAPTURE_DIR", "./captures"),
 	}
 
 	if cfg.DatabaseURL == "" {

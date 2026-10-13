@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/the-it-dept/rfspager/internal/db"
 	"github.com/the-it-dept/rfspager/internal/models"
+	"github.com/the-it-dept/rfspager/internal/rxproto"
 )
 
 // Conn wraps one accepted websocket connection from a receiver agent. Each
@@ -46,6 +50,11 @@ type Conn struct {
 	// fires a paired event.
 	emittedConnect bool
 
+	// proto is the protocol version the receiver declared in hello: 1 for
+	// receivers that predate rxproto (5.2.x/5.3.x), which ignore unknown
+	// frames anyway. Config and command frames only go to proto >= 2.
+	proto int
+
 	// OnPage is called for every well-formed page frame the client sends.
 	// The handler returns the ack status to ship back.
 	OnPage func(ctx context.Context, sys *models.System, p PagePayload) (status string, err error)
@@ -61,6 +70,7 @@ func newConn(hub *Hub, ws *websocket.Conn, sys *models.System) *Conn {
 		podID:    PodID + ":" + uuid.NewString()[:8],
 		sendCh:   make(chan Frame, 32),
 		closed:   make(chan struct{}),
+		proto:    1,
 	}
 }
 
@@ -111,21 +121,44 @@ func (c *Conn) run(ctx context.Context, database *db.DB) {
 		return
 	}
 
+	// Protocol-2 extras: declared proto, host facts, the config revision the
+	// receiver is running. Best-effort — the connection is already recorded.
+	c.proto = helloProto(hello)
+	var host []byte
+	if hello.Host != nil {
+		host, _ = json.Marshal(hello.Host)
+	}
+	helloVersion := 0
+	if hello.Config != nil {
+		helloVersion = hello.Config.Version
+	}
+	if err := database.UpdateSystemConnectionHello(ctx, c.SystemID, c.podID, c.proto, host, helloVersion); err != nil {
+		slog.Warn("record receiver hello details", "system_id", c.SystemID, "err", err)
+	}
+
 	c.connectedAt = time.Now()
 
-	// Now that we own the row, register locally + push welcome.
+	// Now that we own the row, register locally + push welcome. A proto-2
+	// receiver also gets the current config revision (seeded from what it
+	// reports when the system has none) and the newest release tag.
 	c.hub.Register(c)
-	c.send(Frame{Type: "welcome", Data: mustJSON(WelcomePayload{
+	welcome := WelcomePayload{
 		SystemID:    c.System.ID,
 		SystemUUID:  c.System.SystemID,
 		Name:        c.System.Name,
 		PingSeconds: int(PingInterval / time.Second),
-	})})
+	}
+	if c.proto >= 2 {
+		welcome.Config = c.hub.welcomeConfig(ctx, c.SystemID, hello)
+		welcome.LatestVersion = c.hub.latestVersion(ctx)
+	}
+	c.send(Frame{Type: rxproto.FrameWelcome, Data: mustJSON(welcome)})
 
 	slog.Info("receiver connected",
 		"system", c.System.Name,
 		"system_id", c.System.SystemID,
 		"version", hello.Version,
+		"proto", c.proto,
 		"os", hello.OS,
 		"arch", hello.Arch,
 		"hostname", hello.Hostname,
@@ -142,11 +175,13 @@ func (c *Conn) run(ctx context.Context, database *db.DB) {
 	EmitEvent(ctx, database.Conn(), c.SystemID, EvtReceiverConnected, SeverityInfo,
 		"Receiver connected",
 		map[string]any{
-			"version":  hello.Version,
-			"os":       hello.OS,
-			"arch":     hello.Arch,
-			"hostname": hello.Hostname,
-			"dongles":  dongleNames,
+			"version":        hello.Version,
+			"proto":          c.proto,
+			"os":             hello.OS,
+			"arch":           hello.Arch,
+			"hostname":       hello.Hostname,
+			"dongles":        dongleNames,
+			"config_version": helloVersion,
 		})
 	// Track that this socket emitted the connect event so the deferred
 	// disconnect emitter knows to fire its pair.
@@ -158,6 +193,14 @@ func (c *Conn) run(ctx context.Context, database *db.DB) {
 		defer close(writePump)
 		c.runWritePump(ctx)
 	}()
+
+	// Commands queued while the receiver was away go out right behind the
+	// welcome. Only proto-2 receivers understand them; older ones would log
+	// an unknown frame per command and the rows would be marked sent for
+	// nothing, so they stay queued until the receiver is updated or expire.
+	if c.proto >= 2 {
+		c.hub.deliverQueued(ctx, c)
+	}
 
 	// Heartbeat: bump last_ping_at periodically. If our row's been taken
 	// by another pod, drop out.
@@ -200,6 +243,19 @@ func (c *Conn) run(ctx context.Context, database *db.DB) {
 	}
 }
 
+// helloProto clamps the declared protocol version: absent or junk means the
+// pre-rxproto receiver (1); anything newer than this server speaks is
+// treated as what we know, since frames are additive.
+func helloProto(h *HelloPayload) int {
+	switch {
+	case h.Proto < 1:
+		return 1
+	case h.Proto > rxproto.ProtoVersion:
+		return rxproto.ProtoVersion
+	}
+	return h.Proto
+}
+
 func (c *Conn) readHello(ctx context.Context) (*HelloPayload, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -207,7 +263,7 @@ func (c *Conn) readHello(ctx context.Context) (*HelloPayload, error) {
 	if err := wsjson.Read(ctx, c.ws, &f); err != nil {
 		return nil, err
 	}
-	if f.Type != "hello" {
+	if f.Type != rxproto.FrameHello {
 		return nil, errors.New("first frame was not 'hello'")
 	}
 	var h HelloPayload
@@ -233,9 +289,9 @@ func (c *Conn) stillAuthorized(ctx context.Context, database systemKeyLookup) bo
 
 func (c *Conn) handleFrame(ctx context.Context, database systemKeyLookup, f Frame) {
 	switch f.Type {
-	case "ping":
-		c.send(Frame{Type: "pong", ID: f.ID})
-	case "page":
+	case rxproto.FramePing:
+		c.send(Frame{Type: rxproto.FramePong, ID: f.ID})
+	case rxproto.FramePage:
 		// Approval, ownership and key rotation apply to already-open sockets too.
 		if !c.stillAuthorized(ctx, database) {
 			c.closeWithReason("receiver authorization revoked")
@@ -262,16 +318,144 @@ func (c *Conn) handleFrame(ctx context.Context, database systemKeyLookup, f Fram
 		// these frames, so swallow them here rather than let them fall through
 		// to the unknown-frame warning below and spam the log once per frame.
 		// Safe to delete once every receiver in the field has been updated.
-	case "log":
+	case rxproto.FrameLog:
 		// Persist + fan out to live subscribers (owner / admin).
 		var lp LogPayload
 		if err := json.Unmarshal(f.Data, &lp); err != nil {
 			return
 		}
 		c.hub.Logs.Publish(ctx, c.SystemID, lp)
+	case rxproto.FrameStats:
+		if c.hub == nil {
+			return
+		}
+		var st rxproto.Stats
+		if err := json.Unmarshal(f.Data, &st); err != nil {
+			slog.Warn("receiver sent malformed stats", "system_id", c.SystemID, "err", err)
+			return
+		}
+		c.hub.Stats.Publish(ctx, c.SystemID, st)
+	case rxproto.FrameConfigResult:
+		if c.hub == nil {
+			return
+		}
+		var res rxproto.ConfigResult
+		if err := json.Unmarshal(f.Data, &res); err != nil {
+			slog.Warn("receiver sent malformed config_result", "system_id", c.SystemID, "err", err)
+			return
+		}
+		c.handleConfigResult(ctx, res)
+	case rxproto.FrameCommandResult:
+		if c.hub == nil {
+			return
+		}
+		var res rxproto.CommandResult
+		if err := json.Unmarshal(f.Data, &res); err != nil {
+			slog.Warn("receiver sent malformed command_result", "system_id", c.SystemID, "err", err)
+			return
+		}
+		c.handleCommandResult(ctx, res)
 	default:
 		slog.Warn("receiver sent unknown frame", "type", f.Type)
 	}
+}
+
+// handleConfigResult records whether the receiver applied or rejected a
+// config revision and writes the matching system event.
+func (c *Conn) handleConfigResult(ctx context.Context, res rxproto.ConfigResult) {
+	if res.Status != rxproto.ConfigApplied && res.Status != rxproto.ConfigRejected {
+		slog.Warn("receiver sent unknown config_result status", "system_id", c.SystemID, "status", res.Status)
+		return
+	}
+	if err := c.hub.db.UpdateSystemConnectionConfigStatus(ctx, c.SystemID, res.Version, res.Status); err != nil {
+		slog.Warn("record config status", "system_id", c.SystemID, "err", err)
+	}
+	meta := map[string]any{"version": res.Version}
+	if res.Status == rxproto.ConfigApplied {
+		slog.Info("receiver applied config", "system_id", c.SystemID, "version", res.Version)
+		EmitEvent(ctx, c.hub.db.Conn(), c.SystemID, EvtReceiverConfigApplied, SeverityInfo,
+			fmt.Sprintf("Config revision %d applied", res.Version), meta)
+		return
+	}
+	meta["errors"] = res.Errors
+	slog.Warn("receiver rejected config", "system_id", c.SystemID, "version", res.Version, "errors", res.Errors)
+	EmitEvent(ctx, c.hub.db.Conn(), c.SystemID, EvtReceiverConfigRejected, SeverityWarning,
+		fmt.Sprintf("Config revision %d rejected%s", res.Version, summariseErrors(res.Errors)), meta)
+}
+
+// summariseErrors renders up to three "key: reason" pairs for an event
+// message; the full map goes in the metadata.
+func summariseErrors(errs map[string]string) string {
+	if len(errs) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(errs))
+	for k := range errs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, 3)
+	for _, k := range keys {
+		if len(parts) == 3 {
+			parts = append(parts, "…")
+			break
+		}
+		parts = append(parts, k+": "+errs[k])
+	}
+	return ": " + strings.Join(parts, "; ")
+}
+
+// handleCommandResult updates the command row and, on completion, writes a
+// system event. A failed capture command also fails its capture row so the
+// admin UI stops waiting for an upload that will never come.
+func (c *Conn) handleCommandResult(ctx context.Context, res rxproto.CommandResult) {
+	switch res.Status {
+	case rxproto.CmdProgress, rxproto.CmdOK, rxproto.CmdError:
+	default:
+		slog.Warn("receiver sent unknown command_result status", "system_id", c.SystemID, "status", res.Status)
+		return
+	}
+	cmd, err := c.hub.db.GetSystemCommand(ctx, res.ID)
+	if err != nil || cmd.SystemID != c.SystemID {
+		// Unknown id, or a command that belongs to another system: a
+		// receiver only gets to report on its own commands.
+		slog.Warn("command_result for unknown command", "system_id", c.SystemID, "command_id", res.ID)
+		return
+	}
+	if err := c.hub.db.UpdateSystemCommandStatus(ctx, res.ID, res.Status, res.Stage, res.Message); err != nil {
+		slog.Warn("record command result", "system_id", c.SystemID, "command_id", res.ID, "err", err)
+	}
+	if res.Status == rxproto.CmdProgress {
+		return
+	}
+
+	severity := SeverityInfo
+	summary := fmt.Sprintf("Command %s succeeded", cmd.Type)
+	if res.Status == rxproto.CmdError {
+		severity = SeverityError
+		summary = fmt.Sprintf("Command %s failed", cmd.Type)
+		if res.Message != "" {
+			summary += ": " + res.Message
+		}
+		if cmd.Type == rxproto.CmdCapture {
+			reason := res.Message
+			if reason == "" {
+				reason = "capture failed on the receiver"
+			}
+			if err := c.hub.db.MarkSystemCaptureErrorByCommand(ctx, cmd.ID, reason); err != nil {
+				slog.Warn("mark capture failed", "command_id", cmd.ID, "err", err)
+			}
+		}
+	}
+	slog.Info("receiver command finished", "system_id", c.SystemID, "command_id", cmd.ID, "type", cmd.Type, "status", res.Status)
+	EmitEvent(ctx, c.hub.db.Conn(), c.SystemID, EvtReceiverCommand, severity, summary, map[string]any{
+		"command_id": cmd.ID,
+		"type":       cmd.Type,
+		"params":     json.RawMessage(cmd.Params),
+		"status":     res.Status,
+		"stage":      res.Stage,
+		"message":    res.Message,
+	})
 }
 
 func (c *Conn) runWritePump(ctx context.Context) {
@@ -297,15 +481,23 @@ func (c *Conn) runWritePump(ctx context.Context) {
 // send queues a frame for the write pump. Drops if the buffer is full —
 // receiver is slow and we don't want to back up the hub.
 func (c *Conn) send(f Frame) {
+	c.trySend(f)
+}
+
+// trySend is send that reports whether the frame was queued, for callers
+// that must not mark something delivered when it was dropped.
+func (c *Conn) trySend(f Frame) bool {
 	select {
 	case c.sendCh <- f:
+		return true
 	default:
 		slog.Warn("ws send buffer full, dropping", "system_id", c.SystemID, "type", f.Type)
+		return false
 	}
 }
 
 func (c *Conn) sendAck(id, status, errMsg string) {
-	c.send(Frame{Type: "ack", ID: id, Data: mustJSON(AckPayload{Status: status, Error: errMsg})})
+	c.send(Frame{Type: rxproto.FrameAck, ID: id, Data: mustJSON(AckPayload{Status: status, Error: errMsg})})
 }
 
 func (c *Conn) closeWithReason(reason string) {
