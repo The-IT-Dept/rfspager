@@ -16,6 +16,7 @@ import (
 
 	"github.com/the-it-dept/rfspager/internal/db"
 	"github.com/the-it-dept/rfspager/internal/models"
+	"github.com/the-it-dept/rfspager/internal/rxproto"
 )
 
 var coordRegex = regexp.MustCompile(`\[(-?[0-9]+\.[0-9]+),(-?[0-9]+\.[0-9]+)\]`)
@@ -86,7 +87,7 @@ func (h *MessageHandler) ProcessPagermon(w http.ResponseWriter, r *http.Request)
 	// Pagermon doesn't supply the agency/alias/icon/color overrides, so we
 	// always pass nil for the ingress struct — capcode stealing is a no-op
 	// on this path (matches Pagermon's behavior of just relaying).
-	result, _ := h.createMessage(ctx, system, body.Address, body.Message, timestamp, nil)
+	result, _ := h.createMessage(ctx, system, body.Address, body.Message, timestamp, nil, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": result})
 }
 
@@ -138,14 +139,14 @@ func decodePagermonBody(r *http.Request) (pagermonBody, error) {
 // transport. Same write path as ProcessPagermon but no HTTP
 // concerns. Returns an ack status — "ok" if accepted, "dup" if deduped against
 // a recent message, "err" otherwise.
-func (h *MessageHandler) IngestPage(ctx context.Context, system *models.System, address, message string, timestamp time.Time) (string, error) {
+func (h *MessageHandler) IngestPage(ctx context.Context, system *models.System, address, message string, timestamp time.Time, quality *rxproto.PageQuality) (string, error) {
 	if address == "" || message == "" {
 		return "err", fmt.Errorf("address and message required")
 	}
 	if timestamp.IsZero() {
 		timestamp = time.Now()
 	}
-	result, msg := h.createMessage(ctx, system, address, message, timestamp, nil)
+	result, msg := h.createMessage(ctx, system, address, message, timestamp, nil, quality)
 	if msg == nil {
 		if result == "Duplicate message." {
 			return "dup", nil
@@ -190,20 +191,23 @@ func (h *MessageHandler) ReceiverMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (h *MessageHandler) createMessage(ctx context.Context, system *models.System, address, message string, timestamp time.Time, ingress *models.MessageIngress) (string, *models.Message) {
+func (h *MessageHandler) createMessage(ctx context.Context, system *models.System, address, message string, timestamp time.Time, ingress *models.MessageIngress, quality *rxproto.PageQuality) (string, *models.Message) {
 	// Reject messages older than 10 minutes
 	if timestamp.Before(time.Now().Add(-10 * time.Minute)) {
 		return fmt.Sprintf("Message is too old.. given %s vs now %s",
 			timestamp.Format(time.RFC3339), time.Now().Format(time.RFC3339)), nil
 	}
 
-	// Check for duplicates
-	isDup, err := h.db.IsDuplicateMessage(ctx, address, message, timestamp)
-	if err != nil {
-		slog.Error("duplicate check failed", "error", err)
-	}
-	if isDup {
-		return "Duplicate message.", nil
+	// Cheap early exit for exact repeats. Copies that could replace a
+	// worse stored copy are handled by the upsert below.
+	if quality == nil {
+		isDup, err := h.db.IsDuplicateMessage(ctx, address, message, timestamp)
+		if err != nil {
+			slog.Error("duplicate check failed", "error", err)
+		}
+		if isDup {
+			return "Duplicate message.", nil
+		}
 	}
 
 	// Find matching capcode
@@ -243,10 +247,12 @@ func (h *MessageHandler) createMessage(ctx context.Context, system *models.Syste
 
 	// Create the message
 	msg := &models.Message{
-		SystemID:  system.ID,
-		Address:   address,
-		Message:   message,
-		CreatedAt: timestamp,
+		SystemID:    system.ID,
+		Address:     address,
+		Message:     message,
+		CreatedAt:   timestamp,
+		Quality:     quality,
+		IncidentKey: IncidentKey(message),
 	}
 
 	if capcode != nil {
@@ -263,13 +269,16 @@ func (h *MessageHandler) createMessage(ctx context.Context, system *models.Syste
 	// one. Redundant receivers post the same page within milliseconds of each
 	// other, so the duplicate has usually not been committed yet when the
 	// earlier check runs.
-	created, err := h.db.CreateMessageDeduped(ctx, msg)
+	outcome, err := h.db.UpsertMessageDeduped(ctx, msg)
 	if err != nil {
 		slog.Error("failed to create message", "error", err)
 		return "error creating message", nil
 	}
-	if !created {
+	switch outcome {
+	case db.MessageDuplicate:
 		return "Duplicate message.", nil
+	case db.MessageReplaced:
+		slog.Info("message replaced by a better copy", "id", msg.ID, "address", address, "system_id", system.ID)
 	}
 
 	return strconv.FormatInt(msg.ID, 10), msg

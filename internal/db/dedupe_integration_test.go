@@ -40,7 +40,8 @@ func TestCreateMessageDedupedIsAtomicUnderConcurrency(t *testing.T) {
 				Message:   "FRINC TYPE: MVA TURNOUT: 72 INC: 188154-22092026",
 				CreatedAt: when,
 			}
-			ok, err := d.CreateMessageDeduped(context.Background(), msg)
+			out, err := d.UpsertMessageDeduped(context.Background(), msg)
+			ok := out == MessageCreated
 			if err != nil {
 				t.Errorf("insert: %v", err)
 				return
@@ -94,9 +95,10 @@ func TestCreateMessageDedupedCatchesPrefixCollisionsUnderConcurrency(t *testing.
 			go func(b string) {
 				defer wg.Done()
 				<-start
-				ok, err := d.CreateMessageDeduped(context.Background(), &models.Message{
+				out, err := d.UpsertMessageDeduped(context.Background(), &models.Message{
 					SystemID: systemID, Address: "0108811", Message: b, CreatedAt: when,
 				})
+				ok := out == MessageCreated
 				if err != nil {
 					t.Errorf("insert: %v", err)
 					return

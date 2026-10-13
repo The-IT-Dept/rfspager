@@ -243,7 +243,7 @@ func main() {
 		// deadline via http.NewResponseController internally.
 		r.Group(func(r chi.Router) {
 			r.Get("/receiver/ws", recvhub.Handler(database, hub, func(ctx context.Context, sys *models.System, p recvhub.PagePayload) (string, error) {
-				return msgHandler.IngestPage(ctx, sys, p.Address, p.Message, time.Unix(p.Datetime, 0))
+				return msgHandler.IngestPage(ctx, sys, p.Address, p.Message, time.Unix(p.Datetime, 0), p.Quality)
 			}))
 			// Capture uploads carry whole audio/IQ recordings from a Pi on a
 			// slow uplink: no 30 s timeout, and bodyLimits above grants this

@@ -21,10 +21,10 @@ const reconcileWindow = time.Hour
 
 // fanoutSQL is the entire pipeline as one statement:
 //
-//   advisory lock → look up message + capcode + agency
-//                 → union recipients from subscriptions and alertzones
-//                 → INSERT into notifications, pre-computed title/body
-//                 → stamp messages.fanned_out_at so reconcile won't retry.
+//	advisory lock → look up message + capcode + agency
+//	              → union recipients from subscriptions and alertzones
+//	              → INSERT into notifications, pre-computed title/body
+//	              → stamp messages.fanned_out_at so reconcile won't retry.
 //
 // The AFTER INSERT trigger on notifications then fires NOTIFY rfs_dispatch,
 // waking the dispatch workers.
@@ -38,7 +38,7 @@ WITH locked AS (
 ),
 msg AS (
     SELECT m.id, m.system_id, m.capcode_id, m.address, m.message, m.created_at,
-           m.lat, m.lng,
+           m.lat, m.lng, m.incident_key,
            c.alias  AS capcode_alias,
            a.agency AS agency_name
       FROM messages m
@@ -98,6 +98,18 @@ inserted AS (
             SELECT 1 FROM notifications n
              WHERE n.message_id = msg.id AND n.notifiable_id = r.user_id
            )
+       -- One push per incident message per user: a dispatch that went to
+       -- several capcodes this user follows is notified once. Copies of
+       -- the same dispatch share an incident_key (see handler.IncidentKey).
+       AND NOT (msg.incident_key IS NOT NULL AND EXISTS (
+            SELECT 1 FROM notifications n2
+              JOIN messages m2 ON m2.id = n2.message_id
+             WHERE n2.notifiable_id = r.user_id
+               AND n2.notifiable_type = 'App\Models\User'
+               AND m2.id <> msg.id
+               AND m2.incident_key = msg.incident_key
+               AND m2.created_at > msg.created_at - INTERVAL '15 minutes'
+           ))
     RETURNING notifiable_id
 ),
 marked AS (
