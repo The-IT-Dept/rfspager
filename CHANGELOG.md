@@ -1,5 +1,15 @@
 # Changelog
 
+## [5.5.1](https://github.com/The-IT-Dept/rfspager/compare/v5.5.0...v5.5.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **iap:** keep a longer entitlement when the app validates a store purchase ([ded06fc](https://github.com/The-IT-Dept/rfspager/commit/ded06fcd43da9cabe44712a9624f1a9a382b67d9))
+* **mobile:** Android header buttons, single purchase validation, clearer filter state ([#19](https://github.com/The-IT-Dept/rfspager/issues/19)) ([ded06fc](https://github.com/The-IT-Dept/rfspager/commit/ded06fcd43da9cabe44712a9624f1a9a382b67d9))
+* **mobile:** validate a purchase once however many screens listen ([ded06fc](https://github.com/The-IT-Dept/rfspager/commit/ded06fcd43da9cabe44712a9624f1a9a382b67d9))
+* **receiver-logs:** return jsonb raw as JSON and read the page text from msg ([#16](https://github.com/The-IT-Dept/rfspager/issues/16)) ([810ed1a](https://github.com/The-IT-Dept/rfspager/commit/810ed1ad182d462477a9a39c362d33ec0450cc30))
+
 ## [5.5.0](https://github.com/The-IT-Dept/rfspager/compare/v5.4.0...v5.5.0) (2026-10-13)
 
 
