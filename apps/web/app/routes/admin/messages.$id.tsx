@@ -205,7 +205,7 @@ function NotifCount({ pushed, total }: { pushed?: number; total?: number }) {
 }
 
 function Mono({ children }: { children: React.ReactNode }) {
-  return <span className="font-mono text-xs whitespace-pre-wrap break-all">{children}</span>;
+  return <span className="font-mono text-xs whitespace-pre-wrap break-words">{children}</span>;
 }
 
 function clip(s: string, n = 100) {
@@ -340,7 +340,7 @@ export default function MessageDetailPage() {
             </p>
           ) : (
             <div className="rounded-md border overflow-x-auto">
-              <Table className="min-w-[900px]">
+              <Table className="min-w-[1100px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Receiver</TableHead>
@@ -349,7 +349,7 @@ export default function MessageDetailPage() {
                     <TableHead className="text-right">Corrected</TableHead>
                     <TableHead className="text-right">Unrepairable</TableHead>
                     <TableHead>Flags</TableHead>
-                    <TableHead>Text</TableHead>
+                    <TableHead className="min-w-[28rem]">Text</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -394,7 +394,7 @@ export default function MessageDetailPage() {
             <p className="text-sm text-muted-foreground">No other messages with this incident key within 15 minutes.</p>
           ) : (
             <div className="rounded-md border overflow-x-auto">
-              <Table className="min-w-[900px]">
+              <Table className="min-w-[1100px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>ID</TableHead>
@@ -403,7 +403,7 @@ export default function MessageDetailPage() {
                     <TableHead>Created</TableHead>
                     <TableHead>Quality</TableHead>
                     <TableHead>Notifs</TableHead>
-                    <TableHead>Message</TableHead>
+                    <TableHead className="min-w-[28rem]">Message</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -447,14 +447,14 @@ export default function MessageDetailPage() {
                 <p className="text-xs text-muted-foreground">Showing the newest {notifs.data.length} of {notifs.total}.</p>
               )}
               <div className="rounded-md border overflow-x-auto">
-                <Table className="min-w-[900px]">
+                <Table className="min-w-[1100px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead>User</TableHead>
                       <TableHead>Created</TableHead>
                       <TableHead>Pushed</TableHead>
                       <TableHead>Read</TableHead>
-                      <TableHead>Pushed text</TableHead>
+                      <TableHead className="min-w-[28rem]">Pushed text</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
