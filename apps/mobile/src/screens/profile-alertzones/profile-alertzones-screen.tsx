@@ -8,6 +8,8 @@ import React, { FC, useEffect } from "react"
 import { Text, View, ScrollView } from "react-native"
 import { Stack, useNavigation, useRouter } from "expo-router"
 import { AppIcon } from "../../components/app-icon/app-icon"
+import { toolbarIcon } from "../../components/toolbar-icon/toolbar-icon"
+import { Images } from "../../constants/images"
 
 import { useAlertzones } from "../../hooks"
 import { BannerAd } from "../../utils/admob"
@@ -32,10 +34,11 @@ export const ProfileAlertzonesScreen: FC =
 
     return (
       <>
-      {/* Native header item: on iOS 26 this is its own Liquid Glass capsule. */}
+      {/* Native header item: on iOS 26 this is its own Liquid Glass capsule.
+          Android's toolbar can only draw image icons, hence toolbarIcon. */}
       <Stack.Toolbar placement="right">
         <Stack.Toolbar.Button
-          icon="plus"
+          icon={toolbarIcon("plus", Images.blackPlus)}
           accessibilityLabel="Create alert zone"
           onPress={() => router.push("/alertzones/create")}
         />

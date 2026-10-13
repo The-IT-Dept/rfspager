@@ -21,6 +21,9 @@ import { useInterstitialAd } from "../../utils/interstitial-ad-manager"
 import { NativeAdCell } from "../../components/native-ad-cell"
 import { useSubscriptionModal } from "../../utils/use-subscription-modal"
 import { AdDebugPanel } from "../../components/ad-debug-panel"
+import { toolbarIcon } from "../../components/toolbar-icon/toolbar-icon"
+import { Images } from "../../constants/images"
+import { pagerEmptyState } from "./pager-empty-state"
 
 export const PagerScreen: FC =
   function PagerScreen() {
@@ -124,48 +127,25 @@ export const PagerScreen: FC =
             <Text style={styles.loadingText}>Loading messages...</Text>
           </View>
         )
-      if (pagerFilter && filters.length === 0)
-        return (
-      <View style={styles.emptyContainer}>
-        <FontAwesome5
-          name={"filter"}
-          size={48}
-          color={theme.colors.textDisabled}
-          style={styles.emptyIcon}
-        />
-        <Text style={styles.emptyTitle}>No Capcodes Selected</Text>
-        <Text style={styles.emptySubtitle}>
-          You have filtering enabled but no capcodes selected.
-        </Text>
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={() => router.push("/capcodes")}
-        >
-          <Text style={styles.actionButtonText}>Select Capcodes</Text>
-        </TouchableOpacity>
-      </View>
-        )
+      const empty = pagerEmptyState({ filterOn: pagerFilter, filterCount: filters.length })
       return (
-      <View style={styles.emptyContainer}>
-        <FontAwesome5
-          name={"inbox"}
-          size={48}
-          color={theme.colors.textDisabled}
-          style={styles.emptyIcon}
-        />
-        <Text style={styles.emptyTitle}>No Messages</Text>
-        <Text style={styles.emptySubtitle}>
-          There are no messages that match your current filters.
-        </Text>
-        {pagerFilter && (
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => router.push("/capcodes")}
-          >
-            <Text style={styles.actionButtonText}>Adjust Capcodes</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+        <View style={styles.emptyContainer}>
+          <FontAwesome5
+            name={empty.action === "select" ? "filter" : "inbox"}
+            size={48}
+            color={theme.colors.textDisabled}
+            style={styles.emptyIcon}
+          />
+          <Text style={styles.emptyTitle}>{empty.title}</Text>
+          <Text style={styles.emptySubtitle}>{empty.body}</Text>
+          {empty.action && (
+            <TouchableOpacity style={styles.actionButton} onPress={() => router.push("/capcodes")}>
+              <Text style={styles.actionButtonText}>
+                {empty.action === "select" ? "Select Capcodes" : "Adjust Capcodes"}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
       )
     }
 
@@ -178,7 +158,10 @@ export const PagerScreen: FC =
             one tap away from the feed; both are Pro features, gated the same
             way Settings gates them. */}
         <Stack.Toolbar placement="right">
-          <Stack.Toolbar.Menu icon="line.3.horizontal.decrease.circle" accessibilityLabel="Feed options">
+          <Stack.Toolbar.Menu
+            icon={toolbarIcon("line.3.horizontal.decrease.circle", Images.filter)}
+            accessibilityLabel="Feed options"
+          >
             <Stack.Toolbar.MenuAction
               icon="checkmark.circle"
               isOn={pagerFilter}

@@ -12,10 +12,20 @@ jest.mock('react-native-reanimated', () => {
   return Reanimated
 })
 
-jest.mock('react-native/Libraries/Utilities/Platform', () => ({
-  OS: 'ios',
-  select: jest.fn(),
-}))
+// React Native reads Platform through its default export; tests flip
+// Platform.OS to exercise the Android branches.
+jest.mock('react-native/Libraries/Utilities/Platform', () => {
+  const platform = {
+    OS: 'ios',
+    Version: 17,
+    isTesting: true,
+    isTV: false,
+    constants: { reactNativeVersion: { major: 0, minor: 83, patch: 2 } },
+    select: (spec: Record<string, unknown>) =>
+      spec[platform.OS] ?? spec.native ?? spec.default,
+  }
+  return { __esModule: true, default: platform, ...platform }
+})
 
 // Mock AsyncStorage
 jest.mock('@react-native-async-storage/async-storage', () => ({
@@ -76,27 +86,6 @@ jest.mock('@react-native-firebase/analytics', () => ({
   }),
 }))
 
-// Mock MobX State Tree
-jest.mock('mobx-state-tree', () => {
-  const actualMST = jest.requireActual('mobx-state-tree')
-  return {
-    ...actualMST,
-    getEnv: jest.fn(() => ({
-      gqlHttpClient: {
-        setHeaders: jest.fn(),
-      },
-    })),
-  }
-})
-
-// Mock GraphQL client
-jest.mock('graphql-request', () => ({
-  GraphQLClient: jest.fn().mockImplementation(() => ({
-    setHeaders: jest.fn(),
-    request: jest.fn(),
-  })),
-}))
-
 // Setup console warnings/errors
 global.console = {
   ...console,
@@ -104,11 +93,3 @@ global.console = {
   error: jest.fn(),
 }
 
-// Mock Animated from react-native
-jest.mock('react-native/Libraries/Animated/NativeAnimatedHelper')
-
-// Global test utilities
-global.beforeEach = beforeEach
-global.afterEach = afterEach
-global.beforeAll = beforeAll
-global.afterAll = afterAll

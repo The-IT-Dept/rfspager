@@ -1,0 +1,1 @@
+Android: the + button on Alert Zones and the feed options menu (only selected capcodes, show unknown capcodes) are back. The Filter and Notify buttons on each capcode now read Filtering and Notifying while they are on, and the feed explains when your filtered capcodes simply have not had any pages yet. Fixes repeated purchase checks that could trip the Play Store's rate limit.

@@ -5,6 +5,7 @@ import { Text, ActivityIndicator } from "react-native"
 import { useValidSubscription, useSubscriptionsStore } from "../../stores"
 import { AppTheme, useAppTheme } from "../../theme"
 import { SubscriptionModal } from "../subscription-modal"
+import { capcodeActionLabel } from "./capcode-action-label"
 
 export interface CapcodeProps {
   capcode: any
@@ -49,6 +50,8 @@ export function Capcode(props: CapcodeProps) {
       <View style={styles.rightIconsContainer}>
         <TouchableOpacity
           style={[styles.actionButton, isFilter && styles.activeActionButton]}
+          accessibilityRole="button"
+          accessibilityState={{ selected: isFilter }}
           onPress={() => {
             if (!validSubscription) {
               setSubscriptionModalVisible(true)
@@ -62,12 +65,14 @@ export function Capcode(props: CapcodeProps) {
           }}
         >
           <Text style={[styles.actionButtonText, isFilter && styles.activeActionButtonText]}>
-            Filter
+            {capcodeActionLabel("filter", isFilter)}
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={[styles.actionButton, isSubscribe && styles.activeActionButton]}
+          accessibilityRole="button"
+          accessibilityState={{ selected: isSubscribe }}
           onPress={() => {
             if (!validSubscription) {
               setSubscriptionModalVisible(true)
@@ -81,7 +86,7 @@ export function Capcode(props: CapcodeProps) {
           }}
         >
           <Text style={[styles.actionButtonText, isSubscribe && styles.activeActionButtonText]}>
-            Notify
+            {capcodeActionLabel("notify", isSubscribe)}
           </Text>
         </TouchableOpacity>
       </View>
@@ -222,6 +227,8 @@ const makeStyles = (theme: AppTheme) =>
       color: theme.colors.textPrimary,
     },
     actionButton: {
+      minWidth: 76,
+      alignItems: "center",
       paddingHorizontal: 12,
       paddingVertical: 6,
       borderRadius: 4,

@@ -2,11 +2,13 @@ package iap
 
 import (
 	"context"
+	"database/sql"
 	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -420,5 +422,118 @@ func TestDelayedGoogleWebhookCannotDowngradeCurrentAppleSubscription(t *testing.
 	}
 	if !active || platform != "apple" {
 		t.Fatalf("delayed Google webhook left active=%t platform=%q", active, platform)
+	}
+}
+
+// seedEntitlement gives a user an entitlement that was not granted by the
+// store the app is about to validate against: a gift, a comp, or a purchase on
+// the other platform.
+func seedEntitlement(t *testing.T, db *sqlx.DB, userID int64, valid bool, expiresIn time.Duration, productID string) {
+	t.Helper()
+	if _, err := db.Exec(`UPDATE users SET subscription_valid = $2, subscription_expiry = NOW() + $3 * interval '1 second',
+		subscription_product_id = $4, subscription_platform = NULL, will_renew = false WHERE id = $1`,
+		userID, valid, expiresIn.Seconds(), productID); err != nil {
+		t.Fatalf("seed entitlement: %v", err)
+	}
+}
+
+type entitlementRow struct {
+	Valid     bool           `db:"subscription_valid"`
+	Expiry    time.Time      `db:"subscription_expiry"`
+	ProductID sql.NullString `db:"subscription_product_id"`
+	Platform  sql.NullString `db:"subscription_platform"`
+	Token     sql.NullString `db:"google_purchase_token"`
+}
+
+func readEntitlement(t *testing.T, db *sqlx.DB, userID int64) entitlementRow {
+	t.Helper()
+	var row entitlementRow
+	if err := db.Get(&row, `SELECT subscription_valid, subscription_expiry, subscription_product_id,
+		subscription_platform, google_purchase_token FROM users WHERE id = $1`, userID); err != nil {
+		t.Fatalf("read entitlement: %v", err)
+	}
+	return row
+}
+
+// A store validation only speaks for its own subscription. When the account
+// already holds access running past the store expiry (a gift), the app
+// re-validating its Play purchase must not shorten that access or relabel it.
+func TestApplySubscriptionKeepsLongerExistingEntitlement(t *testing.T) {
+	db := testOwnershipDB(t)
+	seedEntitlement(t, db, 1, true, 60*24*time.Hour, "io.devlan.rfspager.gifted")
+
+	result := activeResult("google", "pro.monthly", "Production")
+	result.OriginalTransactionID = "google-token-behind-gift"
+	if err := applySubscription(context.Background(), db, 1, result, "purchase", "receipt"); err != nil {
+		t.Fatalf("validate store purchase: %v", err)
+	}
+
+	row := readEntitlement(t, db, 1)
+	if !row.Valid {
+		t.Fatal("gift was switched off")
+	}
+	if row.ProductID.String != "io.devlan.rfspager.gifted" {
+		t.Fatalf("product = %q, want the gift kept", row.ProductID.String)
+	}
+	if row.Platform.Valid {
+		t.Fatalf("platform = %q, want NULL kept for the gift", row.Platform.String)
+	}
+	if row.Expiry.Before(time.Now().Add(59 * 24 * time.Hour)) {
+		t.Fatalf("expiry = %s, want the gift's 60 days kept", row.Expiry)
+	}
+	// The store identity is still recorded so webhooks can find the account.
+	if row.Token.String != result.OriginalTransactionID {
+		t.Fatalf("google token = %q, want %q recorded", row.Token.String, result.OriginalTransactionID)
+	}
+	var linked, logged int
+	if err := db.Get(&linked, `SELECT COUNT(*) FROM iap_subscription_ownership WHERE original_transaction_id = $1 AND user_id = 1`, result.OriginalTransactionID); err != nil {
+		t.Fatalf("count ownership: %v", err)
+	}
+	if linked != 1 {
+		t.Fatalf("ownership links = %d, want 1", linked)
+	}
+	if err := db.Get(&logged, `SELECT COUNT(*) FROM iap_transactions WHERE user_id = 1`); err != nil {
+		t.Fatalf("count transaction log: %v", err)
+	}
+	if logged != 1 {
+		t.Fatalf("transaction log rows = %d, want 1", logged)
+	}
+}
+
+// The guard only protects access that outlives the store subscription: a
+// shorter or lapsed entitlement is replaced as before.
+func TestApplySubscriptionReplacesShorterExistingEntitlement(t *testing.T) {
+	db := testOwnershipDB(t)
+	seedEntitlement(t, db, 1, true, 10*time.Minute, "io.devlan.rfspager.gifted")
+
+	result := activeResult("google", "pro.monthly", "Production")
+	result.OriginalTransactionID = "google-token-after-short-gift"
+	if err := applySubscription(context.Background(), db, 1, result, "purchase", "receipt"); err != nil {
+		t.Fatalf("validate store purchase: %v", err)
+	}
+
+	row := readEntitlement(t, db, 1)
+	if row.ProductID.String != "pro.monthly" || row.Platform.String != "google" {
+		t.Fatalf("product/platform = %q/%q, want the store purchase applied", row.ProductID.String, row.Platform.String)
+	}
+	if row.Expiry.Before(time.Now().Add(50 * time.Minute)) {
+		t.Fatalf("expiry = %s, want the store expiry (about an hour out)", row.Expiry)
+	}
+}
+
+func TestApplySubscriptionReplacesLapsedEntitlementWithLaterExpiry(t *testing.T) {
+	db := testOwnershipDB(t)
+	// Switched off by an admin or the sweep, but the stale expiry is still in the future.
+	seedEntitlement(t, db, 1, false, 60*24*time.Hour, "io.devlan.rfspager.gifted")
+
+	result := activeResult("google", "pro.monthly", "Production")
+	result.OriginalTransactionID = "google-token-after-lapsed-gift"
+	if err := applySubscription(context.Background(), db, 1, result, "purchase", "receipt"); err != nil {
+		t.Fatalf("validate store purchase: %v", err)
+	}
+
+	row := readEntitlement(t, db, 1)
+	if !row.Valid || row.ProductID.String != "pro.monthly" {
+		t.Fatalf("valid/product = %v/%q, want the store purchase to grant access", row.Valid, row.ProductID.String)
 	}
 }

@@ -61,17 +61,28 @@ func applySubscription(ctx context.Context, db *sqlx.DB, userID int64, result *V
 	if result.ExpiresAt != nil {
 		expiresAt = result.ExpiresAt
 	}
+	// A store validation only speaks for its own subscription. When the
+	// account already holds access running past this result's expiry (a gift,
+	// a comp, a purchase on the other platform), the subscription columns are
+	// left alone: the Adapty and webhook paths apply the same rule, and the
+	// app re-validating its purchase must never shorten access granted
+	// elsewhere. The store identity and the audit row are still recorded.
 	query := fmt.Sprintf(`
-		UPDATE users SET
-			subscription_valid = $1,
-			subscription_expiry = $2,
-			subscription_product_id = $3,
-			subscription_platform = $4,
-			will_renew = $5,
+		WITH cur AS (
+			SELECT id, (subscription_valid AND (subscription_expiry IS NULL OR subscription_expiry > $2::timestamptz)) AS keep
+			  FROM users WHERE id = $7 FOR UPDATE
+		)
+		UPDATE users u SET
+			subscription_valid      = CASE WHEN cur.keep THEN u.subscription_valid ELSE $1 END,
+			subscription_expiry     = CASE WHEN cur.keep THEN u.subscription_expiry ELSE $2::timestamptz END,
+			subscription_product_id = CASE WHEN cur.keep THEN u.subscription_product_id ELSE $3 END,
+			subscription_platform   = CASE WHEN cur.keep THEN u.subscription_platform ELSE $4 END,
+			will_renew              = CASE WHEN cur.keep THEN u.will_renew ELSE $5 END,
 			%s = $6,
 			last_store_sync_at = NOW(),
 			updated_at = NOW()
-		WHERE id = $7`, column)
+		FROM cur
+		WHERE u.id = cur.id`, column)
 	update, err := tx.ExecContext(ctx, query,
 		result.Valid, expiresAt, result.ProductID, result.Platform, result.WillRenew,
 		result.OriginalTransactionID, userID)
