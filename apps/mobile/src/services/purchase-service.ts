@@ -68,8 +68,18 @@ export interface ValidationResult {
   will_renew: boolean
 }
 
-let purchaseUpdateSubscription: any = null
-let purchaseErrorSubscription: any = null
+interface PurchaseHandlers {
+  onSuccess: (result: ValidationResult) => void
+  onError: (error: any) => void
+}
+
+// Screens register their callbacks here; the store itself gets exactly one
+// native listener pair, however many screens are mounted. Each native
+// subscription receives every purchase event, so a listener per screen meant a
+// server validation per screen for the same purchase.
+const purchaseHandlers = new Set<PurchaseHandlers>()
+let purchaseUpdateSubscription: { remove: () => void } | null = null
+let purchaseErrorSubscription: { remove: () => void } | null = null
 let connectionReady = false
 
 /**
@@ -79,10 +89,9 @@ export async function initIAP(): Promise<void> {
   try {
     await initConnection()
     connectionReady = true
+    attachStoreListeners()
     // Sync subscription status on startup
-    syncSubscriptionOnStartup().catch((err) =>
-      console.warn("[IAP] startup sync failed:", err),
-    )
+    syncSubscriptionOnStartup().catch((err) => console.warn("[IAP] startup sync failed:", err))
   } catch (err) {
     console.warn("[IAP] initConnection failed:", err)
   }
@@ -120,43 +129,55 @@ async function syncSubscriptionOnStartup(): Promise<void> {
   }
 }
 
+function attachStoreListeners() {
+  if (!connectionReady || purchaseHandlers.size === 0 || purchaseUpdateSubscription) return
+
+  try {
+    purchaseUpdateSubscription = purchaseUpdatedListener(async (purchase: Purchase) => {
+      try {
+        const result = await validatePurchase(purchase)
+        if (result.valid) {
+          await finishTransaction({ purchase, isConsumable: false })
+          for (const handlers of purchaseHandlers) handlers.onSuccess(result)
+        }
+      } catch (err) {
+        for (const handlers of purchaseHandlers) handlers.onError(err)
+      }
+    })
+
+    purchaseErrorSubscription = purchaseErrorListener((error: any) => {
+      if (!isUserCancelled(error?.code)) {
+        for (const handlers of purchaseHandlers) handlers.onError(error)
+      }
+    })
+  } catch (err) {
+    console.warn("[IAP] Failed to set up listeners:", err)
+  }
+}
+
+function detachStoreListeners() {
+  purchaseUpdateSubscription?.remove()
+  purchaseErrorSubscription?.remove()
+  purchaseUpdateSubscription = null
+  purchaseErrorSubscription = null
+}
+
 /**
- * Set up purchase listeners. Returns cleanup function.
- * Safe to call before initConnection — listeners are deferred until ready.
+ * Register a screen's purchase callbacks. Returns the cleanup for unmount.
+ * Safe to call before initConnection: the native listeners attach once the
+ * connection is ready.
  */
 export function setupPurchaseListeners(
   onPurchaseSuccess: (result: ValidationResult) => void,
   onPurchaseError: (error: any) => void,
 ): () => void {
-  if (!connectionReady) {
-    return () => {}
-  }
-
-  try {
-  purchaseUpdateSubscription = purchaseUpdatedListener(async (purchase: Purchase) => {
-    try {
-      const result = await validatePurchase(purchase)
-      if (result.valid) {
-        await finishTransaction({ purchase, isConsumable: false })
-        onPurchaseSuccess(result)
-      }
-    } catch (err) {
-      onPurchaseError(err)
-    }
-  })
-
-  purchaseErrorSubscription = purchaseErrorListener((error: any) => {
-    if (!isUserCancelled(error?.code)) {
-      onPurchaseError(error)
-    }
-  })
-  } catch (err) {
-    console.warn("[IAP] Failed to set up listeners:", err)
-  }
+  const handlers: PurchaseHandlers = { onSuccess: onPurchaseSuccess, onError: onPurchaseError }
+  purchaseHandlers.add(handlers)
+  attachStoreListeners()
 
   return () => {
-    purchaseUpdateSubscription?.remove()
-    purchaseErrorSubscription?.remove()
+    purchaseHandlers.delete(handlers)
+    if (purchaseHandlers.size === 0) detachStoreListeners()
   }
 }
 
@@ -299,7 +320,6 @@ export async function restorePurchases(): Promise<ValidationResult | null> {
  * Clean up IAP connection.
  */
 export async function endIAP(): Promise<void> {
-  purchaseUpdateSubscription?.remove()
-  purchaseErrorSubscription?.remove()
+  detachStoreListeners()
   await endConnection()
 }
