@@ -3,6 +3,8 @@ package wsclient
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -233,5 +235,43 @@ func TestDroppedFramesAreCounted(t *testing.T) {
 	ls := c.LinkStats()
 	if ls.QueueDepth != 64 || ls.DroppedFramesTotal != 6 {
 		t.Fatalf("link stats: %+v", ls)
+	}
+}
+
+// A full send buffer must never take the process down. The drop warning goes
+// through the LogShippingHandler into SendLog; if SendLog logged its own
+// drop, the two would recurse until the stack overflowed. That crashed
+// Figtree every twelve minutes of its 2026-10-14 internet outage, because
+// log frames were also queued while offline and filled the buffer.
+func TestLogShippingNeverRecursesOnFullBuffer(t *testing.T) {
+	c := New("http://127.0.0.1:1", "KEY")
+	prev := slog.Default()
+	slog.SetDefault(slog.New(NewLogShippingHandler(slog.NewTextHandler(io.Discard, nil), c)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// Offline: a log line is not queued at all, so an outage cannot fill the
+	// buffer with log frames and crowd out pages.
+	c.SendLog("info", "", "offline line", nil)
+	if n := len(c.sendCh); n != 0 {
+		t.Fatalf("queued %d log frames while disconnected", n)
+	}
+
+	c.connected.Store(true)
+	for range cap(c.sendCh) {
+		c.SendLog("info", "", "fill", nil)
+	}
+	if n := len(c.sendCh); n != cap(c.sendCh) {
+		t.Fatalf("buffer holds %d frames, want %d", n, cap(c.sendCh))
+	}
+
+	// Buffer full: the page drop logs a warning, the warning is shipped, the
+	// shipped frame is dropped silently. Before the fix this never returned.
+	c.SendPage("0950336", "page", time.Now(), 0, 512)
+	c.SendLog("warn", "", "one more", nil)
+	if d := c.dropped.Load(); d != 3 {
+		t.Fatalf("dropped = %d, want 3 (page, its warning, the extra log line)", d)
+	}
+	if n := len(c.sendCh); n != cap(c.sendCh) {
+		t.Fatalf("buffer holds %d frames after drops, want %d", n, cap(c.sendCh))
 	}
 }
