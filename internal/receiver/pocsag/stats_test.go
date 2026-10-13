@@ -109,8 +109,15 @@ func TestStatsCountCorrectedAndUncorrectableCodewords(t *testing.T) {
 			if tc.wantText && pages[0].Alpha != testMsg {
 				t.Errorf("message not repaired: %q", pages[0].Alpha)
 			}
-			if !tc.wantText && pages[0].Alpha == testMsg {
-				t.Errorf("an uncorrectable codeword should have lost characters")
+			if !tc.wantText {
+				// The damaged codeword's raw bits are kept so the page stays
+				// aligned: same length, damage confined and flagged.
+				if len(pages[0].Alpha) != len(testMsg) {
+					t.Errorf("alignment lost: got %d chars want %d", len(pages[0].Alpha), len(testMsg))
+				}
+				if pages[0].Quality.Uncorrectable != 1 || len(pages[0].Quality.DamagedRanges) != 1 {
+					t.Errorf("damage not reported: %+v", pages[0].Quality)
+				}
 			}
 		})
 	}

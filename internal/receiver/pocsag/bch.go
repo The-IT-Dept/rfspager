@@ -75,6 +75,33 @@ func correctBCH(cw uint32) (uint32, int, bool) {
 	return (fixed << 1) | (cw & 1), errors, true
 }
 
+// evenParity reports whether the 32-bit codeword has even parity. Every
+// transmitted POCSAG codeword does: bit 0 is set by the encoder to make
+// it so, independently of the BCH check bits.
+func evenParity(cw uint32) bool { return popcount32(cw)%2 == 0 }
+
+// correctWithParity is correctBCH plus the parity check the BCH code
+// cannot do on its own. A received word with three or more errors is
+// "corrected" by the syndrome table into some other valid codeword
+// about half the time; whenever the total number of flipped bits is
+// odd the parity bit exposes it. Those mis-corrections are reported as
+// uncorrectable instead of being handed on as plausible-looking text.
+// A clean BCH word with odd parity has an error in the parity bit
+// itself, which is harmless and counted as one correction.
+func correctWithParity(cw uint32) (uint32, int, bool) {
+	fixed, errors, ok := correctBCH(cw)
+	if !ok {
+		return cw, -1, false
+	}
+	if evenParity(fixed) {
+		return fixed, errors, true
+	}
+	if errors == 0 {
+		return fixed ^ 1, 1, true
+	}
+	return cw, -1, false
+}
+
 func popcount32(x uint32) int {
 	c := 0
 	for x != 0 {

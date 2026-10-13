@@ -23,6 +23,21 @@ import (
 )
 
 const (
+	// huntSyncErrors is the bit-error tolerance while hunting for the
+	// first sync word. Two errors on a 32-bit word matches noise about
+	// once every 8 million bits, and the second sync a batch later still
+	// has to match before anything is released.
+	huntSyncErrors = 2
+	// verifySyncErrors applies to the confirming sync of a fresh lock.
+	verifySyncErrors = 2
+	// lockedSyncErrors applies once locked: the sync is checked only at
+	// its expected position, so a noisier match is still safe.
+	lockedSyncErrors = 3
+	// The sync is looked for from two bits early to three bits late, so
+	// a single slipped or repeated bit realigns instead of ending the page.
+	syncWindowFirst = 30
+	syncWindowLast  = 35
+
 	SyncWord    uint32 = 0x7CD215D8 // 32-bit POCSAG batch sync
 	SyncInverse uint32 = 0x832DEA27 // bitwise inverse of SyncWord
 
@@ -44,6 +59,28 @@ type Page struct {
 	Numeric string
 	// Alpha is the 7-bit ASCII decoded message for alphanumeric pages.
 	Alpha string
+	// Quality records how much repair the page needed, so copies of the
+	// same page can be ranked and damaged text can be flagged.
+	Quality Quality
+}
+
+// Quality is the decoder's own assessment of one page.
+type Quality struct {
+	// Codewords is how many message codewords fed the page.
+	Codewords int
+	// Corrected is how many of them BCH repaired (1-2 bit errors).
+	Corrected int
+	// Uncorrectable is how many were beyond repair. Their raw bits were
+	// kept so the characters after them stay aligned; the characters they
+	// produced are listed in DamagedRanges.
+	Uncorrectable int
+	// Truncated is set when the page ended because sync was lost or the
+	// sample stream had a gap, rather than by an idle codeword or the
+	// next address.
+	Truncated bool
+	// DamagedRanges are [start, end) byte offsets into Alpha whose text
+	// came from uncorrectable codewords.
+	DamagedRanges [][2]int
 }
 
 // Decoder consumes one bit at a time (true = 1) and emits Pages on Out.
@@ -74,6 +111,7 @@ type Decoder struct {
 	alphaCarryBits  int
 	alpha           strings.Builder
 	numeric         strings.Builder
+	pendingQ        Quality
 	staged          []Page // pages waiting on next-sync confirmation
 
 	// Health counters, read by Stats() from another goroutine. Each is one
@@ -169,11 +207,12 @@ func (d *Decoder) Feed(b bool) {
 		d.reg |= 1
 	}
 	switch d.state {
-	case 0: // hunting for sync — tolerate up to 1 bit error
-		if hammingDist32(d.reg, SyncWord) <= 1 {
+	case 0: // hunting for sync — tolerate up to 2 bit errors; the second
+		// sync a batch later still has to match before anything is released.
+		if hammingDist32(d.reg, SyncWord) <= huntSyncErrors {
 			d.state, d.inverted, d.bitsInCW, d.cwIdx = 1, false, 0, 0
 			d.locked = false
-		} else if hammingDist32(d.reg, SyncInverse) <= 1 {
+		} else if hammingDist32(d.reg, SyncInverse) <= huntSyncErrors {
 			d.state, d.inverted, d.bitsInCW, d.cwIdx = 1, true, 0, 0
 			d.locked = false
 		}
@@ -195,11 +234,22 @@ func (d *Decoder) Feed(b bool) {
 				d.bitsSeen = 0
 			}
 		}
-	case 2: // verifying that the next 32 bits are also a sync word
+	case 2: // verifying that the next sync word arrives (about) on time
 		d.bitsSeen++
-		if d.bitsSeen >= 32 {
-			matchNorm := hammingDist32(d.reg, SyncWord) <= 1
-			matchInv := hammingDist32(d.reg, SyncInverse) <= 1
+		if d.bitsSeen >= syncWindowFirst {
+			// Weak signals slip a bit now and then: the sync may land a
+			// couple of bits early or late. Look for it across a small
+			// window around the expected position and realign on it, and
+			// once locked accept a noisier match than during the hunt.
+			maxErr := verifySyncErrors
+			if d.locked {
+				maxErr = lockedSyncErrors
+			}
+			matchNorm := hammingDist32(d.reg, SyncWord) <= maxErr
+			matchInv := hammingDist32(d.reg, SyncInverse) <= maxErr
+			if !matchNorm && !matchInv && d.bitsSeen < syncWindowLast {
+				return // keep looking a little longer
+			}
 			if matchNorm || matchInv {
 				if !d.locked {
 					d.cnt.syncLocks.Add(1)
@@ -213,7 +263,7 @@ func (d *Decoder) Feed(b bool) {
 				// End of transmission after a confirmed lock — flush
 				// whatever message was still being accumulated and emit.
 				d.cnt.syncLosses.Add(1)
-				d.noteTruncation()
+				d.markTruncated()
 				d.flushPending()
 				d.commitStaged()
 				d.state = 0
@@ -246,7 +296,7 @@ func (d *Decoder) Resync() {
 	if d.locked {
 		d.cnt.syncLosses.Add(1)
 	}
-	d.noteTruncation()
+	d.markTruncated()
 	d.flushPending()
 	d.commitStaged()
 	d.state = 0
@@ -279,7 +329,7 @@ func (d *Decoder) processCodewords(cws []uint32) {
 			d.flushPending()
 			continue
 		}
-		corrected, errors, ok := correctBCH(cw)
+		corrected, errors, ok := correctWithParity(cw)
 		switch {
 		case !ok:
 			d.cnt.cwUncorrectable.Add(1)
@@ -289,15 +339,28 @@ func (d *Decoder) processCodewords(cws []uint32) {
 			d.cnt.cwCorrected.Add(1)
 		}
 		if !ok {
-			// Codeword is beyond BCH's 2-bit correction limit. Drop it
-			// silently but DON'T finalise the current page — long messages
-			// often have one bad codeword in the middle and we'd rather get
-			// "FRINC TYPE: AFA TURNOUT: 210 INC: ...?...26052026" than a
-			// truncation here.
+			// Beyond BCH's reach. Alphanumeric characters are 7 bits packed
+			// across 20-bit codewords, so dropping the codeword would shift
+			// every character after it by six bits and turn the rest of the
+			// page into garbage. Keep its raw bits instead: at most four
+			// characters are wrong, the page stays aligned, and the damaged
+			// span is reported on the page. With no page in flight the word
+			// may have been an address we can no longer trust, so skip it.
+			if d.pendingAddr != "" {
+				d.pendingQ.Codewords++
+				d.pendingQ.Uncorrectable++
+				d.appendMessageBits(cw|0x80000000, true)
+			}
 			continue
 		}
 		if corrected&0x80000000 != 0 {
-			d.appendMessageBits(corrected)
+			if d.pendingAddr != "" {
+				d.pendingQ.Codewords++
+				if errors > 0 {
+					d.pendingQ.Corrected++
+				}
+			}
+			d.appendMessageBits(corrected, false)
 			continue
 		}
 		// Address codeword arriving mid-message: protect long real messages
@@ -353,11 +416,17 @@ func (d *Decoder) processCodewords(cws []uint32) {
 // Numeric pages pack 5 BCD digits per codeword, each digit LSB-first.
 // Alpha pages stream 7-bit ASCII characters LSB-first, with characters
 // running across codeword boundaries.
-func (d *Decoder) appendMessageBits(cw uint32) {
+func (d *Decoder) appendMessageBits(cw uint32, damaged bool) {
 	if d.pendingAddr == "" {
 		return
 	}
 	data := (cw >> 11) & 0xFFFFF // 20 bits in bits 19..0
+	alphaBefore := d.alpha.Len()
+	defer func() {
+		if damaged && d.alpha.Len() > alphaBefore {
+			d.pendingQ.DamagedRanges = append(d.pendingQ.DamagedRanges, [2]int{alphaBefore, d.alpha.Len()})
+		}
+	}()
 
 	// Numeric: 5 digits, each 4 bits, in transmission order.
 	for i := range 5 {
@@ -396,6 +465,7 @@ func (d *Decoder) flushPending() {
 		BitRate:  d.bitRate,
 		Numeric:  strings.TrimRight(d.numeric.String(), " "),
 		Alpha:    d.alpha.String(),
+		Quality:  d.pendingQ,
 	}
 	d.pendingAddr = ""
 	d.pendingFunction = 0
@@ -403,6 +473,12 @@ func (d *Decoder) flushPending() {
 	d.alpha.Reset()
 	d.alphaCarry = 0
 	d.alphaCarryBits = 0
+	d.pendingQ = Quality{}
+	// A page whose every message codeword was beyond repair is noise
+	// that followed a mis-decoded address, not a page.
+	if page.Quality.Codewords > 0 && page.Quality.Uncorrectable == page.Quality.Codewords {
+		return
+	}
 	if page.Alpha != "" || page.Numeric != "" {
 		d.staged = append(d.staged, page)
 	}
@@ -433,6 +509,14 @@ func (d *Decoder) noteTruncation() {
 	}
 }
 
+// markTruncated is noteTruncation plus the flag on the page itself.
+func (d *Decoder) markTruncated() {
+	d.noteTruncation()
+	if d.pendingAddr != "" && (d.alpha.Len() > 0 || d.numeric.Len() > 0) {
+		d.pendingQ.Truncated = true
+	}
+}
+
 // discardStaged drops the most recent batch's staged pages — sync didn't
 // reappear so the lock was probably bogus.
 func (d *Decoder) discardStaged() {
@@ -443,6 +527,7 @@ func (d *Decoder) discardStaged() {
 	d.alpha.Reset()
 	d.alphaCarry = 0
 	d.alphaCarryBits = 0
+	d.pendingQ = Quality{}
 }
 
 func reverse4(v uint8) uint8 {

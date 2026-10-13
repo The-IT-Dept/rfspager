@@ -21,7 +21,6 @@ import (
 	"os"
 
 	"github.com/the-it-dept/rfspager/internal/receiver"
-	"github.com/the-it-dept/rfspager/internal/receiver/dsp"
 	"github.com/the-it-dept/rfspager/internal/receiver/pocsag"
 	"github.com/the-it-dept/rfspager/internal/rxproto"
 )
@@ -71,8 +70,8 @@ func replay(kind string, rate uint32, r io.Reader, w io.Writer) (pocsag.Stats, e
 		}
 	}
 
-	var fm dsp.FMDemod
 	var buf [4]byte
+	var iqOne [1]complex128
 	var n int
 	for {
 		var demod float64
@@ -96,7 +95,14 @@ func replay(kind string, rate uint32, r io.Reader, w io.Writer) (pocsag.Stats, e
 			}
 			re := float64(int16(binary.LittleEndian.Uint16(buf[:2]))) / 32767
 			im := float64(int16(binary.LittleEndian.Uint16(buf[2:4]))) / 32767
-			demod = fm.Demod(complex(re, im))
+			// IQ goes through the production path: per-baud IF filter and
+			// discriminator inside the legs.
+			iqOne[0] = complex(re, im)
+			dec.FeedIQ(iqOne[:])
+			if n++; n%1024 == 0 {
+				drain()
+			}
+			continue
 		default:
 			return pocsag.Stats{}, fmt.Errorf("unknown kind %q (want audio or iq)", kind)
 		}
