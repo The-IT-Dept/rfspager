@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.6.0](https://github.com/The-IT-Dept/rfspager/compare/v5.5.1...v5.6.0) (2026-10-13)
+
+
+### Features
+
+* **receiver:** weak-signal decoding: aligned damage, parity BCH, tolerant sync, per-baud IF, soft decision ([#20](https://github.com/The-IT-Dept/rfspager/issues/20)) ([254aab7](https://github.com/The-IT-Dept/rfspager/commit/254aab7fb89c9a9e20d2724f9a0869c31fe6dc04))
+
 ## [5.5.1](https://github.com/The-IT-Dept/rfspager/compare/v5.5.0...v5.5.1) (2026-10-13)
 
 
