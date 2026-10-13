@@ -158,6 +158,7 @@ func (d *DB) CreateCapcode(ctx context.Context, c *models.Capcode) error {
 // can run either standalone or inside the locked insert transaction.
 type queryer interface {
 	GetContext(ctx context.Context, dest any, query string, args ...any) error
+	SelectContext(ctx context.Context, dest any, query string, args ...any) error
 }
 
 func (d *DB) IsDuplicateMessage(ctx context.Context, address, message string, timestamp time.Time) (bool, error) {

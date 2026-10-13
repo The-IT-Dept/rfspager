@@ -38,7 +38,7 @@ WITH locked AS (
 ),
 msg AS (
     SELECT m.id, m.system_id, m.capcode_id, m.address, m.message, m.created_at,
-           m.lat, m.lng, m.incident_key,
+           m.lat, m.lng, m.incident_key, m.quality,
            c.alias  AS capcode_alias,
            a.agency AS agency_name
       FROM messages m
@@ -109,6 +109,24 @@ inserted AS (
                AND m2.id <> msg.id
                AND m2.incident_key = msg.incident_key
                AND m2.created_at > msg.created_at - INTERVAL '15 minutes'
+           ))
+       -- A copy the receiver had to repair heavily (anything unrepairable
+       -- or cut short, or half its codewords corrected), arriving within
+       -- three minutes of another page on the same capcode, is a re-send
+       -- whose damage defeated the dedupe. It stays in the feed; nobody is
+       -- woken for it.
+       AND NOT (
+            msg.quality IS NOT NULL
+            AND (COALESCE((msg.quality->>'uncorrectable')::int, 0) > 0
+                 OR COALESCE((msg.quality->>'truncated')::bool, false)
+                 OR COALESCE((msg.quality->>'corrected')::int, 0) * 2
+                    >= GREATEST(COALESCE((msg.quality->>'codewords')::int, 0), 1))
+            AND EXISTS (
+                SELECT 1 FROM messages m3
+                 WHERE m3.address = msg.address
+                   AND m3.id <> msg.id
+                   AND m3.deleted_at IS NULL
+                   AND m3.created_at BETWEEN msg.created_at - INTERVAL '3 minutes' AND msg.created_at
            ))
     RETURNING notifiable_id
 ),
