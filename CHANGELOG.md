@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.6.1](https://github.com/The-IT-Dept/rfspager/compare/v5.6.0...v5.6.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **mobile:** load saved capcode filters at launch ([#22](https://github.com/The-IT-Dept/rfspager/issues/22)) ([a2c4fa5](https://github.com/The-IT-Dept/rfspager/commit/a2c4fa579f5a83fe08fc6607cadac024884e0265))
+
 ## [5.6.0](https://github.com/The-IT-Dept/rfspager/compare/v5.5.1...v5.6.0) (2026-10-13)
 
 
