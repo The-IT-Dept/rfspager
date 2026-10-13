@@ -3,6 +3,8 @@ package models
 import (
 	"database/sql"
 	"time"
+
+	"github.com/the-it-dept/rfspager/internal/rxproto"
 )
 
 type System struct {
@@ -35,6 +37,11 @@ type Message struct {
 	CreatedAt time.Time      `db:"created_at"`
 	UpdatedAt time.Time      `db:"updated_at"`
 	DeletedAt sql.NullTime   `db:"deleted_at"`
+	// Quality is the receiver's decode assessment of the stored copy;
+	// nil for copies from receivers that do not report it.
+	Quality *rxproto.PageQuality `db:"-"`
+	// IncidentKey groups copies of the same dispatch across capcodes.
+	IncidentKey string `db:"-"`
 }
 
 type Capcode struct {
@@ -66,21 +73,21 @@ type Subscription struct {
 }
 
 type Installation struct {
-	ID        string         `db:"id"` // UUID
-	UserID    int64          `db:"user_id"`
-	PushType  string         `db:"push_type"`  // "APN" or "GCM"
-	PushToken sql.NullString `db:"push_token"`
-	ExpoToken sql.NullString `db:"expo_token"`
-	Vendor    string         `db:"vendor"`
-	Model     string         `db:"model"`
-	Version   string         `db:"version"`
-	AppID     string         `db:"app_id"`
-	AppName   string         `db:"app_name"`
-	AppVersion string        `db:"app_version"`
-	Timezone  string         `db:"timezone"`
-	CreatedAt time.Time      `db:"created_at"`
-	UpdatedAt time.Time      `db:"updated_at"`
-	DeletedAt sql.NullTime   `db:"deleted_at"`
+	ID         string         `db:"id"` // UUID
+	UserID     int64          `db:"user_id"`
+	PushType   string         `db:"push_type"` // "APN" or "GCM"
+	PushToken  sql.NullString `db:"push_token"`
+	ExpoToken  sql.NullString `db:"expo_token"`
+	Vendor     string         `db:"vendor"`
+	Model      string         `db:"model"`
+	Version    string         `db:"version"`
+	AppID      string         `db:"app_id"`
+	AppName    string         `db:"app_name"`
+	AppVersion string         `db:"app_version"`
+	Timezone   string         `db:"timezone"`
+	CreatedAt  time.Time      `db:"created_at"`
+	UpdatedAt  time.Time      `db:"updated_at"`
+	DeletedAt  sql.NullTime   `db:"deleted_at"`
 }
 
 type Alertzone struct {
@@ -93,8 +100,8 @@ type Alertzone struct {
 }
 
 type User struct {
-	ID                int64  `db:"id"`
-	SubscriptionValid bool   `db:"subscription_valid"`
+	ID                int64 `db:"id"`
+	SubscriptionValid bool  `db:"subscription_valid"`
 }
 
 type Agency struct {
@@ -111,14 +118,14 @@ type NotificationTarget struct {
 
 // MessageIngress is the payload from external systems (v1 format).
 type MessageIngress struct {
-	Address   string  `json:"address"`
-	Message   string  `json:"message"`
-	Timestamp any     `json:"timestamp"` // can be int64 or string
-	Agency    string  `json:"agency,omitempty"`
-	Alias     string  `json:"alias,omitempty"`
-	Icon      string  `json:"icon,omitempty"`
-	Color     string  `json:"color,omitempty"`
-	Ignore    *bool   `json:"ignore,omitempty"`
+	Address   string `json:"address"`
+	Message   string `json:"message"`
+	Timestamp any    `json:"timestamp"` // can be int64 or string
+	Agency    string `json:"agency,omitempty"`
+	Alias     string `json:"alias,omitempty"`
+	Icon      string `json:"icon,omitempty"`
+	Color     string `json:"color,omitempty"`
+	Ignore    *bool  `json:"ignore,omitempty"`
 }
 
 // MultimonIngress is the v2 multimon_message format.
