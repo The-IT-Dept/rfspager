@@ -23,7 +23,7 @@ import { useSubscriptionModal } from "../../utils/use-subscription-modal"
 import { AdDebugPanel } from "../../components/ad-debug-panel"
 import { toolbarIcon } from "../../components/toolbar-icon/toolbar-icon"
 import { Images } from "../../constants/images"
-import { pagerEmptyState } from "./pager-empty-state"
+import { hideFeedForEmptyFilter, pagerEmptyState } from "./pager-empty-state"
 
 export const PagerScreen: FC =
   function PagerScreen() {
@@ -36,6 +36,7 @@ export const PagerScreen: FC =
     const setPagerShowUnknown = usePreferencesStore((s) => s.setPagerShowUnknown)
     const validSubscription = useValidSubscription()
     const filters = useSubscriptionsStore((s) => s.filters)
+    const filtersLoaded = useSubscriptionsStore((s) => s.loaded)
     const upsertInstallation = useAuthStore((s) => s.upsertInstallation)
     const styles = makeStyles(theme)
 
@@ -127,7 +128,7 @@ export const PagerScreen: FC =
             <Text style={styles.loadingText}>Loading messages...</Text>
           </View>
         )
-      const empty = pagerEmptyState({ filterOn: pagerFilter, filterCount: filters.length })
+      const empty = pagerEmptyState({ filterOn: pagerFilter, filterCount: filters.length, filtersLoaded })
       return (
         <View style={styles.emptyContainer}>
           <FontAwesome5
@@ -149,7 +150,9 @@ export const PagerScreen: FC =
       )
     }
 
-    const listData = pagerFilter && filters.length === 0 ? [] : messages
+    const listData = hideFeedForEmptyFilter({ filterOn: pagerFilter, filterCount: filters.length, filtersLoaded })
+      ? []
+      : messages
 
     return (
       <View style={styles.container}>

@@ -11,13 +11,36 @@ export interface PagerEmptyState {
  * mistake for the filter being off, so say what was filtered and why it is
  * empty.
  */
+export interface PagerFilterState {
+  filterOn: boolean
+  filterCount: number
+  /** False until the saved filter list has been fetched; an empty list
+   *  before then means "unknown", not "none selected". */
+  filtersLoaded?: boolean
+}
+
+/**
+ * Whether to blank the feed because filtering is on with nothing selected.
+ * The server already filters the feed, so this only exists to show the
+ * "select some capcodes" state, and it must wait for the list to load:
+ * blanking early hid a correctly filtered feed on every cold start.
+ */
+export function hideFeedForEmptyFilter({
+  filterOn,
+  filterCount,
+  filtersLoaded = true,
+}: PagerFilterState): boolean {
+  return filterOn && filtersLoaded && filterCount === 0
+}
+
 export function pagerEmptyState({
   filterOn,
   filterCount,
-}: {
-  filterOn: boolean
-  filterCount: number
-}): PagerEmptyState {
+  filtersLoaded = true,
+}: PagerFilterState): PagerEmptyState {
+  if (filterOn && !filtersLoaded) {
+    return { title: "No Messages", body: "There are no messages to show yet." }
+  }
   if (filterOn && filterCount === 0) {
     return {
       title: "No Capcodes Selected",

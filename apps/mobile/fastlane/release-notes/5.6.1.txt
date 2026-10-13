@@ -1,0 +1,1 @@
+Fixes the pager showing "No Capcodes Selected" on launch when you had capcodes selected: the saved list now loads with the app instead of only when you open the capcode picker.
