@@ -399,10 +399,17 @@ func (c *Client) SendPageQ(addr, msg string, when time.Time, fn, baud int, q *rx
 }
 
 // SendLog ships a single log line over the WS for persistence + live fan-out
-// to owner + admin viewers. Best-effort: dropped if the send buffer is full
-// — we never want logging to block the decode hot path.
+// to owner + admin viewers. Best-effort and silent: a log frame is never
+// queued while the link is down (pages keep the buffer, as with stats) and
+// is dropped without a word when the buffer is full. Logging about a dropped
+// log frame would come straight back here through the LogShippingHandler
+// and recurse until the stack overflowed, which is what took Figtree down
+// every twelve minutes of its 2026-10-14 internet outage.
 func (c *Client) SendLog(level, source, message string, raw map[string]any) {
-	c.enqueue(rxproto.Frame{Type: rxproto.FrameLog, Data: mustJSON(rxproto.Log{
+	if !c.connected.Load() {
+		return
+	}
+	c.offer(rxproto.Frame{Type: rxproto.FrameLog, Data: mustJSON(rxproto.Log{
 		TS:      time.Now().UnixMilli(),
 		Level:   level,
 		Source:  source,
@@ -479,13 +486,24 @@ func (c *Client) Welcomed(ctx context.Context) (rxproto.Welcome, error) {
 	}
 }
 
+// enqueue queues a frame and logs when the buffer is full. The warning is
+// shipped like any other log line, so the log path itself must never log.
 func (c *Client) enqueue(f rxproto.Frame) {
+	if !c.offer(f) {
+		slog.Warn("ws send buffer full, dropping", "type", f.Type)
+	}
+}
+
+// offer queues a frame if there is room and reports whether it did. It
+// counts a drop but never logs one.
+func (c *Client) offer(f rxproto.Frame) bool {
 	select {
 	case c.sendCh <- f:
 		c.pending.Add(1)
+		return true
 	default:
 		c.dropped.Add(1)
-		slog.Warn("ws send buffer full, dropping", "type", f.Type)
+		return false
 	}
 }
 

@@ -8,8 +8,9 @@ import (
 
 // LogShippingHandler is an slog.Handler that mirrors every record to the
 // upstream WebSocket via Client.SendLog while preserving the original
-// stdout/stderr handler the receiver was using. Best-effort: dropped
-// silently if the send buffer is full.
+// stdout/stderr handler the receiver was using. Best-effort: Client.SendLog
+// drops silently when the link is down or the send buffer is full. It must
+// stay silent, because anything it logged would arrive back here.
 //
 // Use it like:
 //
