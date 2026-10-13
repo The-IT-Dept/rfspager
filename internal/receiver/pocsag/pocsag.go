@@ -353,6 +353,16 @@ func (d *Decoder) processCodewords(cws []uint32, confs [][32]float64) {
 			if fixed, flips, repaired := chase(cw, &confs[i]); repaired {
 				corrected, errors, ok = fixed, flips, true
 				d.cnt.cwChased.Add(1)
+				// A soft-decision repair can land on a valid but wrong
+				// codeword. In message text that costs a few characters;
+				// in an address it invents a capcode, and on 2026-10-14
+				// Budgewoi filed a Raymond Terrace page under 1041008 that
+				// way. A chased address is treated as unrepairable: it
+				// never starts a page, and mid-message its raw bits are
+				// kept so the text stays aligned.
+				if fixed&0x80000000 == 0 {
+					ok = false
+				}
 			}
 		}
 		switch {
@@ -414,6 +424,12 @@ func (d *Decoder) processCodewords(cws []uint32, confs [][32]float64) {
 				maxErrors = 1
 			}
 			if errors > maxErrors {
+				// Treated as a noisy message codeword: keep its raw bits
+				// so the rest of the page stays aligned (see the
+				// unrepairable case above) rather than dropping it.
+				d.pendingQ.Codewords++
+				d.pendingQ.Uncorrectable++
+				d.appendMessageBits(cw|0x80000000, true)
 				continue
 			}
 		}
