@@ -107,6 +107,20 @@ type Page struct {
 	Datetime int64  `json:"datetime"` // unix seconds
 	Function int    `json:"fn"`
 	BitRate  int    `json:"baud"`
+	// Quality is the receiver's own assessment of the decode (v2
+	// receivers from 5.6). Absent from older receivers.
+	Quality *PageQuality `json:"quality,omitempty"`
+}
+
+// PageQuality records how much repair a page needed, so the server can
+// rank copies of the same page heard by several receivers and flag
+// damaged text.
+type PageQuality struct {
+	Codewords     int      `json:"codewords"`           // message codewords that fed the page
+	Corrected     int      `json:"corrected"`           // repaired by BCH or soft decision
+	Uncorrectable int      `json:"uncorrectable"`       // beyond repair; raw bits kept for alignment
+	Truncated     bool     `json:"truncated,omitempty"` // ended by lost sync or a stream gap
+	Damaged       [][2]int `json:"damaged,omitempty"`   // [start,end) byte ranges of Message from unrepairable codewords
 }
 
 // Log is one shipped log line.
@@ -254,6 +268,7 @@ type ChannelStats struct {
 	CWClean         int     `json:"cw_clean"`
 	CWCorrected     int     `json:"cw_corrected"`
 	CWUncorrectable int     `json:"cw_uncorrectable"`
+	CWChased        int     `json:"cw_chased,omitempty"` // of the corrected, repaired by soft decision
 	Pages           int     `json:"pages"`
 	PagesTruncated  int     `json:"pages_truncated"`
 	LastPageAgeS    int     `json:"last_page_age_s"` // -1 when no page since start

@@ -1,5 +1,7 @@
 package dsp
 
+import "math"
+
 // BitSlicer recovers POCSAG bits from an FM-demodulated baseband signal.
 //
 // Three stages per input sample:
@@ -13,6 +15,10 @@ package dsp
 //     true transition, and the point where the window sits wholly inside
 //     one symbol is half a bit after that — which is exactly the
 //     "crossings at phase 0, sample at phase spb/2" model used below.
+//     (A full-bit integrate-and-dump was measured against this on the
+//     real pipeline in October 2026 and lost at every noise level, so the
+//     half-bit window sampled mid-symbol is the decision as well as the
+//     timing reference.)
 //
 //  2. DC tracking. A slow single-pole filter estimates the demod DC offset
 //     (tuner frequency error) so the slicing threshold stays centred. It is
@@ -42,6 +48,9 @@ type BitSlicer struct {
 	rpos int
 	sum  float64
 
+	// mag tracks the mean |decision| so confidence can be normalised.
+	mag float64
+
 	prev float64 // previous filtered, DC-removed sample
 }
 
@@ -61,6 +70,16 @@ func NewBitSlicer(sampleRateHz, baud float64) *BitSlicer {
 // Push feeds one demodulated sample. Returns (bit, true) when this sample
 // is the mid-bit instant for a new symbol; otherwise (false, false).
 func (s *BitSlicer) Push(x float64) (bool, bool) {
+	bit, _, emit := s.PushSoft(x)
+	return bit, emit
+}
+
+// PushSoft is Push with a confidence for the decided bit: the matched
+// filter's level at the decision instant relative to the recent average
+// level, so 1.0 is a typical clean symbol and values near 0 were close to
+// the threshold. The decoder uses it to pick which bits to doubt when a
+// codeword fails to verify.
+func (s *BitSlicer) PushSoft(x float64) (bit bool, conf float64, emit bool) {
 	s.dc += s.dcAlpha * (x - s.dc)
 
 	s.sum += x - s.ring[s.rpos]
@@ -84,11 +103,22 @@ func (s *BitSlicer) Push(x float64) (bool, bool) {
 
 	old := s.phase
 	s.phase++
-	emit := old < s.halfBit && s.phase >= s.halfBit
-	bit := y > 0
+	emit = old < s.halfBit && s.phase >= s.halfBit
 	if s.phase >= s.samplesPerBit {
 		s.phase -= s.samplesPerBit
 		s.corrected = false
 	}
-	return bit, emit
+	if !emit {
+		return false, 0, false
+	}
+	m := math.Abs(y)
+	if s.mag == 0 {
+		s.mag = m
+	} else {
+		s.mag += 0.02 * (m - s.mag)
+	}
+	if s.mag > 0 {
+		conf = m / s.mag
+	}
+	return y > 0, conf, true
 }

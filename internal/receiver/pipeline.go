@@ -35,10 +35,35 @@ type Decoders struct {
 	legs []bandLeg
 }
 
-// bandLeg pairs a bit slicer with a POCSAG decoder for one baud rate.
+// bandLeg is one baud rate's receive chain after the channel filter: an
+// IF filter no wider than that baud needs, its own FM discriminator, a
+// bit slicer and a POCSAG decoder.
+//
+// The channel FIR is 12 kHz wide so 2400 baud fits. A 512-baud signal
+// with ±4.5 kHz deviation occupies under 10 kHz, so for it that extra
+// bandwidth is pure noise at the discriminator, and FM demodulation
+// falls off a cliff once the carrier-to-noise ratio in the IF bandwidth
+// drops below about 10 dB. Halving the IF bandwidth for the slow bauds
+// buys ~3 dB at exactly that cliff, which is where distant pages live.
 type bandLeg struct {
+	iff     *dsp.FIRDecimator // nil: use the channel-wide audio as is
+	filt    []complex128      // scratch: this leg's IF-filtered block
+	fm      dsp.FMDemod
 	slicer  *dsp.BitSlicer
 	decoder *pocsag.Decoder
+}
+
+// ifCutoffHz is the per-baud IF lowpass cutoff at the audio rate, or 0
+// for no extra filtering. Deviation ±4.5 kHz plus half the baud plus
+// room for ~1.5 kHz of tuner and transmitter frequency error.
+func ifCutoffHz(baud int) float64 {
+	switch baud {
+	case 512:
+		return 6_500
+	case 1200:
+		return 7_500
+	}
+	return 0
 }
 
 // NewDecoders builds the slicer + decoder pairs for audioRate; pages from
@@ -46,12 +71,39 @@ type bandLeg struct {
 func NewDecoders(audioRate uint32, out chan pocsag.Page) *Decoders {
 	d := &Decoders{}
 	for _, baud := range SupportedBauds {
-		d.legs = append(d.legs, bandLeg{
+		leg := bandLeg{
 			slicer:  dsp.NewBitSlicer(float64(audioRate), float64(baud)),
 			decoder: pocsag.New(baud, out),
-		})
+		}
+		if cutoff := ifCutoffHz(baud); cutoff > 0 {
+			// 65 taps at 38.4 kHz: ~2 kHz transition, 53 dB stopband, and
+			// about 10 MMAC/s per leg, which is nothing next to the mixer.
+			leg.iff = dsp.NewFIRDecimator(dsp.LowpassTaps(cutoff, float64(audioRate), 64), 1)
+		}
+		d.legs = append(d.legs, leg)
 	}
 	return d
+}
+
+// FeedIQ pushes one block of channel-filtered complex baseband through
+// every leg: each applies its own IF filter and discriminator before
+// slicing. This is the production path; Feed is for pre-demodulated
+// audio where no IF filtering is possible.
+func (d *Decoders) FeedIQ(audio []complex128) {
+	for i := range d.legs {
+		leg := &d.legs[i]
+		src := audio
+		if leg.iff != nil {
+			leg.filt = leg.iff.ProcessBlock(audio, leg.filt)
+			src = leg.filt
+		}
+		for _, a := range src {
+			bit, conf, gotBit := leg.slicer.PushSoft(leg.fm.Demod(a))
+			if gotBit {
+				leg.decoder.FeedSoft(bit, conf)
+			}
+		}
+	}
 }
 
 // Feed pushes one demodulated sample (radians/sample) through every leg.
@@ -164,9 +216,7 @@ func (c *Channel) Process(samples []complex128) {
 			close(tp.done)
 		}
 	}
-	for _, d := range c.demod {
-		c.dec.Feed(d)
-	}
+	c.dec.FeedIQ(c.audio)
 }
 
 // Gap tells the channel the IQ stream had a discontinuity (the SDR layer
@@ -237,6 +287,7 @@ func (c *Channel) Snapshot() rxproto.ChannelStats {
 	st.CWClean = int(d.CWClean)
 	st.CWCorrected = int(d.CWCorrected)
 	st.CWUncorrectable = int(d.CWUncorrectable)
+	st.CWChased = int(d.CWChased)
 	st.Pages = int(d.Pages)
 	st.PagesTruncated = int(d.PagesTruncated)
 	if !cur.LastPageAt.IsZero() {
@@ -362,6 +413,26 @@ const (
 	errCaptureBusy        = captureError("a capture is already running on this channel")
 )
 
+// QualitySender is implemented by transports that can carry the page's
+// decode quality alongside the text; others get SendPage.
+type QualitySender interface {
+	SendPageQ(addr, msg string, when time.Time, fn, baud int, q *rxproto.PageQuality)
+}
+
+// pageQuality converts the decoder's assessment to its wire form.
+func pageQuality(q pocsag.Quality) *rxproto.PageQuality {
+	out := &rxproto.PageQuality{
+		Codewords:     q.Codewords,
+		Corrected:     q.Corrected,
+		Uncorrectable: q.Uncorrectable,
+		Truncated:     q.Truncated,
+	}
+	if len(q.DamagedRanges) > 0 {
+		out.Damaged = append([][2]int(nil), q.DamagedRanges...)
+	}
+	return out
+}
+
 // Forwarder pumps pages from a Channel onto whatever upstream transport
 // the receiver was configured with.
 type Forwarder struct {
@@ -410,6 +481,9 @@ func (f *Forwarder) Run(ctx context.Context, ch *Channel) {
 				"fn", page.Function,
 				"posted", post,
 				"msg", logMsg,
+				"corrected", page.Quality.Corrected,
+				"uncorrectable", page.Quality.Uncorrectable,
+				"truncated", page.Quality.Truncated,
 			)
 			if !post {
 				continue
@@ -421,7 +495,11 @@ func (f *Forwarder) Run(ctx context.Context, ch *Channel) {
 			if sendMsg == "" {
 				sendMsg = page.Numeric
 			}
-			f.Sender.SendPage(page.Address, sendMsg, time.Now(), page.Function, page.BitRate)
+			if qs, ok := f.Sender.(QualitySender); ok {
+				qs.SendPageQ(page.Address, sendMsg, time.Now(), page.Function, page.BitRate, pageQuality(page.Quality))
+			} else {
+				f.Sender.SendPage(page.Address, sendMsg, time.Now(), page.Function, page.BitRate)
+			}
 		}
 	}
 }

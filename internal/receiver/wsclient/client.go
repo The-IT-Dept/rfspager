@@ -382,12 +382,18 @@ func configVersion(p *rxproto.ConfigPayload) int {
 // SendPage queues a decoded page for delivery to the server. Drops with a
 // log if the buffer is full (server / network not keeping up).
 func (c *Client) SendPage(addr, msg string, when time.Time, fn, baud int) {
+	c.SendPageQ(addr, msg, when, fn, baud, nil)
+}
+
+// SendPageQ is SendPage with the decoder's quality assessment attached.
+func (c *Client) SendPageQ(addr, msg string, when time.Time, fn, baud int, q *rxproto.PageQuality) {
 	p := rxproto.Page{
 		Address:  addr,
 		Message:  msg,
 		Datetime: when.Unix(),
 		Function: fn,
 		BitRate:  baud,
+		Quality:  q,
 	}
 	c.enqueue(rxproto.Frame{Type: rxproto.FramePage, ID: uuid.NewString(), Data: mustJSON(p)})
 }
