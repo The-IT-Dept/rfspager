@@ -287,6 +287,7 @@ func (c *Channel) Snapshot() rxproto.ChannelStats {
 	st.CWClean = int(d.CWClean)
 	st.CWCorrected = int(d.CWCorrected)
 	st.CWUncorrectable = int(d.CWUncorrectable)
+	st.CWChased = int(d.CWChased)
 	st.Pages = int(d.Pages)
 	st.PagesTruncated = int(d.PagesTruncated)
 	if !cur.LastPageAt.IsZero() {
@@ -412,6 +413,26 @@ const (
 	errCaptureBusy        = captureError("a capture is already running on this channel")
 )
 
+// QualitySender is implemented by transports that can carry the page's
+// decode quality alongside the text; others get SendPage.
+type QualitySender interface {
+	SendPageQ(addr, msg string, when time.Time, fn, baud int, q *rxproto.PageQuality)
+}
+
+// pageQuality converts the decoder's assessment to its wire form.
+func pageQuality(q pocsag.Quality) *rxproto.PageQuality {
+	out := &rxproto.PageQuality{
+		Codewords:     q.Codewords,
+		Corrected:     q.Corrected,
+		Uncorrectable: q.Uncorrectable,
+		Truncated:     q.Truncated,
+	}
+	if len(q.DamagedRanges) > 0 {
+		out.Damaged = append([][2]int(nil), q.DamagedRanges...)
+	}
+	return out
+}
+
 // Forwarder pumps pages from a Channel onto whatever upstream transport
 // the receiver was configured with.
 type Forwarder struct {
@@ -460,6 +481,9 @@ func (f *Forwarder) Run(ctx context.Context, ch *Channel) {
 				"fn", page.Function,
 				"posted", post,
 				"msg", logMsg,
+				"corrected", page.Quality.Corrected,
+				"uncorrectable", page.Quality.Uncorrectable,
+				"truncated", page.Quality.Truncated,
 			)
 			if !post {
 				continue
@@ -471,7 +495,11 @@ func (f *Forwarder) Run(ctx context.Context, ch *Channel) {
 			if sendMsg == "" {
 				sendMsg = page.Numeric
 			}
-			f.Sender.SendPage(page.Address, sendMsg, time.Now(), page.Function, page.BitRate)
+			if qs, ok := f.Sender.(QualitySender); ok {
+				qs.SendPageQ(page.Address, sendMsg, time.Now(), page.Function, page.BitRate, pageQuality(page.Quality))
+			} else {
+				f.Sender.SendPage(page.Address, sendMsg, time.Now(), page.Function, page.BitRate)
+			}
 		}
 	}
 }

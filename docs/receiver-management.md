@@ -204,3 +204,44 @@ the admin UI, stats and captures, `update` for every later release.
   still applies but nothing is cached and updates are refused.
 - `live gain change failed; restarting dongle`: librtlsdr rejected the value
   (not every tenth of a dB exists); the dongle was reopened with the config.
+
+## Weak-signal decoding (5.6)
+
+What the decoder does for distant pages, and how to measure a change
+before deploying it:
+
+- Per-baud IF filtering. Each baud leg filters the 12 kHz channel down to
+  what that baud needs (6.5 kHz for 512, 7.5 kHz for 1200) before its own
+  FM discriminator. This moves the FM threshold by about 3 dB, which is
+  where far pages live.
+- Alignment is preserved through unrepairable codewords: their raw bits
+  are kept (at most four wrong characters) instead of dropping 20 bits and
+  garbling the rest of the page. The damaged spans, counts of corrected and
+  unrepairable codewords and a truncated flag travel with the page as
+  `quality` and appear in the receiver's `page` log lines.
+- BCH repairs are checked against the codeword's even parity; a repair that
+  fails parity is a mis-correction and is treated as unrepairable.
+- Sync is hunted with two bit errors, tracked with three once locked, and
+  looked for from two bits early to three bits late, so a slipped bit
+  realigns the batch instead of ending the page.
+- Soft decision: the slicer reports a confidence per bit; when BCH gives up
+  the five least confident bits are retried in every combination (Chase-2)
+  and accepted only if every changed bit was doubtful. About another
+  decibel.
+
+A full-bit integrate-and-dump decision was tried and measured worse than
+the half-bit matched filter sampled mid-symbol at every noise level, so the
+original decision stays.
+
+Measure before you deploy:
+
+```sh
+RFS_SNR_SWEEP=1 RFS_SNR_TRIALS=12 go test ./internal/receiver -run TestSNRSweep -v
+```
+
+prints, per in-band SNR, how many synthetic RFS pages decoded exactly, with
+minor damage, not at all, or as garbage, plus phantom pages on other
+capcodes. Baseline before this work: exact decodes collapsed between 6 and
+4.5 dB. After: exact to 1.4 dB, no phantoms above 0 dB. Real captures are
+the other half: pull `iq` captures of weak pages from the Diagnostics tab and
+run them through `cmd/replay`, which uses the same leg pipeline.

@@ -1,6 +1,7 @@
 package receiver
 
 import (
+	"github.com/the-it-dept/rfspager/internal/rxproto"
 	"log/slog"
 	"time"
 )
@@ -44,6 +45,12 @@ func (m *MultiSender) Names() []string {
 }
 
 func (m *MultiSender) SendPage(addr, msg string, when time.Time, fn, baud int) {
+	m.SendPageQ(addr, msg, when, fn, baud, nil)
+}
+
+// SendPageQ fans the page out with its decode quality to transports that
+// carry it, and without to those that do not.
+func (m *MultiSender) SendPageQ(addr, msg string, when time.Time, fn, baud int, q *rxproto.PageQuality) {
 	for _, s := range m.senders {
 		// Guard each upstream: a panic in one transport must not lose the page
 		// for the others, and must not take the receiver down.
@@ -53,7 +60,11 @@ func (m *MultiSender) SendPage(addr, msg string, when time.Time, fn, baud int) {
 					slog.Error("page send panicked", "endpoint", s.Name, "panic", r)
 				}
 			}()
-			s.Sender.SendPage(addr, msg, when, fn, baud)
+			if qs, ok := s.Sender.(QualitySender); ok {
+				qs.SendPageQ(addr, msg, when, fn, baud, q)
+			} else {
+				s.Sender.SendPage(addr, msg, when, fn, baud)
+			}
 		}(s)
 	}
 }
