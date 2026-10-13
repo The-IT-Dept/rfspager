@@ -5,11 +5,15 @@ package receiver
 import (
 	"context"
 	"log/slog"
+	"math"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/the-it-dept/rfspager/internal/receiver/dsp"
 	"github.com/the-it-dept/rfspager/internal/receiver/pocsag"
+	"github.com/the-it-dept/rfspager/internal/rxproto"
 )
 
 // PageSender is the transport contract the Forwarder uses. Implemented by
@@ -23,6 +27,69 @@ type PageSender interface {
 // slicers harmlessly produce noise that fails sync detection.
 var SupportedBauds = []int{512, 1200, 2400}
 
+// Decoders is the audio-rate tail of a channel: one bit slicer plus one
+// POCSAG decoder per supported baud, all fed the same FM-demodulated
+// samples. Channel uses it live; cmd/replay uses it on recorded captures so
+// both run exactly the same bit path.
+type Decoders struct {
+	legs []bandLeg
+}
+
+// bandLeg pairs a bit slicer with a POCSAG decoder for one baud rate.
+type bandLeg struct {
+	slicer  *dsp.BitSlicer
+	decoder *pocsag.Decoder
+}
+
+// NewDecoders builds the slicer + decoder pairs for audioRate; pages from
+// every baud are emitted on out.
+func NewDecoders(audioRate uint32, out chan pocsag.Page) *Decoders {
+	d := &Decoders{}
+	for _, baud := range SupportedBauds {
+		d.legs = append(d.legs, bandLeg{
+			slicer:  dsp.NewBitSlicer(float64(audioRate), float64(baud)),
+			decoder: pocsag.New(baud, out),
+		})
+	}
+	return d
+}
+
+// Feed pushes one demodulated sample (radians/sample) through every leg.
+func (d *Decoders) Feed(demod float64) {
+	for i := range d.legs {
+		bit, gotBit := d.legs[i].slicer.Push(demod)
+		if gotBit {
+			d.legs[i].decoder.Feed(bit)
+		}
+	}
+}
+
+// Resync tells every decoder the bit stream has a discontinuity.
+func (d *Decoders) Resync() {
+	for i := range d.legs {
+		d.legs[i].decoder.Resync()
+	}
+}
+
+// Stats sums the cumulative decoder counters over all bauds.
+func (d *Decoders) Stats() pocsag.Stats {
+	var s pocsag.Stats
+	for i := range d.legs {
+		s = s.Add(d.legs[i].decoder.Stats())
+	}
+	return s
+}
+
+// Power histogram: one bin per dB from histMinDB up to 0 dBFS, where 1.0 is
+// full scale on the complex baseband after the channel filter.
+const (
+	histMinDB = -120
+	histBins  = 121
+	// carrierMarginDB is how far above the noise floor a block must sit to
+	// count as carrier present.
+	carrierMarginDB = 6
+)
+
 // Channel is one tuned POCSAG frequency: takes IQ samples relative to the
 // dongle's centre frequency, shifts them down to DC, decimates, FM-
 // demodulates, and runs one bit-slicer + decoder per supported baud rate.
@@ -34,18 +101,21 @@ type Channel struct {
 	mixer *dsp.Mixer
 	fir   *dsp.FIRDecimator
 	fm    dsp.FMDemod
-	legs  []bandLeg
+	dec   *Decoders
 
 	mixed []complex128 // scratch: block after the mixer
 	audio []complex128 // scratch: block after FIR + decimation
+	demod []float64    // scratch: FM demod of audio
 
 	out chan pocsag.Page
-}
 
-// bandLeg pairs a bit slicer with a POCSAG decoder for one baud rate.
-type bandLeg struct {
-	slicer  *dsp.BitSlicer
-	decoder *pocsag.Decoder
+	// tap is the capture in progress, if any. Loaded once per block.
+	tap atomic.Pointer[Capture]
+
+	histMu    sync.Mutex
+	hist      [histBins]uint32
+	blocks    uint32
+	prevStats pocsag.Stats // decoder counters at the previous Snapshot
 }
 
 // NewChannel constructs a Channel tuned `offsetHz` away from the dongle's
@@ -60,21 +130,15 @@ func NewChannel(label string, freqHz uint32, offsetHz float64, inputRate, audioR
 	taps := dsp.LowpassTaps(12_000, float64(inputRate), 96)
 	pages := make(chan pocsag.Page, 16)
 
-	ch := &Channel{
+	return &Channel{
 		Label:    label,
 		FreqHz:   freqHz,
 		OffsetHz: offsetHz,
 		mixer:    dsp.NewMixer(offsetHz, float64(inputRate)),
 		fir:      dsp.NewFIRDecimator(taps, decim),
+		dec:      NewDecoders(audioRate, pages),
 		out:      pages,
 	}
-	for _, baud := range SupportedBauds {
-		ch.legs = append(ch.legs, bandLeg{
-			slicer:  dsp.NewBitSlicer(float64(audioRate), float64(baud)),
-			decoder: pocsag.New(baud, pages),
-		})
-	}
-	return ch
 }
 
 // Pages returns the channel that emits decoded pages.
@@ -88,14 +152,20 @@ func (c *Channel) Pages() <-chan pocsag.Page { return c.out }
 func (c *Channel) Process(samples []complex128) {
 	c.mixed = c.mixer.MixBlock(samples, c.mixed)
 	c.audio = c.fir.ProcessBlock(c.mixed, c.audio)
+	c.recordPower(c.audio)
+
+	c.demod = c.demod[:0]
 	for _, a := range c.audio {
-		demod := c.fm.Demod(a)
-		for i := range c.legs {
-			bit, gotBit := c.legs[i].slicer.Push(demod)
-			if gotBit {
-				c.legs[i].decoder.Feed(bit)
-			}
+		c.demod = append(c.demod, c.fm.Demod(a))
+	}
+	if tp := c.tap.Load(); tp != nil {
+		if tp.feed(c.audio, c.demod) {
+			c.tap.CompareAndSwap(tp, nil)
+			close(tp.done)
 		}
+	}
+	for _, d := range c.demod {
+		c.dec.Feed(d)
 	}
 }
 
@@ -103,20 +173,216 @@ func (c *Channel) Process(samples []complex128) {
 // dropped buffers), so an unknown number of bits went missing. Every
 // decoder finalises whatever it had and re-hunts for sync; the slicers and
 // filters need no reset — they re-lock within a few symbols.
-func (c *Channel) Gap() {
-	for i := range c.legs {
-		c.legs[i].decoder.Resync()
+func (c *Channel) Gap() { c.dec.Resync() }
+
+// recordPower bins the block's mean power (dBFS) into the histogram.
+func (c *Channel) recordPower(block []complex128) {
+	if len(block) == 0 {
+		return
 	}
+	var p float64
+	for _, a := range block {
+		p += real(a)*real(a) + imag(a)*imag(a)
+	}
+	p /= float64(len(block))
+	db := float64(histMinDB)
+	if p > 0 {
+		db = 10 * math.Log10(p)
+	}
+	idx := int(math.Floor(db)) - histMinDB
+	if idx < 0 {
+		idx = 0
+	} else if idx >= histBins {
+		idx = histBins - 1
+	}
+	c.histMu.Lock()
+	c.hist[idx]++
+	c.blocks++
+	c.histMu.Unlock()
 }
+
+// Snapshot reports the channel's health for the interval since the previous
+// call and resets the interval state (histogram, decoder deltas). Call it
+// from one goroutine only.
+func (c *Channel) Snapshot() rxproto.ChannelStats {
+	c.histMu.Lock()
+	hist, n := c.hist, c.blocks
+	c.hist = [histBins]uint32{}
+	c.blocks = 0
+	c.histMu.Unlock()
+
+	floorBin := percentileBin(hist, n, 0.10)
+	powerBin := percentileBin(hist, n, 0.90)
+	var above uint32
+	for b := floorBin + carrierMarginDB + 1; b < histBins && b >= 0; b++ {
+		above += hist[b]
+	}
+	st := rxproto.ChannelStats{
+		Label:          c.Label,
+		FreqHz:         c.FreqHz,
+		PowerDBFS:      float64(powerBin + histMinDB),
+		NoiseFloorDBFS: float64(floorBin + histMinDB),
+		SNRDB:          float64(powerBin - floorBin),
+		LastPageAgeS:   -1,
+	}
+	if n > 0 {
+		st.CarrierPct = 100 * float64(above) / float64(n)
+	}
+
+	cur := c.dec.Stats()
+	d := cur.Sub(c.prevStats)
+	c.prevStats = cur
+	st.SyncLocks = int(d.SyncLocks)
+	st.SyncLosses = int(d.SyncLosses)
+	st.CWClean = int(d.CWClean)
+	st.CWCorrected = int(d.CWCorrected)
+	st.CWUncorrectable = int(d.CWUncorrectable)
+	st.Pages = int(d.Pages)
+	st.PagesTruncated = int(d.PagesTruncated)
+	if !cur.LastPageAt.IsZero() {
+		st.LastPageAgeS = int(time.Since(cur.LastPageAt).Seconds())
+	}
+	return st
+}
+
+// percentileBin returns the lowest bin whose cumulative count reaches
+// q of n blocks; bin 0 when there are no blocks.
+func percentileBin(hist [histBins]uint32, n uint32, q float64) int {
+	if n == 0 {
+		return 0
+	}
+	target := max(uint32(math.Ceil(q*float64(n))), 1)
+	var cum uint32
+	for b := range hist {
+		cum += hist[b]
+		if cum >= target {
+			return b
+		}
+	}
+	return histBins - 1
+}
+
+// Capture is an in-progress recording of one channel's signal, filled by
+// Process and complete when Done is closed.
+//
+// Formats, both little-endian int16:
+//
+//   - audio: the FM demodulator output, one sample per audio-rate sample,
+//     scaled by 32767/pi so ±pi rad/sample is full scale.
+//   - iq: the complex baseband after the channel FIR, interleaved I, Q.
+//     Scaled by a fixed 32767 (1.0 = full scale, the same reference as the
+//     dBFS numbers in stats) rather than normalised to the signal, so a
+//     capture is comparable across receivers and does not clip when a
+//     burst starts after a quiet first block. The 8-bit dongle's own
+//     quantisation noise sits far above int16 resolution, so nothing is
+//     lost on weak signals.
+type Capture struct {
+	Kind      string
+	remaining int // samples still wanted
+	buf       []byte
+	done      chan struct{}
+}
+
+// StartCapture begins recording kind (rxproto.CaptureAudio or
+// rxproto.CaptureIQ) for the given number of audio-rate samples. One
+// capture runs per channel at a time.
+func (c *Channel) StartCapture(kind string, samples int) (*Capture, error) {
+	if kind != rxproto.CaptureAudio && kind != rxproto.CaptureIQ {
+		return nil, errUnknownCaptureKind
+	}
+	if samples <= 0 {
+		return nil, errCaptureLength
+	}
+	per := 2
+	if kind == rxproto.CaptureIQ {
+		per = 4
+	}
+	cp := &Capture{Kind: kind, remaining: samples, buf: make([]byte, 0, samples*per), done: make(chan struct{})}
+	if !c.tap.CompareAndSwap(nil, cp) {
+		return nil, errCaptureBusy
+	}
+	return cp, nil
+}
+
+// CancelCapture detaches a capture that will not be waited for. Done is
+// never closed for a cancelled capture.
+func (c *Channel) CancelCapture(cp *Capture) { c.tap.CompareAndSwap(cp, nil) }
+
+// Done is closed once the requested number of samples has been recorded.
+func (cp *Capture) Done() <-chan struct{} { return cp.done }
+
+// Bytes returns the recording. Only valid after Done is closed.
+func (cp *Capture) Bytes() []byte { return cp.buf }
+
+// feed appends from the block and reports whether the capture is complete.
+func (cp *Capture) feed(audio []complex128, demod []float64) bool {
+	switch cp.Kind {
+	case rxproto.CaptureAudio:
+		for _, d := range demod {
+			if cp.remaining == 0 {
+				break
+			}
+			cp.put(int16Clamp(d * 32767 / math.Pi))
+			cp.remaining--
+		}
+	case rxproto.CaptureIQ:
+		for _, a := range audio {
+			if cp.remaining == 0 {
+				break
+			}
+			cp.put(int16Clamp(real(a) * 32767))
+			cp.put(int16Clamp(imag(a) * 32767))
+			cp.remaining--
+		}
+	}
+	return cp.remaining == 0
+}
+
+func (cp *Capture) put(v int16) {
+	cp.buf = append(cp.buf, byte(uint16(v)), byte(uint16(v)>>8))
+}
+
+func int16Clamp(v float64) int16 {
+	switch {
+	case v > 32767:
+		return 32767
+	case v < -32768:
+		return -32768
+	}
+	return int16(math.Round(v))
+}
+
+type captureError string
+
+func (e captureError) Error() string { return string(e) }
+
+const (
+	errUnknownCaptureKind = captureError("unknown capture kind")
+	errCaptureLength      = captureError("capture length must be positive")
+	errCaptureBusy        = captureError("a capture is already running on this channel")
+)
 
 // Forwarder pumps pages from a Channel onto whatever upstream transport
 // the receiver was configured with.
 type Forwarder struct {
 	Sender PageSender
-	// PostAll bypasses shouldPost. Every decoded page gets sent up
+	// postAll bypasses shouldPost. Every decoded page gets sent up
 	// (with the message we'd otherwise log). Used for pipeline tests.
-	PostAll bool
+	postAll atomic.Bool
 }
+
+// NewForwarder builds a Forwarder; postAll bypasses the content filter.
+func NewForwarder(sender PageSender, postAll bool) *Forwarder {
+	f := &Forwarder{Sender: sender}
+	f.postAll.Store(postAll)
+	return f
+}
+
+// SetPostAll switches the content filter bypass at runtime.
+func (f *Forwarder) SetPostAll(v bool) { f.postAll.Store(v) }
+
+// PostAll reports whether the content filter is bypassed.
+func (f *Forwarder) PostAll() bool { return f.postAll.Load() }
 
 // Run consumes pages from ch.Pages() until ctx is cancelled. Substantive
 // pages are sent via WS; noise-looking decodes are logged only.
@@ -135,7 +401,7 @@ func (f *Forwarder) Run(ctx context.Context, ch *Channel) {
 			if logMsg == "" {
 				logMsg = page.Numeric
 			}
-			post := f.PostAll || shouldPost(page.Alpha)
+			post := f.postAll.Load() || shouldPost(page.Alpha)
 			slog.Info("page",
 				"channel", ch.Label,
 				"freq_mhz", float64(ch.FreqHz)/1e6,

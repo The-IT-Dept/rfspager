@@ -1,14 +1,19 @@
 // Command receiver is a local RTL-SDR agent that listens on configured
 // POCSAG frequencies, decodes pages (at 512, 1200, and 2400 baud), and
-// forwards them to the rfspager server's Pagermon-compatible ingress
-// endpoint.
+// forwards them to the rfspager server over an authenticated websocket
+// (and, optionally, to legacy endpoints).
 //
 // One binary per host; runs on developer laptops, Raspberry Pis, and
 // dedicated receiver boxes. Build with:
 //
 //	go build -tags rtlsdr ./cmd/receiver
 //
-// Configuration is via environment variables (see internal/receiver/config).
+// Bootstrap configuration (server, key, endpoints) comes from the
+// environment (see internal/receiver/config). Radio tuning is a
+// rxproto.RuntimeConfig owned by the server: the receiver runs the cached
+// revision from the state dir, else the RECEIVER_* tuning variables, else
+// the built-in defaults, and applies whatever the server pushes (see
+// internal/receiver/control and docs/receiver-management.md).
 package main
 
 import (
@@ -16,10 +21,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -27,11 +32,15 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/the-it-dept/rfspager/internal/receiver"
+	"github.com/the-it-dept/rfspager/internal/receiver/buildinfo"
 	"github.com/the-it-dept/rfspager/internal/receiver/config"
+	"github.com/the-it-dept/rfspager/internal/receiver/control"
 	"github.com/the-it-dept/rfspager/internal/receiver/dsp"
 	"github.com/the-it-dept/rfspager/internal/receiver/legacy"
 	"github.com/the-it-dept/rfspager/internal/receiver/sdr"
+	"github.com/the-it-dept/rfspager/internal/receiver/stats"
 	"github.com/the-it-dept/rfspager/internal/receiver/wsclient"
+	"github.com/the-it-dept/rfspager/internal/rxproto"
 )
 
 // dongleSilenceTimeout: if the dongle stops delivering IQ buffers for this
@@ -39,37 +48,66 @@ import (
 // At 1.92 MS/s buffers arrive every ~8ms, so a 10-second gap is decisive.
 const dongleSilenceTimeout = 10 * time.Second
 
-// channel is one POCSAG frequency the receiver listens on. Hardcoded for
-// now while we only have two systems; lift to config when that changes.
-type channel struct {
-	label  string
-	freqHz uint32
-}
-
-var hardcodedChannels = []channel{
-	{label: "RFS", freqHz: 148_587_500},
-	{label: "FRNSW", freqHz: 148_962_500},
-}
-
-// audioRate is the per-channel sample rate after decimation. 38.4 kHz is an
-// integer multiple of 1200/2400/512 and divides 1.92 MS/s cleanly.
-const audioRate uint32 = 38_400
+// errDongleRestart is returned by runDongle when the manager asked for the
+// device to be reopened (config change or dongle_reset); the outer loop
+// reopens immediately instead of backing off.
+var errDongleRestart = errors.New("dongle restart requested")
 
 func main() {
 	_ = godotenv.Load() // .env is optional
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	level := &slog.LevelVar{}
+	base := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+	slog.SetDefault(slog.New(base))
 
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("config error", "err", err)
 		os.Exit(2)
 	}
+	bi := buildinfo.Get()
+
+	// State dir and the self-update marker come first: a binary that keeps
+	// crashing after an update must be rolled back before it does anything.
+	store := control.NewStore(config.StateDir())
+	exe, err := control.ResolveExecutable()
+	if err != nil {
+		slog.Warn("cannot resolve own executable; self-update disabled", "err", err)
+	}
+	marker, rolledBack, err := control.BootCheck(store, exe, bi.Version)
+	if err != nil {
+		slog.Error("update marker check failed", "err", err)
+	}
+	if rolledBack {
+		slog.Error("exiting so systemd starts the restored binary")
+		os.Exit(1)
+	}
+	if marker != nil {
+		// A build that stays up this long is not crash-looping; its later
+		// restarts (dongle trouble, server outages) must not roll it back.
+		time.AfterFunc(control.StableAfter, func() {
+			if err := store.MarkStable(marker); err != nil {
+				slog.Warn("could not mark the update stable", "err", err)
+			}
+		})
+	}
+
+	// Runtime config: cached server revision > env tuning > defaults.
+	version, rt, source, problems := control.Startup(store, cfg.RuntimeBootstrap())
+	if problems != nil {
+		slog.Error("RECEIVER_* tuning values are invalid; running the built-in defaults", "problems", problems)
+	}
+	slog.Info("runtime config",
+		"source", source, "version", version, "state_dir", store.Dir(),
+		"gain_tenths_db", rt.TunerGainTenthsDB, "ppm", rt.PPM, "sample_rate", rt.SampleRate,
+		"channels", len(rt.EnabledChannels()), "log_level", rt.LogLevel, "stats_interval_s", rt.StatsIntervalS,
+	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	// Build one transport per configured endpoint. The first ws endpoint is
-	// primary: it supplies the welcome (identity) and carries shipped logs.
+	// primary: it supplies the welcome (identity), carries shipped logs and
+	// stats, and is the only one whose config and commands are honoured.
 	// Additional ws endpoints and every legacy endpoint only receive pages.
 	var (
 		senders   []receiver.NamedSender
@@ -82,6 +120,7 @@ func main() {
 			c := wsclient.New(ep.URL, ep.APIKey)
 			if primaryWS == nil {
 				primaryWS, primaryEP = c, ep.Name
+				c.Primary = true
 			}
 			senders = append(senders, receiver.NamedSender{Name: ep.Name, Sender: c})
 		case "legacy":
@@ -97,18 +136,60 @@ func main() {
 	// + admin viewers in real time. The WS client drops log frames if its send
 	// buffer is full, so this can't block the decode hot path. A legacy-only
 	// receiver has nowhere to ship logs, so it just writes to stdout.
-	base := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
 	if primaryWS != nil {
 		slog.SetDefault(slog.New(wsclient.NewLogShippingHandler(base, primaryWS)))
-	} else {
-		slog.SetDefault(slog.New(base))
 	}
 
-	for i, ep := range cfg.Endpoints {
+	for _, ep := range cfg.Endpoints {
 		slog.Info("endpoint configured",
 			"name", ep.Name, "mode", ep.Mode, "url", ep.URL,
-			"primary", ep.Mode == "ws" && ep.Name == primaryEP && i >= 0,
+			"primary", ep.Mode == "ws" && ep.Name == primaryEP,
 		)
+	}
+
+	multi := receiver.NewMultiSender(senders)
+	slog.Info("page fan-out ready", "endpoints", multi.Names())
+	fwd := receiver.NewForwarder(multi, rt.PostAll)
+	if rt.PostAll {
+		slog.Warn("post_all is on — content filter bypassed; every decoded page will be posted upstream")
+	}
+
+	pipe := &pipeline{}
+	opts := control.Options{
+		Store: store, Version: version, Config: rt,
+		Level: level, SetPostAll: fwd.SetPostAll, Taps: pipe,
+	}
+	if primaryWS != nil {
+		opts.Sender = primaryWS
+		opts.ServerURL = primaryWS.ServerURL()
+		opts.APIKey = primaryWS.APIKey()
+		opts.Updater = &control.Updater{
+			ServerURL: primaryWS.ServerURL(), APIKey: primaryWS.APIKey(),
+			Store: store, Version: bi.Version, Executable: exe,
+		}
+	}
+	mgr := control.NewManager(opts)
+
+	if primaryWS != nil {
+		primaryWS.HostInfo = stats.Info
+		primaryWS.ConfigInfo = mgr.HelloConfig
+		primaryWS.OnConfig = func(p rxproto.ConfigPayload) {
+			// Every reconnect replays the current revision in the welcome;
+			// don't re-apply and re-report what is already running.
+			if p.Version != 0 && p.Version == mgr.Version() {
+				slog.Debug("config revision already running", "version", p.Version)
+				return
+			}
+			mgr.Apply(p)
+		}
+		primaryWS.OnCommand = mgr.Handle
+		var confirmOnce sync.Once
+		primaryWS.OnWelcome = func(w rxproto.Welcome) {
+			confirmOnce.Do(func() { mgr.ConfirmUpdate(marker, bi.Version) })
+			if w.LatestVersion != "" && control.BaseVersion(w.LatestVersion) != control.BaseVersion(bi.Version) {
+				slog.Info("a different receiver release is published", "running", bi.Version, "latest", w.LatestVersion)
+			}
+		}
 	}
 
 	wsDone := make(chan struct{})
@@ -143,73 +224,28 @@ func main() {
 		defer welcomeCancel()
 		welcome, err := primaryWS.Welcomed(welcomeCtx)
 		if err != nil {
-			slog.Error("ws welcome timed out", "endpoint", primaryEP, "err", err)
-			os.Exit(2)
+			// Not fatal: decode with the cached config and keep dialling in
+			// the background. Exiting here would count as a crashed boot
+			// right after an update and could roll back a good binary.
+			slog.Warn("no welcome from the server yet; decoding with the local config while reconnecting",
+				"endpoint", primaryEP, "err", err)
+		} else {
+			slog.Info("authenticated",
+				"endpoint", primaryEP,
+				"system", welcome.Name,
+				"system_id", welcome.SystemUUID,
+				"config_version", mgr.Version(),
+			)
 		}
-		slog.Info("authenticated",
-			"endpoint", primaryEP,
-			"system", welcome.Name,
-			"system_id", welcome.SystemUUID,
-		)
+		go statsLoop(ctx, mgr, pipe, primaryWS)
 	} else {
 		slog.Info("no ws endpoint configured; running legacy-only")
 	}
 
-	multi := receiver.NewMultiSender(senders)
-	slog.Info("page fan-out ready", "endpoints", multi.Names())
-	var sender receiver.PageSender = multi
-
-	// Pick dongle centre: midpoint of the lowest and highest hardcoded freqs.
-	var lo, hi uint32 = hardcodedChannels[0].freqHz, hardcodedChannels[0].freqHz
-	for _, c := range hardcodedChannels {
-		if c.freqHz < lo {
-			lo = c.freqHz
-		}
-		if c.freqHz > hi {
-			hi = c.freqHz
-		}
-	}
-	centre := (lo + hi) / 2
-	const guardHz = 50_000
-	maxOffset := float64(cfg.SampleRate)/2 - guardHz
-	if math.Abs(float64(hi)-float64(centre)) > maxOffset {
-		slog.Error("channels span too wide for sample rate",
-			"low_mhz", float64(lo)/1e6,
-			"high_mhz", float64(hi)/1e6,
-			"sample_rate", cfg.SampleRate,
-		)
-		os.Exit(2)
-	}
-	slog.Info("dongle tuning",
-		"centre_mhz", fmt.Sprintf("%.4f", float64(centre)/1e6),
-		"sample_rate", cfg.SampleRate,
-		"channels", len(hardcodedChannels),
-		"bauds", receiver.SupportedBauds,
-	)
-
-	// Spin up one channel pipeline per configured frequency. Channels and
-	// forwarders are long-lived: they survive dongle hot-unplug/replug
-	// without disturbing the upstream transport or losing decoder state.
-	fwd := &receiver.Forwarder{Sender: sender, PostAll: cfg.PostAll}
-	if cfg.PostAll {
-		slog.Warn("RECEIVER_POST_ALL=1 — content filter bypassed; every decoded page will be posted upstream")
-	}
-	var channels []*receiver.Channel
-	for _, c := range hardcodedChannels {
-		offset := float64(c.freqHz) - float64(centre)
-		ch := receiver.NewChannel(c.label, c.freqHz, offset, cfg.SampleRate, audioRate)
-		channels = append(channels, ch)
-		go fwd.Run(ctx, ch)
-		slog.Info("channel ready",
-			"label", c.label,
-			"freq_mhz", float64(c.freqHz)/1e6,
-			"offset_khz", offset/1000,
-		)
-	}
-
 	// Outer retry loop: open the dongle, run until it dies (unplugged, USB
-	// error, watchdog timeout), then back off and try again. Designed to
-	// survive both "no dongle at startup" and hot-unplug mid-flight.
+	// error, watchdog timeout) or the manager asks for a reopen, then try
+	// again. Designed to survive both "no dongle at startup" and hot-unplug
+	// mid-flight.
 	backoff := time.Second
 	const maxBackoff = 30 * time.Second
 	for {
@@ -223,9 +259,14 @@ func main() {
 			backoff = bumpBackoff(backoff, maxBackoff)
 			continue
 		}
-		err := runDongle(ctx, cfg, centre, channels)
+		err := runDongle(ctx, mgr, pipe, fwd)
 		if err == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil {
 			return
+		}
+		if errors.Is(err, errDongleRestart) {
+			slog.Info("reopening dongle", "config_version", mgr.Version())
+			backoff = time.Second
+			continue
 		}
 		slog.Warn("dongle stopped, will retry", "err", err, "in", backoff)
 		sleepCtx(ctx, backoff)
@@ -233,12 +274,130 @@ func main() {
 	}
 }
 
-// runDongle opens the SDR, configures + tunes it, and pumps IQ buffers into
-// each Channel until the dongle stops delivering samples or ctx is cancelled.
-// Returns nil only on a clean shutdown via ctx; otherwise an error describing
-// why the SDR loop ended.
-func runDongle(ctx context.Context, cfg *config.Config, centre uint32, channels []*receiver.Channel) error {
-	dongleIdx, err := resolveDongleIndex(cfg)
+// pipeline is what the dongle loop shares with the stats loop and the
+// control manager: the live channels, the open flag, the dongle counters
+// and the spectrum tap. Channels are rebuilt on every dongle open from the
+// config current at that moment; the last set is kept while the dongle is
+// closed so stats keep listing them.
+type pipeline struct {
+	mu       sync.Mutex
+	channels []*receiver.Channel
+	open     atomic.Bool
+	spectrum atomic.Pointer[receiver.Spectrum]
+	dongle   stats.Dongle
+}
+
+func (p *pipeline) setChannels(chs []*receiver.Channel) {
+	p.mu.Lock()
+	p.channels = chs
+	p.mu.Unlock()
+}
+
+// Channels returns the current channel set.
+func (p *pipeline) Channels() []*receiver.Channel {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]*receiver.Channel{}, p.channels...)
+}
+
+// Channel implements control.Taps.
+func (p *pipeline) Channel(label string) *receiver.Channel {
+	for _, ch := range p.Channels() {
+		if ch.Label == label {
+			return ch
+		}
+	}
+	return nil
+}
+
+// Spectrum implements control.Taps.
+func (p *pipeline) Spectrum(s *receiver.Spectrum) error {
+	if !p.open.Load() {
+		return errors.New("the dongle is not open")
+	}
+	if !p.spectrum.CompareAndSwap(nil, s) {
+		return errors.New("a spectrum capture is already in progress")
+	}
+	return nil
+}
+
+// CancelSpectrum implements control.Taps.
+func (p *pipeline) CancelSpectrum(s *receiver.Spectrum) { p.spectrum.CompareAndSwap(s, nil) }
+
+// statsLoop ships a stats frame every stats_interval_s (re-read each
+// round, so a config change takes effect after the current wait).
+func statsLoop(ctx context.Context, mgr *control.Manager, pipe *pipeline, ws *wsclient.Client) {
+	for {
+		interval := mgr.Config().StatsIntervalS
+		if interval < rxproto.MinStatsIntervalS {
+			interval = rxproto.Defaults().StatsIntervalS
+		}
+		t := time.NewTimer(time.Duration(interval) * time.Second)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return
+		case <-t.C:
+		}
+		ws.SendStats(collectStats(mgr, pipe, ws, interval))
+	}
+}
+
+func collectStats(mgr *control.Manager, pipe *pipeline, ws *wsclient.Client, interval int) rxproto.Stats {
+	rt := mgr.Config()
+	centre, _ := rt.CentreHz()
+	buffers, dropped, gaps, load := pipe.dongle.Snapshot(rt.SampleRate)
+	st := rxproto.Stats{
+		IntervalS: interval,
+		Dongle: rxproto.DongleStats{
+			Open:         pipe.open.Load(),
+			GainTenthsDB: rt.TunerGainTenthsDB,
+			AGC:          rt.TunerGainTenthsDB == 0,
+			PPM:          rt.PPM,
+			CentreHz:     centre,
+			SampleRate:   rt.SampleRate,
+			IQBuffers:    buffers,
+			IQDropped:    dropped,
+			Gaps:         gaps,
+			DSPLoad:      load,
+		},
+		Host:     stats.Host(),
+		Link:     ws.LinkStats(),
+		Channels: []rxproto.ChannelStats{},
+	}
+	for _, ch := range pipe.Channels() {
+		st.Channels = append(st.Channels, ch.Snapshot())
+	}
+	return st
+}
+
+// runDongle opens the SDR with the current config, builds the channels,
+// and pumps IQ buffers into them until the dongle stops delivering
+// samples, the manager asks for a reopen, or ctx is cancelled. Returns nil
+// only on a clean shutdown via ctx; otherwise an error describing why the
+// SDR loop ended.
+func runDongle(ctx context.Context, mgr *control.Manager, pipe *pipeline, fwd *receiver.Forwarder) error {
+	rt := mgr.Config()
+	// The config was validated when it was applied, but the env bootstrap
+	// and the cache are only trusted after the same check: this is where
+	// "channels span too wide for the sample rate" is caught.
+	if errs := rt.Validate(); errs != nil {
+		return fmt.Errorf("runtime config invalid: %v", errs)
+	}
+	centre, ok := rt.CentreHz()
+	if !ok {
+		return errors.New("no channels enabled")
+	}
+	slog.Info("dongle tuning",
+		"centre_mhz", fmt.Sprintf("%.4f", float64(centre)/1e6),
+		"sample_rate", rt.SampleRate,
+		"channels", len(rt.EnabledChannels()),
+		"bauds", receiver.SupportedBauds,
+		"gain_tenths_db", rt.TunerGainTenthsDB,
+		"ppm", rt.PPM,
+	)
+
+	dongleIdx, err := resolveDongleIndex(rt)
 	if err != nil {
 		return err
 	}
@@ -249,13 +408,13 @@ func runDongle(ctx context.Context, cfg *config.Config, centre uint32, channels 
 	defer dev.Close()
 	slog.Info("dongle opened", "index", dev.Index(), "name", dev.Name())
 
-	if err := dev.SetSampleRate(cfg.SampleRate); err != nil {
+	if err := dev.SetSampleRate(rt.SampleRate); err != nil {
 		return fmt.Errorf("set sample rate: %w", err)
 	}
-	if err := dev.SetPPM(cfg.CorrectionPPM); err != nil {
+	if err := dev.SetPPM(rt.PPM); err != nil {
 		return fmt.Errorf("set ppm: %w", err)
 	}
-	if err := dev.SetGain(cfg.TunerGain); err != nil {
+	if err := dev.SetGain(rt.TunerGainTenthsDB); err != nil {
 		return fmt.Errorf("set gain: %w", err)
 	}
 	if err := dev.Tune(centre); err != nil {
@@ -264,6 +423,30 @@ func runDongle(ctx context.Context, cfg *config.Config, centre uint32, channels 
 
 	sdrCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// One channel pipeline per enabled frequency, with a forwarder each,
+	// both scoped to this dongle session.
+	var channels []*receiver.Channel
+	for _, c := range rt.EnabledChannels() {
+		offset := float64(c.FreqHz) - float64(centre)
+		ch := receiver.NewChannel(c.Label, c.FreqHz, offset, rt.SampleRate, rxproto.AudioRate)
+		channels = append(channels, ch)
+		go fwd.Run(sdrCtx, ch)
+		slog.Info("channel ready",
+			"label", c.Label,
+			"freq_mhz", float64(c.FreqHz)/1e6,
+			"offset_khz", offset/1000,
+		)
+	}
+	pipe.setChannels(channels)
+	pipe.open.Store(true)
+	defer pipe.open.Store(false)
+	defer pipe.spectrum.Store(nil)
+
+	// Register after configuring: a revision applied in the meantime is
+	// pushed to the device now or triggers an immediate reopen.
+	mgr.RegisterDevice(dev, rt)
+	defer mgr.UnregisterDevice()
 
 	iqStream, err := dev.ReadIQ(sdrCtx, 16384*2)
 	if err != nil {
@@ -304,6 +487,8 @@ func runDongle(ctx context.Context, cfg *config.Config, centre uint32, channels 
 				return nil // clean shutdown from parent
 			}
 			return errors.New("watchdog tripped or sdr cancelled")
+		case <-mgr.RestartRequests():
+			return errDongleRestart
 		case buf, ok := <-iqStream:
 			if !ok {
 				return errors.New("iq stream closed")
@@ -329,9 +514,15 @@ func runDongle(ctx context.Context, cfg *config.Config, centre uint32, channels 
 				}
 			}
 			work = dsp.IQToComplex(buf.IQ, work)
+			dropped := buf.DroppedBefore
 			sdr.Recycle(buf)
+			started := time.Now()
 			for _, ch := range channels {
 				ch.Process(work)
+			}
+			pipe.dongle.Buffer(dropped, len(work), time.Since(started))
+			if sp := pipe.spectrum.Load(); sp != nil && sp.Feed(work) {
+				pipe.spectrum.CompareAndSwap(sp, nil)
 			}
 		}
 	}
@@ -356,13 +547,13 @@ func bumpBackoff(cur, ceiling time.Duration) time.Duration {
 }
 
 // resolveDongleIndex picks which RTL-SDR dongle to open based on config.
-// Priority: RECEIVER_DONGLE_SERIAL (case-insensitive substring match) over
-// RECEIVER_DONGLE_INDEX. Returns an error if a serial is configured but no
+// Priority: dongle_serial (case-insensitive substring match) over
+// dongle_index. Returns an error if a serial is configured but no
 // connected dongle matches it — failing loudly is better than silently
 // falling back to the wrong dongle.
-func resolveDongleIndex(cfg *config.Config) (int, error) {
-	if cfg.DongleSerial != "" {
-		want := strings.ToLower(cfg.DongleSerial)
+func resolveDongleIndex(rt rxproto.RuntimeConfig) (int, error) {
+	if rt.DongleSerial != "" {
+		want := strings.ToLower(rt.DongleSerial)
 		for _, d := range sdr.Enumerate() {
 			if strings.Contains(strings.ToLower(d.Serial), want) {
 				slog.Info("dongle selected by serial",
@@ -373,14 +564,7 @@ func resolveDongleIndex(cfg *config.Config) (int, error) {
 				return d.Index, nil
 			}
 		}
-		return 0, fmt.Errorf("no rtl-sdr dongle with serial matching %q", cfg.DongleSerial)
+		return 0, fmt.Errorf("no rtl-sdr dongle with serial matching %q", rt.DongleSerial)
 	}
-	return max(cfg.DongleIndex, 0), nil
-}
-
-func maskKey(k string) string {
-	if len(k) <= 6 {
-		return "***"
-	}
-	return k[:3] + "..." + k[len(k)-3:]
+	return max(rt.DongleIndex, 0), nil
 }

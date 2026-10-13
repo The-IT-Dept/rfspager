@@ -16,6 +16,7 @@ set -euo pipefail
 SERVER_URL={{shq .BaseURL}}
 BIN_DIR=/opt/rfspager
 ETC_DIR=/etc/rfspager
+STATE_DIR=/var/lib/rfspager
 UNIT=/etc/systemd/system/rfspager-receiver.service
 ENV_FILE="$ETC_DIR/receiver.env"
 
@@ -124,6 +125,10 @@ fi
 # --- Binary ----------------------------------------------------------------
 mkdir -p "$BIN_DIR" "$ETC_DIR"
 chmod 755 "$BIN_DIR"; chmod 750 "$ETC_DIR"
+# Runtime state (cached server config, self-update marker). The receiver
+# creates it too; this just makes a fresh install complete.
+mkdir -p "$STATE_DIR"
+chmod 750 "$STATE_DIR"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 say "Downloading the receiver"

@@ -48,6 +48,7 @@ type device struct {
 	dev   *rtl.Context
 	index int
 	name  string
+	ppm   int // correction currently set; librtlsdr rejects setting the same value twice
 }
 
 func (d *device) Index() int   { return d.index }
@@ -79,19 +80,28 @@ func (d *device) SetGain(tenthsDB int) error {
 	if err := d.dev.SetTunerGainMode(true); err != nil {
 		return fmt.Errorf("manual gain mode: %w", err)
 	}
+	// Switching back from AGC at runtime must also turn the RTL2832 digital
+	// AGC off again, or a live gain change behaves differently from a
+	// fresh open with the same gain. A no-op on a freshly opened device.
+	_ = d.dev.SetAgcMode(false)
 	if err := d.dev.SetTunerGain(tenthsDB); err != nil {
 		return fmt.Errorf("set gain %d: %w", tenthsDB, err)
 	}
 	return nil
 }
 
+// SetPPM applies a frequency correction. librtlsdr returns an error when
+// asked to set the correction it already has (including 0 on a fresh
+// device), so the value is tracked and unchanged requests are skipped;
+// that also makes a live change back to 0 take effect.
 func (d *device) SetPPM(ppm int) error {
-	if ppm == 0 {
+	if ppm == d.ppm {
 		return nil
 	}
 	if err := d.dev.SetFreqCorrection(ppm); err != nil {
 		return fmt.Errorf("set ppm %d: %w", ppm, err)
 	}
+	d.ppm = ppm
 	return nil
 }
 

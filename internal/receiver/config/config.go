@@ -9,7 +9,39 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/the-it-dept/rfspager/internal/rxproto"
 )
+
+// DefaultStateDir is where the receiver keeps what it learns at runtime:
+// the cached server config and the self-update marker. Override with
+// RECEIVER_STATE_DIR (tests and dev checkouts).
+const DefaultStateDir = "/var/lib/rfspager"
+
+// StateDir returns the runtime state directory.
+func StateDir() string {
+	if v := strings.TrimSpace(os.Getenv("RECEIVER_STATE_DIR")); v != "" {
+		return v
+	}
+	return DefaultStateDir
+}
+
+// RuntimeBootstrap maps the tuning environment variables (RECEIVER_TUNER_GAIN
+// and friends) onto the shared RuntimeConfig, over the defaults. It is only
+// honoured when there is neither a server revision nor a cached one; see
+// control.Startup.
+func (c *Config) RuntimeBootstrap() rxproto.RuntimeConfig {
+	rt := rxproto.Defaults()
+	rt.TunerGainTenthsDB = c.TunerGain
+	rt.PPM = c.CorrectionPPM
+	if c.SampleRate != 0 {
+		rt.SampleRate = c.SampleRate
+	}
+	rt.DongleIndex = c.DongleIndex
+	rt.DongleSerial = c.DongleSerial
+	rt.PostAll = c.PostAll
+	return rt
+}
 
 type Config struct {
 	// ServerURL is the rfspager base URL, e.g. https://rfspager.example.com
