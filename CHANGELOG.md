@@ -1,5 +1,21 @@
 # Changelog
 
+## [5.7.0](https://github.com/The-IT-Dept/rfspager/compare/v5.6.1...v5.7.0) (2026-10-13)
+
+
+### Features
+
+* **admin:** message detail page with receiver copies, incident siblings and pushes ([#27](https://github.com/The-IT-Dept/rfspager/issues/27)) ([64e9f65](https://github.com/The-IT-Dept/rfspager/commit/64e9f6541060dd6b5328b28a0df904e952bc5d99))
+* **server:** keep the best copy of each page and push once per incident per user ([#24](https://github.com/The-IT-Dept/rfspager/issues/24)) ([bcb5a7c](https://github.com/The-IT-Dept/rfspager/commit/bcb5a7c4a662f9ef847225deb48c23e198d8378c))
+
+
+### Bug Fixes
+
+* **admin:** give the text columns on the message page room ([#28](https://github.com/The-IT-Dept/rfspager/issues/28)) ([a836fe1](https://github.com/The-IT-Dept/rfspager/commit/a836fe126944bc36aedafc55c08bf92cd6ae203c))
+* **receiver:** never log from the log-shipping path ([#26](https://github.com/The-IT-Dept/rfspager/issues/26)) ([557ee12](https://github.com/The-IT-Dept/rfspager/commit/557ee128e12143e5253b1268b815edcf9e83e274))
+* **receiver:** never start a page from a soft-decision repaired address ([#30](https://github.com/The-IT-Dept/rfspager/issues/30)) ([6fe4b35](https://github.com/The-IT-Dept/rfspager/commit/6fe4b3568dc133083ddd4a31f26f5dd4613b3468))
+* **server:** collapse damaged re-sends of a page and never push them ([#29](https://github.com/The-IT-Dept/rfspager/issues/29)) ([bd8cd2f](https://github.com/The-IT-Dept/rfspager/commit/bd8cd2fdf1fd54cd2dfd15c387d36bd250dbe8a0))
+
 ## [5.6.1](https://github.com/The-IT-Dept/rfspager/compare/v5.6.0...v5.6.1) (2026-10-13)
 
 
