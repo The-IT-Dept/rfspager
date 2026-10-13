@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.5.0](https://github.com/The-IT-Dept/rfspager/compare/v5.4.0...v5.5.0) (2026-10-13)
+
+
+### Features
+
+* **receiver:** remote management: server-managed config, stats, commands, self-update and captures ([#14](https://github.com/The-IT-Dept/rfspager/issues/14)) ([219e8c5](https://github.com/The-IT-Dept/rfspager/commit/219e8c55ead95fa5d3c3a6034329391cbb8df7fc))
+
 ## [5.4.0](https://github.com/The-IT-Dept/rfspager/compare/v5.3.8...v5.4.0) (2026-10-12)
 
 
