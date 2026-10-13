@@ -98,8 +98,13 @@ type Decoder struct {
 	cwIdx    int
 	bitsSeen int // bits since starting the verify state
 	batch    [codewordsPerBatch]uint32
-	bitRate  int
-	locked   bool // true after the FIRST sync confirmation — subsequent batches
+	// Per-bit slicer confidences for the codeword being collected and for
+	// the batch, so a codeword BCH cannot repair can be retried with its
+	// doubtful bits flipped (see chase.go). Index 31 is the first bit.
+	confs     [32]float64
+	batchConf [codewordsPerBatch][32]float64
+	bitRate   int
+	locked    bool // true after the FIRST sync confirmation — subsequent batches
 	// can then commit on receipt instead of waiting for confirmation, and end-
 	// of-transmission flushes whatever's pending instead of discarding.
 
@@ -128,6 +133,7 @@ type counters struct {
 	cwClean         atomic.Uint64
 	cwCorrected     atomic.Uint64
 	cwUncorrectable atomic.Uint64
+	cwChased        atomic.Uint64
 	pages           atomic.Uint64
 	pagesTruncated  atomic.Uint64
 	lastPageNanos   atomic.Int64
@@ -141,7 +147,8 @@ type Stats struct {
 	SyncLosses      uint64 // a confirmed lock ended (sync missing, or a stream gap)
 	CWClean         uint64 // codewords that BCH-verified with no errors
 	CWCorrected     uint64 // codewords repaired (1-2 bit errors)
-	CWUncorrectable uint64 // codewords beyond BCH's reach, dropped
+	CWUncorrectable uint64 // codewords beyond repair; raw bits kept to preserve alignment
+	CWChased        uint64 // of the corrected ones, how many needed soft-decision (Chase) repair
 	Pages           uint64 // pages released to Out
 	PagesTruncated  uint64 // pages cut short by a stream gap or a lost sync
 	// LastPageAt is when the most recent page was released; zero if none.
@@ -156,6 +163,7 @@ func (d *Decoder) Stats() Stats {
 		CWClean:         d.cnt.cwClean.Load(),
 		CWCorrected:     d.cnt.cwCorrected.Load(),
 		CWUncorrectable: d.cnt.cwUncorrectable.Load(),
+		CWChased:        d.cnt.cwChased.Load(),
 		Pages:           d.cnt.pages.Load(),
 		PagesTruncated:  d.cnt.pagesTruncated.Load(),
 	}
@@ -173,6 +181,7 @@ func (s Stats) Add(o Stats) Stats {
 	s.CWClean += o.CWClean
 	s.CWCorrected += o.CWCorrected
 	s.CWUncorrectable += o.CWUncorrectable
+	s.CWChased += o.CWChased
 	s.Pages += o.Pages
 	s.PagesTruncated += o.PagesTruncated
 	if o.LastPageAt.After(s.LastPageAt) {
@@ -190,6 +199,7 @@ func (s Stats) Sub(prev Stats) Stats {
 		CWClean:         s.CWClean - prev.CWClean,
 		CWCorrected:     s.CWCorrected - prev.CWCorrected,
 		CWUncorrectable: s.CWUncorrectable - prev.CWUncorrectable,
+		CWChased:        s.CWChased - prev.CWChased,
 		Pages:           s.Pages - prev.Pages,
 		PagesTruncated:  s.PagesTruncated - prev.PagesTruncated,
 		LastPageAt:      s.LastPageAt,
@@ -200,8 +210,14 @@ func New(bitRate int, out chan Page) *Decoder {
 	return &Decoder{bitRate: bitRate, Out: out}
 }
 
-// Feed consumes one received bit.
-func (d *Decoder) Feed(b bool) {
+// Feed consumes one received bit with no confidence information: every
+// bit counts as certain, so soft-decision repair stays out of the way.
+func (d *Decoder) Feed(b bool) { d.FeedSoft(b, 1) }
+
+// FeedSoft consumes one received bit together with the slicer's
+// confidence in it (1.0 is a typical clean symbol, near 0 means it
+// landed near the threshold).
+func (d *Decoder) FeedSoft(b bool, conf float64) {
 	d.reg = (d.reg << 1)
 	if b {
 		d.reg |= 1
@@ -217,8 +233,10 @@ func (d *Decoder) Feed(b bool) {
 			d.locked = false
 		}
 	case 1: // collecting 16 codewords into batch
+		d.confs[31-d.bitsInCW] = conf
 		d.bitsInCW++
 		if d.bitsInCW == 32 {
+			d.batchConf[d.cwIdx] = d.confs
 			cw := d.reg
 			if d.inverted {
 				cw = ^cw
@@ -291,7 +309,7 @@ func (d *Decoder) Resync() {
 	// Codewords are buffered until the batch completes; process the ones we
 	// already have so the message prefix they carry is not thrown away.
 	if d.state == 1 && d.cwIdx > 0 {
-		d.processCodewords(d.batch[:d.cwIdx])
+		d.processCodewords(d.batch[:d.cwIdx], d.batchConf[:d.cwIdx])
 	}
 	if d.locked {
 		d.cnt.syncLosses.Add(1)
@@ -305,11 +323,11 @@ func (d *Decoder) Resync() {
 	d.reg = 0
 }
 
-func (d *Decoder) processBatch() { d.processCodewords(d.batch[:]) }
+func (d *Decoder) processBatch() { d.processCodewords(d.batch[:], d.batchConf[:]) }
 
 // processCodewords decodes a run of codewords starting at frame 0 of a batch.
 // It may be handed a partial batch on Resync.
-func (d *Decoder) processCodewords(cws []uint32) {
+func (d *Decoder) processCodewords(cws []uint32, confs [][32]float64) {
 	for i, cw := range cws {
 		// Catch noisy idle codewords before BCH gets a chance to "correct"
 		// them into a phantom address. The idle pattern (0x7A89C197) is far
@@ -330,6 +348,13 @@ func (d *Decoder) processCodewords(cws []uint32) {
 			continue
 		}
 		corrected, errors, ok := correctWithParity(cw)
+		if !ok && confs != nil {
+			// Beyond BCH: let the slicer's doubts pick the bits to retry.
+			if fixed, flips, repaired := chase(cw, &confs[i]); repaired {
+				corrected, errors, ok = fixed, flips, true
+				d.cnt.cwChased.Add(1)
+			}
+		}
 		switch {
 		case !ok:
 			d.cnt.cwUncorrectable.Add(1)

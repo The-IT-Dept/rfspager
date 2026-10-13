@@ -98,9 +98,9 @@ func (d *Decoders) FeedIQ(audio []complex128) {
 			src = leg.filt
 		}
 		for _, a := range src {
-			bit, _, gotBit := leg.slicer.PushSoft(leg.fm.Demod(a))
+			bit, conf, gotBit := leg.slicer.PushSoft(leg.fm.Demod(a))
 			if gotBit {
-				leg.decoder.Feed(bit)
+				leg.decoder.FeedSoft(bit, conf)
 			}
 		}
 	}
