@@ -126,6 +126,22 @@ func (b *LogBroker) RecentLogs(ctx context.Context, systemID int64, limit int) (
 		if b, ok := row["level"].([]byte); ok {
 			row["level"] = string(b)
 		}
+		// raw is jsonb: MapScan yields []byte, which json.Marshal would
+		// base64-encode. Pass it through as JSON so consumers get an object.
+		switch v := row["raw"].(type) {
+		case []byte:
+			if len(v) == 0 {
+				row["raw"] = nil
+			} else {
+				row["raw"] = json.RawMessage(v)
+			}
+		case string:
+			if v == "" {
+				row["raw"] = nil
+			} else {
+				row["raw"] = json.RawMessage(v)
+			}
+		}
 		// Convert ts to unix-millis for the stream consistency.
 		if ts, ok := row["ts"].(time.Time); ok {
 			row["ts"] = ts.UnixMilli()

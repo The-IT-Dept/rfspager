@@ -201,7 +201,8 @@ function pageFields(raw: Record<string, unknown> | null): PageFields | null {
   return {
     channel: String(raw.channel ?? raw.label ?? "?"),
     address: String(address),
-    message: typeof raw.message === "string" ? raw.message : "",
+    message:
+      typeof raw.msg === "string" ? raw.msg : typeof raw.message === "string" ? raw.message : "",
   };
 }
 
