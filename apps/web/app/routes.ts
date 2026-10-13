@@ -46,6 +46,7 @@ export default [
       route("systems/:id", "routes/admin/systems.$id.tsx"),
       route("systems/:id/edit", "routes/admin/systems.$id.edit.tsx"),
       route("messages", "routes/admin/messages.tsx"),
+      route("messages/:id", "routes/admin/messages.$id.tsx"),
       route("messages/:id/edit", "routes/admin/messages.$id.edit.tsx"),
       route("installations", "routes/admin/installations.tsx"),
       route("subscriptions", "routes/admin/subscriptions.tsx"),

@@ -17,5 +17,5 @@ export default function EditMessagePage() {
   const [data, setData] = useState<Record<string, any> | null>(null);
   useEffect(() => { api.get(`/messages/${id}`).then(setData); }, [id]);
   if (!data) return <p className="text-muted-foreground">Loading...</p>;
-  return <ResourceForm title="Edit Message" fields={fields} endpoint={`/messages/${id}`} method="PUT" initialData={data} backPath="/admin/messages" />;
+  return <ResourceForm title="Edit Message" fields={fields} endpoint={`/messages/${id}`} method="PUT" initialData={data} backPath={`/admin/messages/${id}`} />;
 }

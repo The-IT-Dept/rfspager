@@ -92,6 +92,9 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, receivers 
 		r.Route("/messages", func(r chi.Router) {
 			r.Get("/", h.ListMessages)
 			r.Get("/{id}", h.GetMessage)
+			r.Get("/{id}/notifications", h.ListMessageNotifications)
+			r.Get("/{id}/copies", h.ListMessageCopies)
+			r.Get("/{id}/incident", h.ListIncidentMessages)
 			r.Put("/{id}", h.UpdateMessage)
 			r.Delete("/{id}", h.DeleteMessage)
 		})

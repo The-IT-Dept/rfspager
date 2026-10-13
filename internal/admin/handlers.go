@@ -412,6 +412,62 @@ func (h *Handlers) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// messageID parses the {id} route parameter or writes a 400.
+func messageID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return 0, false
+	}
+	return id, true
+}
+
+// ListMessageNotifications: GET /messages/{id}/notifications?limit=200 (max 500).
+func (h *Handlers) ListMessageNotifications(w http.ResponseWriter, r *http.Request) {
+	id, ok := messageID(w, r)
+	if !ok {
+		return
+	}
+	limit := 200
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
+		limit = min(v, 500)
+	}
+	out, err := h.store.ListMessageNotifications(r.Context(), id, limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ListMessageCopies: GET /messages/{id}/copies, every receiver's decode of the page.
+func (h *Handlers) ListMessageCopies(w http.ResponseWriter, r *http.Request) {
+	id, ok := messageID(w, r)
+	if !ok {
+		return
+	}
+	out, err := h.store.ListMessageCopies(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": out})
+}
+
+// ListIncidentMessages: GET /messages/{id}/incident, the other messages for the same incident.
+func (h *Handlers) ListIncidentMessages(w http.ResponseWriter, r *http.Request) {
+	id, ok := messageID(w, r)
+	if !ok {
+		return
+	}
+	out, err := h.store.ListIncidentMessages(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": out})
+}
+
 // --- Installations ---
 
 func (h *Handlers) ListInstallations(w http.ResponseWriter, r *http.Request) {

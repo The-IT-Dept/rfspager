@@ -1,3 +1,4 @@
+import { Link } from "react-router";
 import { Badge } from "~/components/ui/badge";
 import { DataTable, type Column } from "~/components/data-table";
 import { api } from "~/lib/api";
@@ -15,12 +16,14 @@ function NotificationsCell({ row }: { row: Record<string, any> }) {
 }
 
 const columns: Column[] = [
-  { key: "id", label: "ID", sortable: true },
+  { key: "id", label: "ID", sortable: true, render: (v) => <Link to={`/admin/messages/${v}`} className="font-mono hover:underline">{v}</Link> },
   { key: "system_name", label: "System", sortable: true },
   { key: "agency_name", label: "Agency" },
   { key: "capcode_alias", label: "Capcode" },
   { key: "address", label: "Address", sortable: true },
-  { key: "message", label: "Message", render: (v) => v ? (String(v).length > 60 ? String(v).slice(0, 60) + "…" : v) : "—" },
+  { key: "message", label: "Message", render: (v, row) => v
+      ? <Link to={`/admin/messages/${row.id}`} className="hover:underline">{String(v).length > 60 ? String(v).slice(0, 60) + "…" : String(v)}</Link>
+      : "—" },
   { key: "notifications_count", label: "Notifs", render: (_v, row) => <NotificationsCell row={row} /> },
   { key: "created_at", label: "Created", sortable: true },
 ];

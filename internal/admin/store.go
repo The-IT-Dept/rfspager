@@ -467,6 +467,123 @@ func (s *Store) DeleteMessage(ctx context.Context, id int64) error {
 	return err
 }
 
+// MessageNotifications is who was notified for one message: the rows plus
+// the totals the rows were cut from.
+type MessageNotifications struct {
+	Data   []map[string]any `json:"data"`
+	Total  int              `json:"total"`
+	Pushed int              `json:"pushed"`
+	Failed int              `json:"failed"`
+}
+
+// ListMessageNotifications lists the users notified for a message, newest
+// first, with the text each push carried so the admin page can show when a
+// later, cleaner copy of the page replaced what was already sent.
+func (s *Store) ListMessageNotifications(ctx context.Context, messageID int64, limit int) (*MessageNotifications, error) {
+	out := &MessageNotifications{Data: []map[string]any{}}
+	if err := s.db.QueryRowxContext(ctx,
+		`SELECT COUNT(*), COUNT(pushed_at), COUNT(push_failed_at)
+		   FROM notifications WHERE message_id = $1`, messageID).
+		Scan(&out.Total, &out.Pushed, &out.Failed); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryxContext(ctx,
+		`SELECT n.id, n.notifiable_id AS user_id, u.email AS user_email, u.name AS user_name,
+		        n.created_at, n.pushed_at, n.push_failed_at, n.push_attempts, n.push_required,
+		        n.push_last_error, n.read_at,
+		        CASE WHEN n.data ~ '^\s*\{' THEN n.data::jsonb->>'message' END AS pushed_message
+		   FROM notifications n
+		   LEFT JOIN users u ON u.id = n.notifiable_id AND n.notifiable_type = 'App\Models\User'
+		  WHERE n.message_id = $1
+		  ORDER BY n.created_at DESC, n.id
+		  LIMIT $2`, messageID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		m := make(map[string]any)
+		if err := rows.MapScan(m); err != nil {
+			return nil, err
+		}
+		cleanMapScan(m)
+		out.Data = append(out.Data, m)
+	}
+	return out, rows.Err()
+}
+
+// ListMessageCopies returns every receiver's decode of the page a message
+// was stored from: page log lines to the same address heard within five
+// minutes before and ten after the message, oldest first, with the copy
+// whose text was kept marked.
+func (s *Store) ListMessageCopies(ctx context.Context, messageID int64) ([]map[string]any, error) {
+	rows, err := s.db.QueryxContext(ctx,
+		`SELECT l.id, l.system_id, sy.name AS system_name, l.ts, l.received_at,
+		        l.raw->>'channel' AS channel, l.raw->>'msg' AS message,
+		        NULLIF(l.raw->>'corrected', '')::int AS corrected,
+		        NULLIF(l.raw->>'uncorrectable', '')::int AS uncorrectable,
+		        COALESCE((l.raw->>'truncated')::bool, false) AS truncated,
+		        btrim(l.raw->>'msg') = btrim(m.message) AS kept
+		   FROM messages m
+		   JOIN system_logs l
+		     ON l.message = 'page'
+		    AND l.raw->>'address' = m.address
+		    AND l.received_at BETWEEN m.created_at - INTERVAL '5 minutes' AND m.created_at + INTERVAL '10 minutes'
+		   LEFT JOIN systems sy ON sy.id = l.system_id
+		  WHERE m.id = $1
+		  ORDER BY l.ts, l.id`, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		m := make(map[string]any)
+		if err := rows.MapScan(m); err != nil {
+			return nil, err
+		}
+		cleanMapScan(m)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// ListIncidentMessages returns the other messages that share a message's
+// incident key within the push-suppression window either side of it, with
+// their notification counts, oldest first. Empty when the message has no
+// incident key.
+func (s *Store) ListIncidentMessages(ctx context.Context, messageID int64) ([]map[string]any, error) {
+	rows, err := s.db.QueryxContext(ctx,
+		`SELECT m2.id, m2.address, c.alias AS capcode_alias, sy.name AS system_name,
+		        m2.created_at, m2.replaced_count, m2.quality, m2.message,
+		        (SELECT COUNT(*) FROM notifications n WHERE n.message_id = m2.id) AS notifications_count,
+		        (SELECT COUNT(*) FROM notifications n WHERE n.message_id = m2.id AND n.pushed_at IS NOT NULL) AS notifications_pushed_count
+		   FROM messages m
+		   JOIN messages m2
+		     ON m2.incident_key = m.incident_key
+		    AND m2.id <> m.id
+		    AND m2.deleted_at IS NULL
+		    AND m2.created_at BETWEEN m.created_at - INTERVAL '15 minutes' AND m.created_at + INTERVAL '15 minutes'
+		   LEFT JOIN capcodes c ON c.id = m2.capcode_id
+		   LEFT JOIN systems sy ON sy.id = m2.system_id
+		  WHERE m.id = $1 AND m.incident_key IS NOT NULL
+		  ORDER BY m2.created_at, m2.id`, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		m := make(map[string]any)
+		if err := rows.MapScan(m); err != nil {
+			return nil, err
+		}
+		cleanMapScan(m)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // --- Installations ---
 
 func (s *Store) ListInstallations(ctx context.Context, p ListParams) (*PaginatedResult, error) {
