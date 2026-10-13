@@ -1,6 +1,7 @@
 const API_BASE = "/api/v1/admin";
 
-function getToken(): string | null {
+export function getToken(): string | null {
+  if (typeof localStorage === "undefined") return null;
   return localStorage.getItem("admin_token");
 }
 

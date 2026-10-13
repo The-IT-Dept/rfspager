@@ -58,16 +58,18 @@ func (b *LogBroker) Publish(ctx context.Context, systemID int64, p LogPayload) {
 		"raw":     p.Raw,
 	})
 
+	// Hold the read lock across the sends: cancel() deletes and closes the
+	// channel under the write lock, so no send can race a close or a map
+	// write. The sends are non-blocking, so the lock is held only briefly.
 	b.mu.RLock()
-	subs := b.subscribers[systemID]
-	b.mu.RUnlock()
-	for ch := range subs {
+	for ch := range b.subscribers[systemID] {
 		select {
 		case ch <- envelope:
 		default:
 			// Slow consumer — drop rather than block the WS hot path.
 		}
 	}
+	b.mu.RUnlock()
 }
 
 // Subscribe returns a channel that receives every subsequent log envelope

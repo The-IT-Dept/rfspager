@@ -177,16 +177,30 @@ func main() {
 	// system_connections table so multi-pod takeovers Just Work.
 	recvhub.PodID = podID()
 	install.ConfiguredBaseURL = cfg.PublicBaseURL
+	// Receiver bootstrap and self-update: the script is public, the binaries
+	// behind it require a receiver API key. Created before the hub so the
+	// welcome frame can carry the newest release tag.
+	installHandlers := install.New(database, cfg.GitHubToken, cfg.GitHubRepo, cfg.PublicBaseURL)
 	hub, err := recvhub.New(database, listener)
 	if hub != nil {
 		// Watchdog uses the notifier to push owners on offline/online
 		// transitions. Optional — when nil the watchdog still records
 		// events, it just skips the push.
 		hub.SetNotifier(notifier)
+		hub.LatestVersion = func(ctx context.Context) string {
+			v, err := installHandlers.LatestVersion(ctx)
+			if err != nil {
+				return ""
+			}
+			return v
+		}
 	}
 	if err != nil {
 		slog.Error("failed to start receiver hub", "error", err)
 		os.Exit(1)
+	}
+	if err := os.MkdirAll(cfg.CaptureDir, 0o750); err != nil {
+		slog.Warn("capture directory is not writable; capture uploads will fail", "dir", cfg.CaptureDir, "error", err)
 	}
 
 	bgCtx, cancelBg := context.WithCancel(context.Background())
@@ -206,7 +220,7 @@ func main() {
 	r.Use(middleware.RequestLog(slog.Default()))
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.RequestID)
-	r.Use(middleware.LimitBodies(1 << 20))
+	r.Use(bodyLimits(1<<20, recvhub.MaxCaptureBytes))
 	authLimit, err := middleware.AuthRateLimit(30, time.Minute, cfg.TrustedProxyCIDRs)
 	if err != nil {
 		slog.Error("invalid proxy configuration", "error", err)
@@ -231,6 +245,18 @@ func main() {
 			r.Get("/receiver/ws", recvhub.Handler(database, hub, func(ctx context.Context, sys *models.System, p recvhub.PagePayload) (string, error) {
 				return msgHandler.IngestPage(ctx, sys, p.Address, p.Message, time.Unix(p.Datetime, 0))
 			}))
+			// Capture uploads carry whole audio/IQ recordings from a Pi on a
+			// slow uplink: no 30 s timeout, and bodyLimits above grants this
+			// path the 64 MB cap.
+			r.Put("/receiver/captures/{id}", recvhub.CaptureUploadHandler(database, cfg.CaptureDir))
+			// Admin SSE streams. Registered here rather than in admin.Router
+			// (mounted under the timeout group below); chi matches these
+			// explicit routes ahead of the /v1/admin/* mount. The middleware
+			// also accepts the admin JWT as ?token= because EventSource
+			// cannot set headers.
+			adminStreamAuth := admin.NewJWTAuthMiddleware(database.Conn(), cfg.JWTSecret)
+			r.With(adminStreamAuth).Get("/v1/admin/systems/{id}/stats/stream", admin.ReceiverStatsStream(database, hub))
+			r.With(adminStreamAuth).Get("/v1/admin/systems/{id}/logs/stream", admin.ReceiverLogStream(database, hub))
 		})
 
 		// --- Everything else with a 30s per-request timeout ---
@@ -240,13 +266,17 @@ func main() {
 			handler.RegisterIngress(r, msgHandler)
 
 			// Receiver bootstrap: the script is public, the binaries behind it
-			// require a receiver API key.
-			installHandlers := install.New(database, cfg.GitHubToken, cfg.GitHubRepo, cfg.PublicBaseURL)
+			// require a receiver API key (and take ?version= for self-update).
 			r.Get("/install", installHandlers.Script)
 			r.Get("/binaries/receiver/{platform}", installHandlers.Binary)
 
-			// Admin API
-			r.Mount("/v1/admin", admin.Router(database.Conn(), cfg.JWTSecret, notifier))
+			// Admin API, including receiver remote management (config,
+			// stats history, commands, captures, latest release).
+			r.Mount("/v1/admin", admin.Router(database.Conn(), cfg.JWTSecret, notifier, &admin.ReceiverDeps{
+				Store:    database,
+				Hub:      hub,
+				Releases: installHandlers,
+			}))
 
 			// Mobile API
 			r.Mount("/v2/mobile", mobile.Router(database.Conn(), cfg.JWTSecret, cfg.AppleBundleID, mobileSSE, iapHandler, hub, authOptions))
@@ -357,4 +387,22 @@ func podID() string {
 		}
 	}
 	return fmt.Sprintf("pod-%s", uuid.NewString()[:8])
+}
+
+// bodyLimits applies the ordinary request body cap everywhere except the
+// receiver capture upload, which carries a whole audio/IQ recording and gets
+// captureLimit instead. Both variants set the same security headers.
+func bodyLimits(apiLimit, captureLimit int64) func(http.Handler) http.Handler {
+	api := middleware.LimitBodies(apiLimit)
+	capture := middleware.LimitBodies(captureLimit)
+	return func(next http.Handler) http.Handler {
+		apiNext, captureNext := api(next), capture(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/receiver/captures/") {
+				captureNext.ServeHTTP(w, r)
+				return
+			}
+			apiNext.ServeHTTP(w, r)
+		})
+	}
 }

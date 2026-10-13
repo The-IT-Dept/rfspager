@@ -11,10 +11,12 @@ package install
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +32,18 @@ var platforms = map[string]bool{
 	"linux-armv7": true,
 }
 
+// ReleaseTag is the only shape of version the proxy will look up: the
+// release-please tags. Anything else (a branch, "latest", a SHA) is refused
+// before it reaches GitHub.
+var ReleaseTag = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
+
+// ErrReleaseNotFound is returned when GitHub has no release for the tag, or
+// no published release at all.
+var ErrReleaseNotFound = errors.New("release not found")
+
+// ErrNotConfigured is returned when the server has no GitHub token.
+var ErrNotConfigured = errors.New("binary distribution is not configured on this server")
+
 // systemLookup is the subset of the database the proxy needs. Taking an
 // interface keeps this package out of the db package's import graph.
 type systemLookup interface {
@@ -37,15 +51,21 @@ type systemLookup interface {
 }
 
 type Handlers struct {
-	db       systemLookup
-	ghToken  string
-	ghRepo   string
-	baseURL  string
+	db      systemLookup
+	ghToken string
+	ghRepo  string
+	baseURL string
+	// apiBase is the GitHub API origin; tests point it at a stub.
+	apiBase  string
 	client   *http.Client
 	mu       sync.Mutex
-	cached   *release
-	cachedAt time.Time
+	cached   map[string]cachedRelease // keyed by tag; "" is the latest release
 	cacheFor time.Duration
+}
+
+type cachedRelease struct {
+	rel *release
+	at  time.Time
 }
 
 func New(db systemLookup, ghToken, ghRepo, baseURL string) *Handlers {
@@ -54,7 +74,9 @@ func New(db systemLookup, ghToken, ghRepo, baseURL string) *Handlers {
 		ghToken:  ghToken,
 		ghRepo:   ghRepo,
 		baseURL:  strings.TrimRight(baseURL, "/"),
+		apiBase:  "https://api.github.com",
 		client:   &http.Client{Timeout: 60 * time.Second},
+		cached:   map[string]cachedRelease{},
 		cacheFor: 5 * time.Minute,
 	}
 }
@@ -68,22 +90,30 @@ type release struct {
 	} `json:"assets"`
 }
 
-// latest resolves the newest release, cached briefly. Without the cache every
-// Pi boot loop would spend the server's GitHub rate limit.
+// release resolves one release: the newest when tag is "", otherwise the
+// release for that exact tag. Each is cached briefly; without the cache
+// every Pi boot loop would spend the server's GitHub rate limit.
 //
 // The repository releases as a single unit — one vX.Y.Z tag builds the server,
 // web, receiver and mobile together — so /releases/latest is unambiguous and
 // already excludes drafts and prereleases.
-func (h *Handlers) latest(ctx context.Context) (*release, error) {
+func (h *Handlers) release(ctx context.Context, tag string) (*release, error) {
+	if h.ghToken == "" {
+		return nil, ErrNotConfigured
+	}
 	h.mu.Lock()
-	if h.cached != nil && time.Since(h.cachedAt) < h.cacheFor {
-		defer h.mu.Unlock()
-		return h.cached, nil
+	if c, ok := h.cached[tag]; ok && time.Since(c.at) < h.cacheFor {
+		h.mu.Unlock()
+		return c.rel, nil
 	}
 	h.mu.Unlock()
 
+	path := "/releases/latest"
+	if tag != "" {
+		path = "/releases/tags/" + tag
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", h.ghRepo), nil)
+		fmt.Sprintf("%s/repos/%s%s", h.apiBase, h.ghRepo, path), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -97,11 +127,14 @@ func (h *Handlers) latest(ctx context.Context) (*release, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("no published release yet")
+		if tag == "" {
+			return nil, fmt.Errorf("no published release yet: %w", ErrReleaseNotFound)
+		}
+		return nil, fmt.Errorf("release %s: %w", tag, ErrReleaseNotFound)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("github releases/latest: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("github %s: %s: %s", path, resp.Status, strings.TrimSpace(string(body)))
 	}
 
 	var rel release
@@ -110,9 +143,25 @@ func (h *Handlers) latest(ctx context.Context) (*release, error) {
 	}
 
 	h.mu.Lock()
-	h.cached, h.cachedAt = &rel, time.Now()
+	h.cached[tag] = cachedRelease{rel: &rel, at: time.Now()}
 	h.mu.Unlock()
 	return &rel, nil
+}
+
+// latest resolves the newest release.
+func (h *Handlers) latest(ctx context.Context) (*release, error) {
+	return h.release(ctx, "")
+}
+
+// LatestVersion returns the newest published release tag, e.g. "v5.4.0".
+// Cached like the binary proxy, so the receiver hub can ask on every
+// connect and the admin UI on every page load.
+func (h *Handlers) LatestVersion(ctx context.Context) (string, error) {
+	rel, err := h.latest(ctx)
+	if err != nil {
+		return "", err
+	}
+	return rel.TagName, nil
 }
 
 // apiKey accepts the same header spellings the rest of the receiver surface does.
@@ -131,9 +180,13 @@ func apiKey(r *http.Request) string {
 // Binary streams a release asset to an authenticated receiver.
 // GET /api/binaries/receiver/{platform}        -> the binary
 // GET /api/binaries/receiver/{platform}.sha256 -> its checksum
+//
+// Both take an optional ?version=vX.Y.Z to fetch a specific release instead
+// of the newest; the receiver's self-update uses it so an admin can pin a
+// fleet to a known version or roll one box back.
 func (h *Handlers) Binary(w http.ResponseWriter, r *http.Request) {
 	if h.ghToken == "" {
-		writeErr(w, http.StatusServiceUnavailable, "binary distribution is not configured on this server")
+		writeErr(w, http.StatusServiceUnavailable, ErrNotConfigured.Error())
 		return
 	}
 
@@ -157,10 +210,20 @@ func (h *Handlers) Binary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rel, err := h.latest(r.Context())
+	version := strings.TrimSpace(r.URL.Query().Get("version"))
+	if version != "" && !ReleaseTag.MatchString(version) {
+		writeErr(w, http.StatusBadRequest, "version must be a release tag like v5.4.0")
+		return
+	}
+
+	rel, err := h.release(r.Context(), version)
 	if err != nil {
-		slog.Error("binary proxy: resolving latest release", "error", err)
-		writeErr(w, http.StatusBadGateway, "could not resolve the latest release")
+		if errors.Is(err, ErrReleaseNotFound) {
+			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		slog.Error("binary proxy: resolving release", "version", version, "error", err)
+		writeErr(w, http.StatusBadGateway, "could not resolve the release")
 		return
 	}
 

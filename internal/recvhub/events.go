@@ -19,6 +19,14 @@ const (
 	EvtReceiverDongleChange  = "receiver_dongle_change"
 	EvtReceiverError         = "receiver_error"
 	EvtReceiverCrash         = "receiver_crash"
+
+	// Remote management: config push outcomes, command completion and
+	// capture uploads. Metadata carries the version / command id so the
+	// admin UI can link an event back to the revision or command row.
+	EvtReceiverConfigApplied  = "receiver_config_applied"
+	EvtReceiverConfigRejected = "receiver_config_rejected"
+	EvtReceiverCommand        = "receiver_command"
+	EvtReceiverCaptureReady   = "receiver_capture_ready"
 )
 
 const (

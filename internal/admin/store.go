@@ -412,6 +412,12 @@ const systemSelectColumns = `s.*, u.name as user_name,
 	sc.receiver_arch     as receiver_arch,
 	sc.receiver_hostname as receiver_hostname,
 	sc.dongles::text     as receiver_dongles,
+	sc.proto             as receiver_proto,
+	sc.config_version    as receiver_config_version,
+	sc.config_status     as receiver_config_status,
+	sc.host::text        as receiver_host,
+	sc.last_stats::text  as receiver_last_stats,
+	sc.last_stats_at     as receiver_last_stats_at,
 	(sc.system_id IS NOT NULL AND sc.last_ping_at > NOW() - INTERVAL '90 seconds') as receiver_online`
 
 func (s *Store) CreateSystem(ctx context.Context, data map[string]any) (int64, error) {

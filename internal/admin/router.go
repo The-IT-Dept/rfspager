@@ -6,11 +6,18 @@ import (
 	"github.com/the-it-dept/rfspager/internal/notify"
 )
 
-// Router creates the admin API router mounted at /api/v1/admin.
-func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier) chi.Router {
+// Router creates the admin API router mounted at /api/v1/admin. receivers
+// wires the receiver remote-management routes; nil leaves them out. The
+// two receiver SSE streams are not here: cmd/server mounts them outside
+// the request-timeout group (see ReceiverStatsStream).
+func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, receivers *ReceiverDeps) chi.Router {
 	store := NewStore(db)
 	auth := NewAuthHandler(store, jwtSecret)
 	h := NewHandlers(store, notifier)
+	var rx *receiverHandlers
+	if receivers != nil && receivers.Store != nil {
+		rx = newReceiverHandlers(db, *receivers)
+	}
 
 	r := chi.NewRouter()
 
@@ -71,7 +78,15 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier) chi.Router
 			r.Put("/{id}", h.UpdateSystem)
 			r.Delete("/{id}", h.DeleteSystem)
 			r.With(auth.RequireSuperadmin).Post("/{id}/approve", h.ApproveSystem)
+			if rx != nil {
+				// Receiver remote management: config, stats, events, logs,
+				// commands, captures (receivers.go).
+				mountReceiverRoutes(r, rx)
+			}
 		})
+		if rx != nil {
+			r.Get("/receivers/latest-version", rx.LatestVersion)
+		}
 
 		// Messages
 		r.Route("/messages", func(r chi.Router) {

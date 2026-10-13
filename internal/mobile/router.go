@@ -85,6 +85,7 @@ func Router(db *sqlx.DB, jwtSecret, appleBundleID string, sseBroker *SSEBroker, 
 		// auth group) so the existing JWTUserAuth middleware covers them
 		// and chi's specificity ordering doesn't shadow GET /systems/{uuid}.
 		r.Get("/systems/{uuid}/events", SystemEvents(db))
+		r.Get("/systems/{uuid}/config", SystemConfig(db))
 		r.Get("/systems/{uuid}/logs/recent", SystemLogsRecent(db, hub))
 		if hub != nil {
 			r.Get("/systems/{uuid}/logs", SystemLogSSE(db, hub))

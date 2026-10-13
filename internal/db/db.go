@@ -361,6 +361,16 @@ type SystemConnection struct {
 	ReceiverArch     sql.NullString `db:"receiver_arch" json:"receiver_arch,omitempty"`
 	ReceiverHostname sql.NullString `db:"receiver_hostname" json:"receiver_hostname,omitempty"`
 	Dongles          []byte         `db:"dongles" json:"dongles,omitempty"` // raw JSONB
+
+	// Remote-management columns (migration 032). Written by
+	// UpdateSystemConnectionHello and friends after the upsert, not by
+	// UpsertSystemConnection itself.
+	Proto         int            `db:"proto" json:"proto"`
+	ConfigVersion sql.NullInt64  `db:"config_version" json:"config_version,omitempty"`
+	ConfigStatus  sql.NullString `db:"config_status" json:"config_status,omitempty"`
+	Host          []byte         `db:"host" json:"host,omitempty"`             // raw JSONB (rxproto.HostInfo)
+	LastStats     []byte         `db:"last_stats" json:"last_stats,omitempty"` // raw JSONB (rxproto.Stats)
+	LastStatsAt   sql.NullTime   `db:"last_stats_at" json:"last_stats_at,omitempty"`
 }
 
 // UpsertSystemConnection records (or replaces) a receiver's connection. The

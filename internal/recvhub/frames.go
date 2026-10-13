@@ -1,71 +1,23 @@
 // Package recvhub holds the server-side websocket hub that talks to receiver
-// agents. It owns the JSON frame schema, the per-pod in-memory conn map, and
-// the cross-pod NOTIFY plumbing that lets any pod push config to the pod
-// holding a given receiver's socket.
+// agents. It owns the per-pod in-memory conn map, the cross-pod NOTIFY
+// plumbing that lets any pod push config and commands to the pod holding a
+// given receiver's socket, and the stats/log brokers that fan receiver
+// reports out to admin and owner streams.
 package recvhub
 
-import "encoding/json"
+import "github.com/the-it-dept/rfspager/internal/rxproto"
 
-// Frame is the discriminated-union envelope for every websocket message.
-// We always Marshal a Frame and the receiver checks Type first.
-type Frame struct {
-	Type string          `json:"type"`
-	ID   string          `json:"id,omitempty"`   // for request/ack correlation
-	Data json.RawMessage `json:"data,omitempty"` // type-specific payload
-}
-
-// --- Client → server payloads ---
-
-type DongleInfo struct {
-	Index        int    `json:"index"`
-	Name         string `json:"name"`
-	Manufacturer string `json:"manufacturer,omitempty"`
-	Product      string `json:"product,omitempty"`
-	Serial       string `json:"serial,omitempty"`
-	Tuner        string `json:"tuner,omitempty"`
-}
-
-type HelloPayload struct {
-	Version  string       `json:"version"`
-	OS       string       `json:"os"`
-	Arch     string       `json:"arch"`
-	Hostname string       `json:"hostname"`
-	Dongles  []DongleInfo `json:"dongles"`
-}
-
-type PagePayload struct {
-	Address  string `json:"address"`
-	Message  string `json:"message"`
-	Datetime int64  `json:"datetime"` // unix seconds
-	Function int    `json:"fn"`
-	BitRate  int    `json:"baud"`
-}
-
-// LogPayload is a single log line the receiver wants persisted + fanned out
-// to subscribed clients (owner + admin). The receiver assigns `ts`; the hub
-// records `received_at` itself.
-type LogPayload struct {
-	TS      int64          `json:"ts"`              // unix milliseconds (receiver clock)
-	Level   string         `json:"level,omitempty"` // debug | info | warn | error
-	Source  string         `json:"source,omitempty"`
-	Message string         `json:"message"`
-	Raw     map[string]any `json:"raw,omitempty"`
-}
-
-// --- Server → client payloads ---
-
-type WelcomePayload struct {
-	SystemID    int64  `json:"id"`
-	SystemUUID  string `json:"system_id"`
-	Name        string `json:"name"`
-	PingSeconds int    `json:"ping_seconds"` // server's expected ping interval
-}
-
-type AckPayload struct {
-	Status string `json:"status"` // "ok", "dup", "err"
-	Error  string `json:"error,omitempty"`
-}
-
-type ConfigPayload struct {
-	System map[string]any `json:"system"`
-}
+// The frame envelope and every payload are defined once in rxproto so the
+// receiver agent and this hub cannot drift. The names below predate that
+// package and are kept as aliases so existing callers (including the
+// PageHandler signature cmd/server wires up) keep compiling.
+type (
+	Frame          = rxproto.Frame
+	DongleInfo     = rxproto.DongleInfo
+	HelloPayload   = rxproto.Hello
+	PagePayload    = rxproto.Page
+	LogPayload     = rxproto.Log
+	WelcomePayload = rxproto.Welcome
+	AckPayload     = rxproto.Ack
+	ConfigPayload  = rxproto.ConfigPayload
+)

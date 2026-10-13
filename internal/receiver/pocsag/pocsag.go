@@ -18,6 +18,8 @@ package pocsag
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
+	"time"
 )
 
 const (
@@ -74,7 +76,86 @@ type Decoder struct {
 	numeric         strings.Builder
 	staged          []Page // pages waiting on next-sync confirmation
 
+	// Health counters, read by Stats() from another goroutine. Each is one
+	// atomic add on an event that happens at most once per codeword, so
+	// the decode path does not notice them.
+	cnt counters
+
 	Out chan Page
+}
+
+type counters struct {
+	syncLocks       atomic.Uint64
+	syncLosses      atomic.Uint64
+	cwClean         atomic.Uint64
+	cwCorrected     atomic.Uint64
+	cwUncorrectable atomic.Uint64
+	pages           atomic.Uint64
+	pagesTruncated  atomic.Uint64
+	lastPageNanos   atomic.Int64
+}
+
+// Stats is a cumulative snapshot of a decoder's counters since it was
+// created. Callers that want per-interval numbers keep the previous
+// snapshot and Sub it.
+type Stats struct {
+	SyncLocks       uint64 // second sync word seen after a hunt: a confirmed lock
+	SyncLosses      uint64 // a confirmed lock ended (sync missing, or a stream gap)
+	CWClean         uint64 // codewords that BCH-verified with no errors
+	CWCorrected     uint64 // codewords repaired (1-2 bit errors)
+	CWUncorrectable uint64 // codewords beyond BCH's reach, dropped
+	Pages           uint64 // pages released to Out
+	PagesTruncated  uint64 // pages cut short by a stream gap or a lost sync
+	// LastPageAt is when the most recent page was released; zero if none.
+	LastPageAt time.Time
+}
+
+// Stats returns the counters so far. Safe to call from any goroutine.
+func (d *Decoder) Stats() Stats {
+	s := Stats{
+		SyncLocks:       d.cnt.syncLocks.Load(),
+		SyncLosses:      d.cnt.syncLosses.Load(),
+		CWClean:         d.cnt.cwClean.Load(),
+		CWCorrected:     d.cnt.cwCorrected.Load(),
+		CWUncorrectable: d.cnt.cwUncorrectable.Load(),
+		Pages:           d.cnt.pages.Load(),
+		PagesTruncated:  d.cnt.pagesTruncated.Load(),
+	}
+	if ns := d.cnt.lastPageNanos.Load(); ns != 0 {
+		s.LastPageAt = time.Unix(0, ns)
+	}
+	return s
+}
+
+// Add sums two snapshots; a channel runs one decoder per baud and reports
+// them as one.
+func (s Stats) Add(o Stats) Stats {
+	s.SyncLocks += o.SyncLocks
+	s.SyncLosses += o.SyncLosses
+	s.CWClean += o.CWClean
+	s.CWCorrected += o.CWCorrected
+	s.CWUncorrectable += o.CWUncorrectable
+	s.Pages += o.Pages
+	s.PagesTruncated += o.PagesTruncated
+	if o.LastPageAt.After(s.LastPageAt) {
+		s.LastPageAt = o.LastPageAt
+	}
+	return s
+}
+
+// Sub returns the interval delta s - prev for the counters; LastPageAt is
+// carried over from s.
+func (s Stats) Sub(prev Stats) Stats {
+	return Stats{
+		SyncLocks:       s.SyncLocks - prev.SyncLocks,
+		SyncLosses:      s.SyncLosses - prev.SyncLosses,
+		CWClean:         s.CWClean - prev.CWClean,
+		CWCorrected:     s.CWCorrected - prev.CWCorrected,
+		CWUncorrectable: s.CWUncorrectable - prev.CWUncorrectable,
+		Pages:           s.Pages - prev.Pages,
+		PagesTruncated:  s.PagesTruncated - prev.PagesTruncated,
+		LastPageAt:      s.LastPageAt,
+	}
 }
 
 func New(bitRate int, out chan Page) *Decoder {
@@ -120,6 +201,9 @@ func (d *Decoder) Feed(b bool) {
 			matchNorm := hammingDist32(d.reg, SyncWord) <= 1
 			matchInv := hammingDist32(d.reg, SyncInverse) <= 1
 			if matchNorm || matchInv {
+				if !d.locked {
+					d.cnt.syncLocks.Add(1)
+				}
 				d.locked = true
 				d.commitStaged()
 				// Continue locked: another batch follows.
@@ -128,6 +212,8 @@ func (d *Decoder) Feed(b bool) {
 			} else if d.locked {
 				// End of transmission after a confirmed lock — flush
 				// whatever message was still being accumulated and emit.
+				d.cnt.syncLosses.Add(1)
+				d.noteTruncation()
 				d.flushPending()
 				d.commitStaged()
 				d.state = 0
@@ -157,6 +243,10 @@ func (d *Decoder) Resync() {
 	if d.state == 1 && d.cwIdx > 0 {
 		d.processCodewords(d.batch[:d.cwIdx])
 	}
+	if d.locked {
+		d.cnt.syncLosses.Add(1)
+	}
+	d.noteTruncation()
 	d.flushPending()
 	d.commitStaged()
 	d.state = 0
@@ -180,11 +270,24 @@ func (d *Decoder) processCodewords(cws []uint32) {
 		// a "valid" address and the next noisy codeword gets appended as
 		// its message text — producing the OUR^j|UbL / 52r#H / :Y*X noise
 		// companions we see at end-of-burst.
-		if popcount32(cw^IdleCodeword) <= 3 {
+		if n := popcount32(cw ^ IdleCodeword); n <= 3 {
+			if n == 0 {
+				d.cnt.cwClean.Add(1)
+			} else {
+				d.cnt.cwCorrected.Add(1)
+			}
 			d.flushPending()
 			continue
 		}
 		corrected, errors, ok := correctBCH(cw)
+		switch {
+		case !ok:
+			d.cnt.cwUncorrectable.Add(1)
+		case errors == 0:
+			d.cnt.cwClean.Add(1)
+		default:
+			d.cnt.cwCorrected.Add(1)
+		}
 		if !ok {
 			// Codeword is beyond BCH's 2-bit correction limit. Drop it
 			// silently but DON'T finalise the current page — long messages
@@ -314,8 +417,20 @@ func (d *Decoder) commitStaged() {
 	}
 	for _, p := range d.staged {
 		d.Out <- p
+		d.cnt.pages.Add(1)
+		d.cnt.lastPageNanos.Store(time.Now().UnixNano())
 	}
 	d.staged = nil
+}
+
+// noteTruncation records that the page in flight (an address with at least
+// one message codeword behind it) is about to be finalised early because
+// the stream ended or had a gap, rather than because the transmitter sent
+// an idle codeword or the next address.
+func (d *Decoder) noteTruncation() {
+	if d.pendingAddr != "" && (d.alpha.Len() > 0 || d.numeric.Len() > 0) {
+		d.cnt.pagesTruncated.Add(1)
+	}
 }
 
 // discardStaged drops the most recent batch's staged pages — sync didn't
