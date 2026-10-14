@@ -36,3 +36,12 @@ Server: `install -m 755 /opt/rfspager-go/server.prev /opt/rfspager-go/server && 
 
 Web: `docker images rfspager-web` lists the previous tags; rerun the
 `docker run` line from `deploy-web.sh` with the old tag.
+
+## Legacy GraphQL (old 4.x app)
+
+Laravel is retired. `POST /graphql` on `v3.rfspager.app` is routed by Caddy to
+the Go server, where `internal/legacy` answers every operation with fixed data
+that puts a single "update required" notice at the top of the old app's feed.
+It never returns a GraphQL error (the old app cannot display one) and never
+touches the database. Remove the route once no 4.x installation has been seen
+for a while (`installations.app_version`).
