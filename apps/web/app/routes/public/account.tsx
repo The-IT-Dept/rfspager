@@ -330,6 +330,10 @@ function PasswordSection() {
 // ----------------------------------------------------------------------------
 
 function SubscriptionSection({ user }: { user: CustomerUser }) {
+  // Hosting a receiver grants Pro on its own, alongside or instead of a store
+  // subscription. When it is the only source the store fields are stale.
+  const hostComp = !!user.host_comp_until && new Date(user.host_comp_until).getTime() > Date.now();
+  const hostOnly = hostComp && user.subscription_product_id === "io.devlan.rfspager.host";
   const expiry = user.subscription_expiry ? new Date(user.subscription_expiry) : null;
   const expiryLabel = expiry
     ? expiry.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })
@@ -361,7 +365,13 @@ function SubscriptionSection({ user }: { user: CustomerUser }) {
         <dl className="divide-y divide-gray-100 text-sm">
           <Row label="Plan" value={productLabel(user.subscription_product_id)} />
           <Row label="Status" value={user.subscription_valid ? "Active" : "Inactive"} />
-          {user.subscription_valid && (
+          {hostComp && (
+            <Row
+              label="Hosting"
+              value="Pro is free while your receiver stays online. It lapses a week after the receiver stops."
+            />
+          )}
+          {user.subscription_valid && !hostOnly && (
             <>
               <Row label={user.will_renew ? "Renews on" : "Expires on"} value={expiryLabel || "—"} />
               <Row label="Auto-renews" value={user.will_renew ? "Yes" : "No"} />

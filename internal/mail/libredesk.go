@@ -1,22 +1,14 @@
 package mail
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"html"
-	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
-	"strings"
-	"time"
 )
 
 const (
-	libredeskTimeout = 15 * time.Second
 	// PasswordResetTag must already exist in Libredesk; unknown tag names are
 	// silently ignored there rather than created.
 	PasswordResetTag = "password-reset"
@@ -35,31 +27,15 @@ const (
 // Libredesk has no way to hide message content: agents who can read the
 // inbox can see the reset link until it expires or is used.
 type LibredeskPasswordResetMailer struct {
-	baseURL   string
-	authToken string
-	inboxID   int
-	agentID   int
-	client    *http.Client
+	*libredeskClient
 }
 
 func NewLibredeskPasswordResetMailer(baseURL, apiKey, apiSecret string, inboxID, agentID int) (*LibredeskPasswordResetMailer, error) {
-	u, err := url.Parse(baseURL)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || (u.Scheme != "https" && !(u.Scheme == "http" && isLoopbackHost(u.Hostname()))) {
-		return nil, errors.New("Libredesk URL must be an HTTPS URL")
+	c, err := newLibredeskClient(baseURL, apiKey, apiSecret, inboxID, agentID)
+	if err != nil {
+		return nil, err
 	}
-	if apiKey == "" || apiSecret == "" || strings.ContainsAny(apiKey+apiSecret, ": \r\n") {
-		return nil, errors.New("Libredesk API key and secret are required")
-	}
-	if inboxID <= 0 || agentID <= 0 {
-		return nil, errors.New("Libredesk inbox and agent IDs are required")
-	}
-	return &LibredeskPasswordResetMailer{
-		baseURL:   strings.TrimRight(baseURL, "/"),
-		authToken: "token " + apiKey + ":" + apiSecret,
-		inboxID:   inboxID,
-		agentID:   agentID,
-		client:    &http.Client{Timeout: libredeskTimeout},
-	}, nil
+	return &LibredeskPasswordResetMailer{c}, nil
 }
 
 // SendPasswordReset queues the email in Libredesk, which delivers it through
@@ -81,78 +57,18 @@ func (m *LibredeskPasswordResetMailer) SendPasswordReset(ctx context.Context, re
 		return err
 	}
 
-	var created struct {
-		Data struct {
-			UUID string `json:"uuid"`
-		} `json:"data"`
-	}
-	err = m.do(ctx, http.MethodPost, "/api/v1/conversations", map[string]any{
-		"inbox_id":      m.inboxID,
-		"initiator":     "agent",
-		"agent_id":      m.agentID,
-		"contact_email": recipient,
-		"first_name":    contactFirstName(name, recipient),
-		"subject":       "Reset your RFSPager password",
-		"content":       passwordResetHTML(fullResetURL),
-	}, &created)
+	conversation, err := m.createConversation(ctx, recipient, name, "Reset your RFSPager password", passwordResetHTML(fullResetURL))
 	if err != nil {
-		return fmt.Errorf("creating Libredesk conversation: %w", err)
-	}
-	if created.Data.UUID == "" {
-		return errors.New("creating Libredesk conversation: response had no conversation id")
+		return err
 	}
 
-	path := "/api/v1/conversations/" + url.PathEscape(created.Data.UUID)
-	if err := m.do(ctx, http.MethodPost, path+"/tags", map[string]any{"tags": []string{PasswordResetTag}, "action": "add_tags"}, nil); err != nil {
-		slog.Warn("password reset: tagging Libredesk conversation failed", "conversation", created.Data.UUID, "error", err)
+	if err := m.addTag(ctx, conversation, PasswordResetTag); err != nil {
+		slog.Warn("password reset: tagging Libredesk conversation failed", "conversation", conversation, "error", err)
 	}
-	if err := m.do(ctx, http.MethodPut, path+"/status", map[string]string{"status": "Resolved"}, nil); err != nil {
-		slog.Warn("password reset: resolving Libredesk conversation failed", "conversation", created.Data.UUID, "error", err)
+	if err := m.do(ctx, http.MethodPut, conversationPath(conversation)+"/status", map[string]string{"status": "Resolved"}, nil); err != nil {
+		slog.Warn("password reset: resolving Libredesk conversation failed", "conversation", conversation, "error", err)
 	}
 	return nil
-}
-
-func (m *LibredeskPasswordResetMailer) do(ctx context.Context, method, path string, body, out any) error {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, method, m.baseURL+path, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", m.authToken)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	resp, err := m.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		var apiErr struct {
-			Message string `json:"message"`
-		}
-		_ = json.Unmarshal(data, &apiErr)
-		return fmt.Errorf("Libredesk %s %s: HTTP %d %s", method, path, resp.StatusCode, apiErr.Message)
-	}
-	if out != nil {
-		if err := json.Unmarshal(data, out); err != nil {
-			return fmt.Errorf("decoding Libredesk response: %w", err)
-		}
-	}
-	return nil
-}
-
-// contactFirstName is the name a new Libredesk contact is created with
-// (existing contacts keep theirs). Libredesk requires one, so fall back to
-// the mailbox name.
-func contactFirstName(name, email string) string {
-	if name = strings.TrimSpace(name); name != "" {
-		return name
-	}
-	return strings.SplitN(email, "@", 2)[0]
 }
 
 // passwordResetHTML is the message body. Libredesk renders content through

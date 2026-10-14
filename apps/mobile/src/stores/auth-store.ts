@@ -320,5 +320,6 @@ export const useProductName = () =>
     if (pid === "io.devlan.rfspager.monthly") return "Monthly"
     if (pid === "io.devlan.rfspager.yearly") return "Yearly"
     if (pid === "io.devlan.rfspager.gifted") return "Gifted"
+    if (pid === "io.devlan.rfspager.host") return "Free while hosting"
     return "Not Subscribed"
   })

@@ -17,6 +17,8 @@ import (
 type Handlers struct {
 	store    *Store
 	notifier *notify.Notifier
+	// applications emails the install command on approval; nil = no emails.
+	applications ApplicationMailer
 }
 
 func NewHandlers(store *Store, notifier *notify.Notifier) *Handlers {
@@ -296,8 +298,9 @@ func (h *Handlers) DeleteSystem(w http.ResponseWriter, r *http.Request) {
 }
 
 // ApproveSystem flips a pending system to approved: stamps approved_at,
-// generates an api_key if one hasn't been assigned yet, and fires a push
-// notification to the owner so they can fetch their install command.
+// generates an api_key if one hasn't been assigned yet, fires a push
+// notification to the owner so they can fetch their install command, and
+// emails them the command when an application mailer is configured.
 func (h *Handlers) ApproveSystem(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 
@@ -353,6 +356,18 @@ func (h *Handlers) ApproveSystem(w http.ResponseWriter, r *http.Request) {
 				h.notifier.NotifySystemApproved(ctx, userID, name)
 			}()
 		}
+	}
+
+	// Email the owner the install command, in the application's support
+	// conversation. The command reads the request (origin headers), so it is
+	// built here; the goroutine is detached for the same reason as above.
+	if h.applications != nil {
+		command := install.CommandFor(r, apiKey)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), approvalEmailTimeout)
+			defer cancel()
+			sendApplicationApproved(ctx, h.store.db, h.applications, id, command)
+		}()
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "approved", "api_key": apiKey})

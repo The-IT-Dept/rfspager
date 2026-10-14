@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 
-import { AuthShell, Field, Notice, SubmitButton, linkClass } from "~/components/auth/auth-shell";
+import { AuthShell, Field, Notice, SubmitButton, linkClass, safeNext } from "~/components/auth/auth-shell";
 
 export function meta() {
   return [{ title: "Create an account — RFSPager" }];
@@ -9,6 +9,10 @@ export function meta() {
 
 export default function Register() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Passed through raw to the sign-in link; sanitised by safeNext wherever it
+  // is followed.
+  const rawNext = searchParams.get("next");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -39,7 +43,7 @@ export default function Register() {
       }
       localStorage.setItem("rfspager_token", data.token);
       window.dispatchEvent(new Event("rfspager:auth"));
-      navigate("/subscribe");
+      navigate(safeNext(rawNext, "/subscribe"));
     } catch {
       setError("Couldn't reach the server. Check your connection and try again.");
     } finally {
@@ -54,7 +58,7 @@ export default function Register() {
       footer={
         <>
           Already have one?{" "}
-          <Link to="/login" className={linkClass}>
+          <Link to={rawNext ? `/login?next=${encodeURIComponent(rawNext)}` : "/login"} className={linkClass}>
             Sign in
           </Link>
         </>

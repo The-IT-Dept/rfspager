@@ -4,7 +4,7 @@
  * dependency. If we ever need a hosted version, this same content can be
  * lifted onto the website verbatim.
  */
-export const HOSTING_TERMS_VERSION = "2026-05"
+export const HOSTING_TERMS_VERSION = "2026-10"
 
 export const HOSTING_TERMS_SECTIONS: { title: string; body: string }[] = [
   {
@@ -25,7 +25,7 @@ export const HOSTING_TERMS_SECTIONS: { title: string; body: string }[] = [
   {
     title: "4. Data handling",
     body:
-      "Once a page reaches RFSPager Pty Ltd we process and distribute it under our standard public-information policy. You retain no exclusive rights to the forwarded data.",
+      "Once a page reaches The IT Dept Pty Ltd we process and distribute it under our standard public-information policy. You retain no exclusive rights to the forwarded data.",
   },
   {
     title: "5. Best effort, no SLA",
@@ -40,7 +40,7 @@ export const HOSTING_TERMS_SECTIONS: { title: string; body: string }[] = [
   {
     title: "7. Legal compliance",
     body:
-      "You are responsible for confirming that monitoring these transmissions complies with the law in your jurisdiction (e.g. the Radiocommunications Act in Australia). RFSPager Pty Ltd is not liable for misuse.",
+      "You are responsible for confirming that monitoring these transmissions complies with the law in your jurisdiction (e.g. the Radiocommunications Act in Australia). The IT Dept Pty Ltd is not liable for misuse.",
   },
   {
     title: "8. Changes",

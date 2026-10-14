@@ -102,15 +102,11 @@ func (h *AuthHandler) findOrCreateSocialUser(r *http.Request, provider string, i
 
 	user := &AuthUser{}
 	loadUser := func(id int64) error {
-		return h.db.QueryRowContext(ctx,
-			`SELECT id, user_id, name, email, subscription_valid,
-			 subscription_product_id, subscription_expiry, will_renew,
-			 subscription_platform, superuser, token_version
-			 FROM users WHERE id = $1`, id).Scan(
-			&user.ID, &user.UserID, &user.Name, &user.Email,
-			&user.SubscriptionValid, &user.SubscriptionProductID,
-			&user.SubscriptionExpiry, &user.WillRenew, &user.SubscriptionPlatform,
-			&user.Superuser, &user.TokenVersion)
+		if err := h.db.GetContext(ctx, user, `SELECT `+authUserColumns+` FROM users WHERE id = $1`, id); err != nil {
+			return err
+		}
+		user.withEffectiveAccess(time.Now())
+		return nil
 	}
 
 	// 1. Existing social link.

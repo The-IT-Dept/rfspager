@@ -53,12 +53,15 @@ type Config struct {
 	SMTPFrom     string
 	SMTPMode     string
 	// Libredesk sends password resets as support-desk conversations when set,
-	// taking precedence over SMTP.
-	LibredeskURL         string
-	LibredeskAPIKey      string
-	LibredeskAPISecret   string
-	LibredeskInboxID     int
-	LibredeskAgentID     int
+	// taking precedence over SMTP, and emails receiver-hosting applicants.
+	LibredeskURL       string
+	LibredeskAPIKey    string
+	LibredeskAPISecret string
+	LibredeskInboxID   int
+	LibredeskAgentID   int
+	// LibredeskTeamID (optional, 0 = none) is the team receiver-application
+	// conversations are assigned to.
+	LibredeskTeamID      int
 	AdaptyWebhookAuth    string
 	FacebookAppID        string
 	FacebookAppSecret    string
@@ -192,7 +195,7 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("invalid SMTP_PORT")
 		}
 	}
-	if cfg.LibredeskURL != "" || cfg.LibredeskAPIKey != "" || cfg.LibredeskAPISecret != "" || os.Getenv("LIBREDESK_INBOX_ID") != "" || os.Getenv("LIBREDESK_AGENT_ID") != "" {
+	if cfg.LibredeskURL != "" || cfg.LibredeskAPIKey != "" || cfg.LibredeskAPISecret != "" || os.Getenv("LIBREDESK_INBOX_ID") != "" || os.Getenv("LIBREDESK_AGENT_ID") != "" || os.Getenv("LIBREDESK_TEAM_ID") != "" {
 		if cfg.LibredeskURL == "" || cfg.LibredeskAPIKey == "" || cfg.LibredeskAPISecret == "" {
 			return nil, fmt.Errorf("LIBREDESK_URL, LIBREDESK_API_KEY and LIBREDESK_API_SECRET must all be set, or all omitted")
 		}
@@ -203,6 +206,12 @@ func Load() (*Config, error) {
 		cfg.LibredeskAgentID, err = strconv.Atoi(os.Getenv("LIBREDESK_AGENT_ID"))
 		if err != nil || cfg.LibredeskAgentID < 1 {
 			return nil, fmt.Errorf("LIBREDESK_AGENT_ID must be a positive integer")
+		}
+		if v := os.Getenv("LIBREDESK_TEAM_ID"); v != "" {
+			cfg.LibredeskTeamID, err = strconv.Atoi(v)
+			if err != nil || cfg.LibredeskTeamID < 0 {
+				return nil, fmt.Errorf("LIBREDESK_TEAM_ID must be a non-negative integer")
+			}
 		}
 	}
 	for _, cidr := range cfg.TrustedProxyCIDRs {

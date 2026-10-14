@@ -17,6 +17,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/the-it-dept/rfspager/internal/authjwt"
+	"github.com/the-it-dept/rfspager/internal/hostcomp"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -32,7 +33,7 @@ type PasswordResetMailer interface {
 // emailMatchOrder ranks accounts matched by lower(email) = lower($1) when
 // several addresses differ only in case (people who signed up twice): the
 // exact spelling, then a subscribed account, then the most recently active.
-const emailMatchOrder = `ORDER BY (email = $1) DESC, subscription_valid DESC, last_login DESC NULLS LAST, id DESC`
+var emailMatchOrder = `ORDER BY (email = $1) DESC, ` + hostcomp.Access("") + ` DESC, last_login DESC NULLS LAST, id DESC`
 
 // AuthOptions contains optional integrations. With no reset mailer/password
 // reset URL, recovery is explicitly unavailable rather than falsely claiming
@@ -43,6 +44,9 @@ type AuthOptions struct {
 	FacebookAppID     string
 	FacebookAppSecret string
 	HTTPClient        *http.Client
+	// ApplicationMailer emails people who apply to host a receiver. Nil
+	// (Libredesk not configured) skips the emails silently.
+	ApplicationMailer ApplicationMailer
 }
 
 type AuthHandler struct {
@@ -115,10 +119,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Emails match case-insensitively. Some people have two accounts whose
 	// addresses differ only in case, so the password decides which one this
 	// is: exact-case first, then a subscribed account (emailMatchOrder).
-	rows, err := h.db.QueryContext(r.Context(),
-		`SELECT id, user_id, name, email, password, subscription_valid,
-		 subscription_product_id, subscription_expiry, will_renew,
-		 subscription_platform, superuser, token_version
+	rows, err := h.db.QueryxContext(r.Context(),
+		`SELECT `+authUserColumns+`, password
 		 FROM users WHERE lower(email) = lower($1) `+emailMatchOrder+` LIMIT 5`, strings.TrimSpace(req.Email))
 	if err != nil {
 		slog.Error("failed to look up login", "error", err)
@@ -128,16 +130,15 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var user AuthUser
 	found := false
 	for rows.Next() && !found {
-		var candidate AuthUser
-		var passwordHash string
-		if err := rows.Scan(&candidate.ID, &candidate.UserID, &candidate.Name, &candidate.Email, &passwordHash,
-			&candidate.SubscriptionValid, &candidate.SubscriptionProductID,
-			&candidate.SubscriptionExpiry, &candidate.WillRenew, &candidate.SubscriptionPlatform,
-			&candidate.Superuser, &candidate.TokenVersion); err != nil {
+		var candidate struct {
+			AuthUser
+			PasswordHash string `db:"password"`
+		}
+		if err := rows.StructScan(&candidate); err != nil {
 			break
 		}
-		if bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)) == nil {
-			user, found = candidate, true
+		if bcrypt.CompareHashAndPassword([]byte(candidate.PasswordHash), []byte(req.Password)) == nil {
+			user, found = candidate.AuthUser, true
 		}
 	}
 	rows.Close()
@@ -145,6 +146,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
+	user.withEffectiveAccess(time.Now())
 
 	token, err := h.generateToken(&user)
 	if err != nil {
@@ -195,21 +197,17 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user AuthUser
-	err = h.db.QueryRowContext(r.Context(),
+	err = h.db.GetContext(r.Context(), &user,
 		`INSERT INTO users (user_id, name, email, password, created_at, updated_at)
 		 VALUES (gen_random_uuid(), $1, $2, $3, NOW(), NOW())
-		 RETURNING id, user_id, name, email, subscription_valid, subscription_product_id,
-		 subscription_expiry, will_renew, subscription_platform, superuser`,
-		req.Name, req.Email, string(hash)).Scan(
-		&user.ID, &user.UserID, &user.Name, &user.Email,
-		&user.SubscriptionValid, &user.SubscriptionProductID,
-		&user.SubscriptionExpiry, &user.WillRenew, &user.SubscriptionPlatform,
-		&user.Superuser)
+		 RETURNING `+authUserColumns,
+		req.Name, req.Email, string(hash))
 	if err != nil {
 		slog.Error("failed to create user", "error", err)
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "email already taken"})
 		return
 	}
+	user.withEffectiveAccess(time.Now())
 
 	token, err := h.generateToken(&user)
 	if err != nil {
@@ -412,8 +410,7 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		     token_version = token_version + CASE WHEN $2 IS NOT NULL AND $2 <> email THEN 1 ELSE 0 END,
 		     updated_at = NOW()
 		 WHERE id = $3
-		 RETURNING id, user_id, name, email, subscription_valid, subscription_product_id,
-		           subscription_expiry, will_renew, subscription_platform, superuser, token_version`
+		 RETURNING ` + authUserColumns
 	var tx *sqlx.Tx
 	if emailChanging {
 		tx, err = h.db.BeginTxx(r.Context(), nil)
@@ -423,16 +420,11 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		defer func() { _ = tx.Rollback() }()
 	}
-	queryRow := h.db.QueryRowContext
+	var q sqlx.QueryerContext = h.db
 	if tx != nil {
-		queryRow = tx.QueryRowContext
+		q = tx
 	}
-	err = queryRow(r.Context(), query,
-		nameArg, emailArg, user.ID).Scan(
-		&updated.ID, &updated.UserID, &updated.Name, &updated.Email,
-		&updated.SubscriptionValid, &updated.SubscriptionProductID,
-		&updated.SubscriptionExpiry, &updated.WillRenew, &updated.SubscriptionPlatform,
-		&updated.Superuser, &updated.TokenVersion)
+	err = sqlx.GetContext(r.Context(), q, &updated, query, nameArg, emailArg, user.ID)
 	if err != nil {
 		// Most likely cause is the email unique constraint.
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
@@ -443,6 +435,7 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
+	updated.withEffectiveAccess(time.Now())
 	if tx != nil {
 		if _, err := tx.ExecContext(r.Context(), `UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL`, user.ID); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})

@@ -6,6 +6,9 @@ export default [
     index("routes/public/home.tsx"),
     route("pager", "routes/public/pager.tsx"),
     route("map", "routes/public/map.tsx"),
+    route("coverage", "routes/public/coverage.tsx"),
+    route("host", "routes/public/host.tsx"),
+    // Replaced by /coverage; redirects there so old links keep working.
     route("systems", "routes/public/systems.tsx"),
     route("capcodes", "routes/public/capcodes.tsx"),
     route("login", "routes/public/login.tsx"),

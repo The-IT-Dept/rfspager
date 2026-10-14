@@ -47,6 +47,8 @@ func passwordTestDB(t *testing.T) *sqlx.DB {
 			subscription_expiry TEXT,
 			will_renew BOOLEAN,
 			subscription_platform TEXT,
+			host_comp_until TIMESTAMPTZ,
+			host_comp_since TIMESTAMPTZ,
 			superuser BOOLEAN NOT NULL DEFAULT false,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW() - interval '30 days',
 			updated_at TIMESTAMPTZ

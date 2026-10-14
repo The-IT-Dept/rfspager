@@ -1,8 +1,10 @@
 import { Link } from "react-router";
 
+import { CoverageCard } from "~/components/home/coverage-card";
 import { LiveFeedPreview } from "~/components/home/live-feed-preview";
-import { HEARD_RECENTLY_MS, ReceiverNetwork, type ReceiverSummary } from "~/components/home/receiver-network";
+import { HEARD_RECENTLY_MS, type ReceiverSummary } from "~/components/home/receiver-network";
 import type { Message } from "~/components/pager/types";
+import { DEFAULT_COVERAGE_DAYS, fetchCoverageSSR } from "~/lib/public-coverage";
 import type { Route } from "./+types/home";
 
 const API_BASE = process.env.API_URL || "http://localhost:8080";
@@ -15,10 +17,11 @@ interface Stats {
 }
 
 export async function loader() {
-  const [stats, messages, systems] = await Promise.all([
+  const [stats, messages, systems, coverage] = await Promise.all([
     fetch(`${API_BASE}/api/public/stats`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     fetch(`${API_BASE}/api/public/messages?per_page=8`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     fetch(`${API_BASE}/api/public/systems`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+    fetchCoverageSSR(API_BASE, DEFAULT_COVERAGE_DAYS),
   ]);
 
   const receivers: ReceiverSummary[] = (Array.isArray(systems) ? systems : []).filter(
@@ -33,6 +36,7 @@ export async function loader() {
     initialMessages: (messages?.data ?? []) as Message[],
     receivers,
     heardRecently,
+    coverage,
   };
 }
 
@@ -110,7 +114,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "Where do the messages come from?",
-    a: "From our receivers. Each one is a small computer with a software-defined radio, hosted by a volunteer, tuned to the network's POCSAG carriers. It decodes each page and posts it to our server, which stores it and pushes it to the app and to this site. The receiver list on this page is live.",
+    a: "From our receivers. Each one is a small computer with a software-defined radio, hosted by a volunteer, tuned to the network's POCSAG carriers. It decodes each page and posts it to our server, which stores it and pushes it to the app and to this site. The coverage map shows where they are and which RFS districts they hear.",
   },
   {
     q: "How current is the feed?",
@@ -122,7 +126,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "Does it cover anywhere outside NSW?",
-    a: "Not yet. Coverage follows where our receivers are, and today those are in NSW. If you would like to host one, get in touch.",
+    a: "Not yet. Coverage follows where our receivers are, and today those are in NSW. If you would like to host one, see Host a receiver at rfspager.app/host.",
   },
   {
     q: "What happens to my data?",
@@ -131,7 +135,7 @@ const FAQ: Array<{ q: string; a: string }> = [
 ];
 
 export default function Home({ loaderData }: Route.ComponentProps) {
-  const { stats, initialMessages, receivers, heardRecently } = loaderData;
+  const { stats, initialMessages, receivers, heardRecently, coverage } = loaderData;
 
   return (
     <>
@@ -225,8 +229,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               </h2>
               <p className="mt-6 max-w-xl text-lg leading-relaxed text-white/60">
                 Every message in RFSPager came off a real RF channel through a receiver we run. That is why the feed
-                shows the page itself, why we can tell you which receiver decoded it, and why the list on the right
-                is honest about which ones are hearing traffic right now.
+                shows the page itself, why we can tell you which receiver decoded it, and why the coverage map
+                is honest about where we can hear and where we can't yet.
               </p>
 
               <ol className="mt-10 grid gap-6 sm:grid-cols-3">
@@ -255,12 +259,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               </ol>
 
               <div className="mt-10 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
-                <a
-                  href="mailto:hello@rfspager.app?subject=Hosting%20an%20RFSPager%20receiver"
+                <Link
+                  to="/host"
                   className="inline-flex items-center rounded-lg border border-white/15 bg-white/10 px-4 py-2.5 font-semibold transition-colors hover:bg-white/15"
                 >
                   Host a receiver
-                </a>
+                </Link>
                 <Link to="/pager" className="font-semibold text-white/70 hover:text-white">
                   Watch the live feed
                 </Link>
@@ -268,10 +272,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             </div>
 
             <div className="lg:col-span-6">
-              <ReceiverNetwork receivers={receivers} />
+              <CoverageCard data={coverage} />
               <p className="mt-4 text-xs leading-relaxed text-white/40">
-                A receiver counts as heard when we have decoded a page from it. A receiver that is powered on but
-                hearing nothing is shown exactly that way.
+                A paging site counts as heard when our receivers decoded pages for its district in the window. Grey
+                sites are ones we can't hear yet; a receiver nearby would fill them in.
               </p>
             </div>
           </div>

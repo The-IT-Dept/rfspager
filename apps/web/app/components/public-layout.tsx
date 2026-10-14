@@ -6,9 +6,8 @@ import { useEffect, useState, useMemo } from "react";
 const NAV_LINKS = [
   { label: "Pager", path: "/pager" },
   { label: "Map", path: "/map" },
+  { label: "Coverage", path: "/coverage" },
   { label: "Capcodes", path: "/capcodes" },
-  // Systems (public receiver-network page) gated off for now — see
-  // routes/public/systems.tsx.
 ];
 const SOURCE_URL = import.meta.env.VITE_SOURCE_URL || "https://github.com/the-it-dept/rfspager";
 
@@ -81,7 +80,7 @@ export function PublicLayout() {
   const isToolPage =
     location.pathname === "/pager" ||
     location.pathname === "/map" ||
-    location.pathname === "/systems" ||
+    location.pathname === "/coverage" ||
     location.pathname === "/capcodes";
   const { user, avatarHash, logout } = usePublicAuth();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -270,6 +269,8 @@ export function PublicLayout() {
                 <ul className="space-y-3 text-sm">
                   <li><Link to="/pager" className="hover:text-white transition-colors">Live Feed</Link></li>
                   <li><Link to="/map" className="hover:text-white transition-colors">Map</Link></li>
+                  <li><Link to="/coverage" className="hover:text-white transition-colors">Coverage</Link></li>
+                  <li><Link to="/host" className="hover:text-white transition-colors">Host a receiver</Link></li>
                 </ul>
               </div>
               <div className="md:col-span-2">

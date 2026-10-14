@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/the-it-dept/rfspager/internal/hostcomp"
 )
 
 // fanoutLockKey is the namespace passed to pg_try_advisory_xact_lock alongside
@@ -32,7 +33,10 @@ const reconcileWindow = time.Hour
 // `fanned_out_at` is set independent of recipient count — messages with no
 // eligible Pro subscribers also count as "done" and must not be reconciled
 // again every minute.
-const fanoutSQL = `
+//
+// Recipients need Pro: effective access, a valid store subscription or a
+// running receiver-host comp (hostcomp.Access).
+var fanoutSQL = `
 WITH locked AS (
     SELECT pg_try_advisory_xact_lock($1::int4, $2::int4) AS got
 ),
@@ -54,7 +58,7 @@ recipients AS (
       JOIN users u ON u.id = s.user_id
       JOIN msg            ON msg.capcode_id IS NOT NULL
      WHERE s.capcode_id = msg.capcode_id
-       AND u.subscription_valid = true
+       AND ` + hostcomp.Access("u") + `
 
     UNION
 
@@ -62,7 +66,7 @@ recipients AS (
       FROM alertzones az
       JOIN users u ON u.id = az.user_id
       JOIN msg            ON msg.lat IS NOT NULL AND msg.lng IS NOT NULL
-     WHERE u.subscription_valid = true
+     WHERE ` + hostcomp.Access("u") + `
        AND ST_DWithin(
               ST_SetSRID(ST_MakePoint(az.lng, az.lat), 4326)::geography,
               ST_SetSRID(ST_MakePoint(msg.lng::double precision, msg.lat::double precision), 4326)::geography,
