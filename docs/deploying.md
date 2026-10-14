@@ -45,3 +45,22 @@ that puts a single "update required" notice at the top of the old app's feed.
 It never returns a GraphQL error (the old app cannot display one) and never
 touches the database. Remove the route once no 4.x installation has been seen
 for a while (`installations.app_version`).
+
+## Store notifications (after Adapty)
+
+Subscription state comes straight from the stores; Adapty is no longer in the
+path once both of these are done.
+
+- **Apple**: App Store Connect → RFSPager → App Information → App Store Server
+  Notifications. There is no API for this field. Production Server URL and
+  Sandbox Server URL are both `https://rfspager.app/api/webhooks/apple`
+  (Version 2). The server verifies Apple's signature chain and the bundle ID.
+  A renewal usually arrives within the hour: `journalctl -u rfspager-go | grep
+  'apple webhook received'`.
+- **Google**: `scripts/google-rtdn-subscription.sh <topic>` adds a Pub/Sub push
+  subscription on the RTDN topic named in Play Console, authenticated with an
+  OIDC token the server checks (`GOOGLE_PUBSUB_AUDIENCE`,
+  `GOOGLE_PUBSUB_SERVICE_EMAIL` in `.env`).
+- Then cancel the Adapty plan in its dashboard and delete its webhook
+  integration and its Pub/Sub subscription. `POST /api/adapty-webhook` can be
+  removed from the server afterwards.
