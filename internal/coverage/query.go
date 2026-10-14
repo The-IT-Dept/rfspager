@@ -158,7 +158,11 @@ func (s *Service) globals(ctx context.Context, now time.Time) (globals, error) {
 	}
 	var g globals
 	// One backward probe per capcode on messages(capcode_id, deleted_at,
-	// created_at), then the newest per agency.
+	// created_at), then the newest per agency. The ORDER BY names deleted_at
+	// so it matches that index exactly: ordered by created_at alone, the
+	// planner walks idx_messages_feed_known backwards filtering on
+	// capcode_id, which reads the whole feed for every capcode never heard
+	// (minutes on prod's 2.1M rows, against 30 ms this way).
 	var rows []struct {
 		AgencyID int64     `db:"agency_id"`
 		At       time.Time `db:"at"`
@@ -170,7 +174,7 @@ func (s *Service) globals(ctx context.Context, now time.Time) (globals, error) {
 		        SELECT m.created_at
 		          FROM messages m
 		         WHERE m.capcode_id = c.id AND m.deleted_at IS NULL
-		         ORDER BY m.created_at DESC
+		         ORDER BY m.deleted_at DESC, m.created_at DESC
 		         LIMIT 1
 		  ) l
 		 WHERE c.deleted_at IS NULL AND c.agency_id IS NOT NULL AND l.created_at IS NOT NULL
