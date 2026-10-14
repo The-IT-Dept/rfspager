@@ -465,10 +465,14 @@ export interface MySystem {
   install_command?: string
 }
 
+/** "own": has a Pi, dongle and antenna. "needs": would host one if we help with the gear. */
+export type HostHardware = "own" | "needs"
+
 export interface CreateSystemInput {
   name: string
   suburb: string
   notes?: string
+  hardware?: HostHardware
   accepted_terms: boolean
 }
 

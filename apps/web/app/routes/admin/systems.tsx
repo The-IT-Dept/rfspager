@@ -5,6 +5,7 @@ import { Button } from "~/components/ui/button";
 import { Label } from "~/components/ui/label";
 import { Switch } from "~/components/ui/switch";
 import { DataTable, type Column } from "~/components/data-table";
+import { HardwareBadge } from "~/components/receiver/hardware-badge";
 import { api } from "~/lib/api";
 
 function ApiKeyCell({ value }: { value: unknown }) {
@@ -158,6 +159,7 @@ export default function SystemsPage() {
       ),
     },
     { key: "suburb", label: "Suburb", sortable: true },
+    { key: "hardware", label: "Hardware", sortable: true, render: (v) => <HardwareBadge value={v} /> },
     {
       key: "lat",
       label: "Location",

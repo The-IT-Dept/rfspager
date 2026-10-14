@@ -82,7 +82,8 @@ func TestCreateSystemEmailsApplicantAndStoresConversation(t *testing.T) {
 
 	select {
 	case c := <-mailer.calls:
-		want := receivedCall{"member@example.invalid", "Joseph", mail.ReceiverApplication{SystemName: "Budgewoi", Suburb: "Budgewoi", Notes: "{{ .Foo }}"}}
+		// No hardware in the body (app builds before it was asked): "own".
+		want := receivedCall{"member@example.invalid", "Joseph", mail.ReceiverApplication{SystemName: "Budgewoi", Suburb: "Budgewoi", Notes: "{{ .Foo }}", Hardware: mail.HardwareOwn}}
 		if c != want {
 			t.Fatalf("mailer call = %+v, want %+v", c, want)
 		}
@@ -127,4 +128,35 @@ func TestCreateSystemWithoutMailerSendsNothing(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err == nil || !strings.Contains(err.Error(), "UPDATE systems") {
 		t.Fatalf("want only the armed UPDATE unused, got %v", err)
 	}
+}
+
+func TestCreateSystemHardware(t *testing.T) {
+	post := func(t *testing.T, h *Handlers, hardware string) *httptest.ResponseRecorder {
+		t.Helper()
+		body := `{"name":"Hornsby","suburb":"Hornsby","hardware":"` + hardware + `","accepted_terms":true}`
+		r := httptest.NewRequest(http.MethodPost, "/systems", strings.NewReader(body))
+		r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &AuthUser{ID: 6306, Email: "member@example.invalid"}))
+		w := httptest.NewRecorder()
+		h.CreateSystem(w, r)
+		return w
+	}
+
+	t.Run("needs is stored", func(t *testing.T) {
+		db, mock := newMockDB(t)
+		mock.ExpectQuery(`INSERT INTO systems`).
+			WithArgs(int64(6306), sqlmock.AnyArg(), "Hornsby", "Hornsby", "", "needs").
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(7)))
+		w := post(t, NewHandlers(db), "needs")
+		if w.Code != http.StatusCreated || !strings.Contains(w.Body.String(), `"hardware":"needs"`) {
+			t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+		}
+		waitForExpectations(t, mock)
+	})
+
+	t.Run("anything else is rejected", func(t *testing.T) {
+		db, _ := newMockDB(t)
+		if w := post(t, NewHandlers(db), "borrowed"); w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422: %s", w.Code, w.Body.String())
+		}
+	})
 }

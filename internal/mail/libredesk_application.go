@@ -23,12 +23,19 @@ const (
 	coverageURL = "https://rfspager.app/coverage"
 )
 
+// Hardware answers on a receiver application (systems.hardware).
+const (
+	HardwareOwn   = "own"   // has a Pi, a dongle and an antenna
+	HardwareNeeds = "needs" // would host one if we help with the gear
+)
+
 // ReceiverApplication is what someone submitted when they offered to host a
 // receiver. Every field is user-controlled.
 type ReceiverApplication struct {
 	SystemName string
 	Suburb     string
 	Notes      string
+	Hardware   string // HardwareOwn or HardwareNeeds
 }
 
 // LibredeskApplicationMailer emails people who apply to host a receiver,
@@ -179,12 +186,19 @@ func applicationReceivedHTML(name string, app ReceiverApplication) string {
 	if strings.TrimSpace(app.Notes) != "" {
 		notes = multiline(app.Notes)
 	}
+	hardware, hardwareNext := "Your own", ""
+	if app.Hardware == HardwareNeeds {
+		hardware = "You'd need help with it"
+		hardwareNext = `<p>You mentioned you'd need help with the hardware. We sometimes lend, donate or buy the gear for places we really need coverage, so we'll let you know what we can do when we look at your application.</p>`
+	}
 	return greeting(name) +
 		`<p>Thanks for offering to host an RFSPager receiver. Every receiver lets us hear pages from more of NSW, so it really does make a difference.</p>` +
 		`<p>Here's what you sent us:</p>` +
 		`<p>Receiver name: ` + templateSafe(strings.TrimSpace(app.SystemName)) + `<br>` +
 		`Suburb: ` + templateSafe(strings.TrimSpace(app.Suburb)) + `<br>` +
+		`Hardware: ` + hardware + `<br>` +
 		`Notes: ` + notes + `</p>` +
+		hardwareNext +
 		`<p>What happens next: we'll review your application, usually within a few days. Once it's approved, we'll reply in this email thread with the command that sets up the receiver on your Raspberry Pi.</p>` +
 		`<p>If you have any questions in the meantime, just reply to this email.</p>` +
 		`<p>You can check on your application at <a href="` + hostURL + `">rfspager.app/host</a>, and see where we can already hear pages at <a href="` + coverageURL + `">rfspager.app/coverage</a>.</p>` +

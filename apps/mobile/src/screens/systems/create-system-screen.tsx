@@ -13,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons"
 import { useRouter } from "expo-router"
 import { useCreateSystem } from "../../hooks"
 import { AppTheme, useAppTheme } from "../../theme"
+import type { HostHardware } from "../../services/api-client"
 import { HOSTING_TERMS_SECTIONS } from "./hosting-terms"
 
 type Step = "hardware" | "terms" | "details"
@@ -24,15 +25,14 @@ export const CreateSystemScreen: FC = function CreateSystemScreen() {
   const create = useCreateSystem()
 
   const [step, setStep] = useState<Step>("hardware")
-  const [hasPi, setHasPi] = useState(false)
-  const [hasSDR, setHasSDR] = useState(false)
+  const [hardware, setHardware] = useState<HostHardware | null>(null)
   const [acceptedTerms, setAcceptedTerms] = useState(false)
   const [name, setName] = useState("")
   const [suburb, setSuburb] = useState("")
   const [notes, setNotes] = useState("")
   const [submitting, setSubmitting] = useState(false)
 
-  const hardwareReady = hasPi && hasSDR
+  const hardwareReady = hardware !== null
 
   const submit = async () => {
     if (submitting) return
@@ -46,6 +46,7 @@ export const CreateSystemScreen: FC = function CreateSystemScreen() {
         name: name.trim(),
         suburb: suburb.trim(),
         notes: notes.trim() || undefined,
+        hardware: hardware ?? "own",
         accepted_terms: true,
       })
       Alert.alert(
@@ -74,21 +75,23 @@ export const CreateSystemScreen: FC = function CreateSystemScreen() {
           <View>
             <Text style={styles.heading}>Do you have the hardware?</Text>
             <Text style={styles.body}>
-              An RFSPager receiver needs a Raspberry Pi 4 or 5 and an RTL-SDR USB dongle with a VHF
-              antenna. We don't provide hardware — you'll host the gear at home or wherever you
-              want coverage.
+              An RFSPager receiver is a Raspberry Pi 4 or 5 and an RTL-SDR USB dongle with a VHF
+              antenna. Most hosts use their own, but if you're somewhere we really need coverage we
+              may be able to lend, donate or buy the gear.
             </Text>
 
             <CheckRow
-              label="I have a Raspberry Pi 4 or 5"
-              checked={hasPi}
-              onToggle={() => setHasPi((v) => !v)}
+              radio
+              label="I have the gear (Pi 4 or 5, RTL-SDR dongle and antenna)"
+              checked={hardware === "own"}
+              onToggle={() => setHardware("own")}
               theme={theme}
             />
             <CheckRow
-              label="I have an RTL-SDR (or compatible) dongle + antenna"
-              checked={hasSDR}
-              onToggle={() => setHasSDR((v) => !v)}
+              radio
+              label="I'd host one if you can help with the gear"
+              checked={hardware === "needs"}
+              onToggle={() => setHardware("needs")}
               theme={theme}
             />
 
@@ -98,9 +101,9 @@ export const CreateSystemScreen: FC = function CreateSystemScreen() {
               onPress={() => setStep("terms")}
               theme={theme}
             />
-            {!hardwareReady && (
+            {hardware === "needs" && (
               <Text style={styles.hint}>
-                You'll need both before we can approve your system. Pop back when you've got them.
+                Tell us where it would go in the next steps and we'll let you know what we can do.
               </Text>
             )}
           </View>
@@ -214,18 +217,28 @@ function CheckRow({
   label,
   checked,
   onToggle,
+  radio = false,
   theme,
 }: {
   label: string
   checked: boolean
   onToggle: () => void
+  radio?: boolean
   theme: AppTheme
 }) {
   const styles = makeStyles(theme)
+  const on = radio ? "radio-button-on" : "checkbox"
+  const off = radio ? "radio-button-off" : "square-outline"
   return (
-    <Pressable onPress={onToggle} style={styles.checkRow} hitSlop={4}>
+    <Pressable
+      onPress={onToggle}
+      style={styles.checkRow}
+      hitSlop={4}
+      accessibilityRole={radio ? "radio" : "checkbox"}
+      accessibilityState={{ checked }}
+    >
       <Ionicons
-        name={checked ? "checkbox" : "square-outline"}
+        name={checked ? on : off}
         size={24}
         color={checked ? theme.colors.primary : theme.colors.textTertiary}
       />
