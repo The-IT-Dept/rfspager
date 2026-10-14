@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build the Go server from a git ref and deploy it to apps01.
+# Build the Go server from a git ref and deploy it to apps01 (or the dev box:
+# pass root@100.69.53.78 as the target; the build matches its architecture).
 #
 #   scripts/deploy-server.sh [ref] [ssh-target]
 #
@@ -16,26 +17,33 @@ cd "$ROOT"
 
 git fetch -q origin
 SHA="$(git rev-parse --short "$REF")"
+# apps01 is arm64, the dev box is x86_64: build for whatever the target runs.
+case "$(ssh "$TARGET" uname -m)" in
+  aarch64|arm64) GOARCH=arm64 ;;
+  x86_64|amd64) GOARCH=amd64 ;;
+  *) echo "unknown target architecture" >&2; exit 1 ;;
+esac
 CTX="$(mktemp -d)"
 trap 'rm -rf "$CTX"' EXIT
 git archive --format=tar "$REF" | tar -x -C "$CTX"
 (
   cd "$CTX"
-  CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath \
+  CGO_ENABLED=0 GOOS=linux GOARCH="$GOARCH" go build -trimpath \
     -ldflags="-s -w -X main.version=${REF##*/}-$SHA -X main.commit=$SHA" \
-    -o "$CTX/server.arm64" ./cmd/server
+    -o "$CTX/server.linux" ./cmd/server
 )
-echo "built server from $REF ($SHA)"
+echo "built server from $REF ($SHA) for linux/$GOARCH"
 
-scp -q "$CTX/server.arm64" "$TARGET:/tmp/server.new"
+scp -q "$CTX/server.linux" "$TARGET:/tmp/server.new"
 ssh "$TARGET" 'bash -s' <<'REMOTE'
 set -euo pipefail
 cp -p /opt/rfspager-go/server /opt/rfspager-go/server.prev
 install -m 755 /tmp/server.new /opt/rfspager-go/server
 systemctl restart rfspager-go
 # The old process drains SSE and websocket workers before the port is
-# answered again; poll rather than probe once.
-for i in $(seq 1 20); do
+# answered again, and pending migrations plus the first import run before
+# the listener opens (22 s on the dev box); poll rather than probe once.
+for i in $(seq 1 60); do
   code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health || true)"
   if [ "$code" = "200" ]; then
     echo "health HTTP 200 after ${i}s"
