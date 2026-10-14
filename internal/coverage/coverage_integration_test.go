@@ -350,3 +350,78 @@ func TestCoverageRealACMAImport(t *testing.T) {
 		t.Error("a 10-row import replaced the table")
 	}
 }
+
+func TestPublicCoverageEndToEnd(t *testing.T) {
+	conn := coverageTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	seedCoverage(t, conn, now)
+	if _, err := AssignDistricts(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+	// Stored to more precision than the public map shows.
+	if _, err := conn.ExecContext(ctx, `UPDATE systems SET lat = -33.234567, lng = 151.556789 WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService(conn, Options{ImportDisabled: true})
+	clock := now
+	svc.now = func() time.Time { return clock }
+	r, err := svc.PublicReport(ctx, 7) // not offered: served as 90
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Window.Days != 90 {
+		t.Errorf("window = %+v, want 90 days", r.Window)
+	}
+	var names []string
+	for _, rx := range r.Receivers {
+		names = append(names, rx.Name)
+	}
+	if strings.Join(names, ",") != "Budgewoi,Newcastle" {
+		t.Errorf("receivers = %v (unlocated, deleted and 0,0 excluded)", names)
+	}
+	if bud := r.Receivers[0]; bud.Lat != -33.23 || bud.Lng != 151.56 || bud.LastHeardAt == nil {
+		t.Errorf("Budgewoi = %+v, want rounded position and a last heard time", bud)
+	}
+	if len(r.Transmitters) != 5 {
+		t.Errorf("transmitters = %d, want the 5 RFS sites", len(r.Transmitters))
+	}
+	heard := map[string]bool{}
+	for _, tx := range r.Transmitters {
+		if tx.District != nil {
+			heard[*tx.District] = heard[*tx.District] || tx.Heard
+		} else if tx.Heard {
+			t.Errorf("unmapped transmitter heard: %+v", tx)
+		}
+	}
+	if !heard["Gosford"] || !heard["Hornsby"] || heard["Northern Beaches"] {
+		t.Errorf("heard by district = %v", heard)
+	}
+	var districts []string
+	for _, d := range r.Districts {
+		districts = append(districts, d.Name)
+	}
+	if strings.Join(districts, ",") != "Gosford,Hornsby,Northern Beaches" {
+		t.Errorf("districts = %v (RFS only)", districts)
+	}
+	if r.TotalPages == 0 || len(r.Heat) == 0 {
+		t.Errorf("total pages %d, heat %v", r.TotalPages, r.Heat)
+	}
+
+	// Cached per window for 15 minutes, separately from the admin report.
+	if again, _ := svc.PublicReport(ctx, 90); again != r {
+		t.Error("second request within 15 minutes was rebuilt")
+	}
+	if short, _ := svc.PublicReport(ctx, 30); short == r || short.Window.Days != 30 {
+		t.Errorf("30-day window = %+v, want its own report", short.Window)
+	}
+	svc.Invalidate()
+	if again, _ := svc.PublicReport(ctx, 90); again != r {
+		t.Error("an admin invalidation dropped the public cache")
+	}
+	clock = now.Add(16 * time.Minute)
+	if later, _ := svc.PublicReport(ctx, 90); later == r {
+		t.Error("public report served past 15 minutes")
+	}
+}

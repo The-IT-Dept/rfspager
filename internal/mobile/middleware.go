@@ -4,9 +4,11 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/the-it-dept/rfspager/internal/authjwt"
+	"github.com/the-it-dept/rfspager/internal/hostcomp"
 )
 
 type contextKey string
@@ -23,8 +25,42 @@ type AuthUser struct {
 	SubscriptionExpiry    *string `db:"subscription_expiry" json:"subscription_expiry"`
 	WillRenew             *bool   `db:"will_renew" json:"will_renew"`
 	SubscriptionPlatform  *string `db:"subscription_platform" json:"subscription_platform"`
-	Superuser             bool    `db:"superuser" json:"-"`
-	TokenVersion          int64   `db:"token_version" json:"-"`
+	// HostCompUntil is when free Pro for hosting a receiver runs out (in the
+	// past once it has lapsed; null if the user never had it).
+	HostCompUntil *time.Time `db:"host_comp_until" json:"host_comp_until"`
+	Superuser     bool       `db:"superuser" json:"-"`
+	TokenVersion  int64      `db:"token_version" json:"-"`
+}
+
+// authUserColumns selects an AuthUser from an unaliased users row. Every
+// loader must call withEffectiveAccess on the result before using or
+// returning it.
+const authUserColumns = `id, user_id, name, email, subscription_valid,
+	subscription_product_id, subscription_expiry, will_renew,
+	subscription_platform, host_comp_until, superuser, token_version`
+
+// withEffectiveAccess turns the stored store-subscription fields into what
+// the API reports: subscription_valid is effective access, a valid store
+// subscription OR a host comp running at now. When the comp is the only
+// source of access, the product is hostcomp.ProductID, the expiry is when
+// the comp runs out, and platform and will_renew are null, the way a gift
+// reports io.devlan.rfspager.gifted. A valid store subscription is reported
+// as stored. Reporting only: nothing is written back.
+func (u *AuthUser) withEffectiveAccess(now time.Time) {
+	if u.HostCompUntil != nil {
+		utc := u.HostCompUntil.UTC()
+		u.HostCompUntil = &utc
+	}
+	if u.SubscriptionValid || u.HostCompUntil == nil || !u.HostCompUntil.After(now) {
+		return
+	}
+	product := hostcomp.ProductID
+	expiry := u.HostCompUntil.UTC().Format(time.RFC3339Nano)
+	u.SubscriptionValid = true
+	u.SubscriptionProductID = &product
+	u.SubscriptionExpiry = &expiry
+	u.SubscriptionPlatform = nil
+	u.WillRenew = nil
 }
 
 func JWTUserAuth(db *sqlx.DB, jwtSecret string) func(http.Handler) http.Handler {
@@ -50,14 +86,12 @@ func JWTUserAuth(db *sqlx.DB, jwtSecret string) func(http.Handler) http.Handler 
 
 			var user AuthUser
 			err = db.GetContext(r.Context(), &user,
-				`SELECT id, user_id, name, email, subscription_valid,
-				 subscription_product_id, subscription_expiry, will_renew,
-				 subscription_platform, superuser, token_version
-				 FROM users WHERE id = $1`, claims.Subject)
+				`SELECT `+authUserColumns+` FROM users WHERE id = $1`, claims.Subject)
 			if err != nil || user.TokenVersion != claims.Version {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "user not found"})
 				return
 			}
+			user.withEffectiveAccess(time.Now())
 
 			ctx := context.WithValue(r.Context(), UserContextKey, &user)
 			next.ServeHTTP(w, r.WithContext(ctx))

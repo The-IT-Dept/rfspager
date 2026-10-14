@@ -12,6 +12,9 @@ import (
 func Router(db *sqlx.DB, jwtSecret, appleBundleID string, sseBroker *SSEBroker, iapHandler *iap.Handler, hub *recvhub.Hub, options ...AuthOptions) chi.Router {
 	auth := NewAuthHandler(db, jwtSecret, appleBundleID, options...)
 	h := NewHandlers(db)
+	if len(options) > 0 {
+		h.applications = options[0].ApplicationMailer
+	}
 	sh := NewSystemHandlers(db)
 
 	r := chi.NewRouter()

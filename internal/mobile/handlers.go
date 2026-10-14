@@ -15,10 +15,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/the-it-dept/rfspager/internal/install"
+	"github.com/the-it-dept/rfspager/internal/mail"
 )
 
 type Handlers struct {
 	db *sqlx.DB
+	// applications emails receiver-hosting applicants; nil = no emails.
+	applications ApplicationMailer
 }
 
 // lockInstallationTokens serializes ownership changes for the opaque provider
@@ -64,8 +67,7 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 		HasPassword              bool `db:"has_password" json:"has_password"`
 	}
 	err := h.db.GetContext(r.Context(), &result,
-		`SELECT id, user_id, name, email, subscription_valid, subscription_product_id,
-		 subscription_expiry, will_renew, subscription_platform, superuser,
+		`SELECT `+authUserColumns+`,
 		 (SELECT COUNT(*) FROM notifications WHERE notifiable_id = u.id AND notifiable_type = 'App\Models\User') as notifications_count,
 		 (SELECT COUNT(*) FROM notifications WHERE notifiable_id = u.id AND notifiable_type = 'App\Models\User' AND read_at IS NULL) as unread_notifications_count,
 		 `+hasPasswordSQL+` AS has_password
@@ -74,6 +76,7 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch user"})
 		return
 	}
+	result.withEffectiveAccess(time.Now())
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -639,6 +642,21 @@ func (h *Handlers) CreateSystem(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
+	}
+
+	// Thank the applicant by email. Detached from r.Context(), which is
+	// cancelled the moment this handler returns.
+	if h.applications != nil {
+		name := ""
+		if user.Name != nil {
+			name = *user.Name
+		}
+		app := mail.ReceiverApplication{SystemName: req.Name, Suburb: req.Suburb, Notes: req.Notes}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), applicationEmailTimeout)
+			defer cancel()
+			sendApplicationReceived(ctx, h.db, h.applications, insertedID, user.Email, name, app)
+		}()
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{

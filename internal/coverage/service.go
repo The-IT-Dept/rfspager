@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,8 +45,12 @@ type Service struct {
 	opts         Options
 	reports      *ttlCache[Params, *Response]
 	globalsCache *ttlCache[struct{}, globals]
-	importing    atomic.Bool
-	now          func() time.Time
+	// public is the public map's own cache, keyed by window days; publicMu
+	// serialises its misses.
+	public    *ttlCache[int, *PublicResponse]
+	publicMu  sync.Mutex
+	importing atomic.Bool
+	now       func() time.Time
 }
 
 func NewService(db *sqlx.DB, opts Options) *Service {
@@ -54,6 +59,7 @@ func NewService(db *sqlx.DB, opts Options) *Service {
 		opts:         opts,
 		reports:      newTTLCache[Params, *Response](cacheTTL),
 		globalsCache: newTTLCache[struct{}, globals](cacheTTL),
+		public:       newTTLCache[int, *PublicResponse](publicCacheTTL),
 		now:          time.Now,
 	}
 }

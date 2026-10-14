@@ -146,6 +146,31 @@ func TestMigrateBootstrapsEmptyPostGISDatabase(t *testing.T) {
 	// the spectrum feature is gone. Assert the drop actually applied.
 	requireNoTable(t, d, "system_spectrum_snapshot")
 
+	// 035: the Libredesk conversation for a receiver application.
+	var hasConversation bool
+	if err := d.conn.GetContext(context.Background(), &hasConversation, `SELECT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		 WHERE table_schema = current_schema() AND table_name = 'systems' AND column_name = 'support_conversation_uuid')`); err != nil {
+		t.Fatalf("check systems.support_conversation_uuid: %v", err)
+	}
+	if !hasConversation {
+		t.Error("systems.support_conversation_uuid does not exist")
+	}
+
+	// 036: the receiver-host comp, separate from the store entitlement.
+	for _, column := range []string{"host_comp_until", "host_comp_since"} {
+		var exists bool
+		if err := d.conn.GetContext(context.Background(), &exists, `SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			 WHERE table_schema = current_schema() AND table_name = 'users' AND column_name = $1
+			   AND data_type = 'timestamp with time zone' AND is_nullable = 'YES')`, column); err != nil {
+			t.Fatalf("check users.%s: %v", column, err)
+		}
+		if !exists {
+			t.Errorf("users.%s is not a nullable timestamptz", column)
+		}
+	}
+
 	var hasPostGIS bool
 	if err := d.conn.GetContext(context.Background(), &hasPostGIS, `SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis')`); err != nil {
 		t.Fatalf("check PostGIS extension: %v", err)

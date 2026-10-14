@@ -22,6 +22,7 @@ import (
 	"github.com/the-it-dept/rfspager/internal/db"
 	"github.com/the-it-dept/rfspager/internal/dispatch"
 	"github.com/the-it-dept/rfspager/internal/handler"
+	"github.com/the-it-dept/rfspager/internal/hostcomp"
 	"github.com/the-it-dept/rfspager/internal/iap"
 	"github.com/the-it-dept/rfspager/internal/importer"
 	"github.com/the-it-dept/rfspager/internal/install"
@@ -115,14 +116,26 @@ func main() {
 
 	// Optional password recovery delivery: Libredesk if configured, else SMTP.
 	// With neither, recovery stays unavailable rather than claiming to send mail.
+	// Receiver-hosting applications are emailed through Libredesk too (a
+	// thank-you on apply, the install command on approval); without it they
+	// are not emailed. Both interfaces stay nil (not typed-nil) when unset.
 	var resetMailer mobile.PasswordResetMailer
+	var mobileApplicationMailer mobile.ApplicationMailer
+	var adminApplicationMailer admin.ApplicationMailer
+	var hostCompMailer hostcomp.Mailer
 	if cfg.LibredeskURL != "" {
 		resetMailer, err = resetmail.NewLibredeskPasswordResetMailer(cfg.LibredeskURL, cfg.LibredeskAPIKey, cfg.LibredeskAPISecret, cfg.LibredeskInboxID, cfg.LibredeskAgentID)
 		if err != nil {
 			slog.Error("invalid Libredesk configuration", "error", err)
 			os.Exit(1)
 		}
-		slog.Info("password resets are sent through Libredesk", "url", cfg.LibredeskURL, "inbox_id", cfg.LibredeskInboxID)
+		applicationMailer, err := resetmail.NewLibredeskApplicationMailer(cfg.LibredeskURL, cfg.LibredeskAPIKey, cfg.LibredeskAPISecret, cfg.LibredeskInboxID, cfg.LibredeskAgentID, cfg.LibredeskTeamID)
+		if err != nil {
+			slog.Error("invalid Libredesk configuration", "error", err)
+			os.Exit(1)
+		}
+		mobileApplicationMailer, adminApplicationMailer, hostCompMailer = applicationMailer, applicationMailer, applicationMailer
+		slog.Info("password resets and receiver applications are emailed through Libredesk", "url", cfg.LibredeskURL, "inbox_id", cfg.LibredeskInboxID, "team_id", cfg.LibredeskTeamID)
 	} else if cfg.SMTPHost != "" {
 		resetMailer, err = resetmail.NewSMTPPasswordResetMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, cfg.SMTPMode)
 		if err != nil {
@@ -130,7 +143,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	authOptions := mobile.AuthOptions{ResetMailer: resetMailer, ResetURL: strings.TrimRight(cfg.BaseURL, "/") + "/reset-password", FacebookAppID: cfg.FacebookAppID, FacebookAppSecret: cfg.FacebookAppSecret}
+	authOptions := mobile.AuthOptions{ResetMailer: resetMailer, ResetURL: strings.TrimRight(cfg.BaseURL, "/") + "/reset-password", FacebookAppID: cfg.FacebookAppID, FacebookAppSecret: cfg.FacebookAppSecret, ApplicationMailer: mobileApplicationMailer}
 
 	// Handlers
 	msgHandler := handler.NewMessageHandler(database)
@@ -211,14 +224,20 @@ func main() {
 		ImportDisabled: cfg.ACMAImportDisabled,
 	})
 
+	// Free Pro for receiver hosts: every 15 minutes, extend the comp for
+	// owners of receivers that are online and decoding, lapse it for the
+	// rest, and push + email (Libredesk) on start and lapse.
+	hostCompJob := hostcomp.NewJob(database.Conn(), notifier, hostCompMailer)
+
 	bgCtx, cancelBg := context.WithCancel(context.Background())
 	var bg sync.WaitGroup
-	bg.Add(5)
+	bg.Add(6)
 	go func() { defer bg.Done(); fanoutWorker.Run(bgCtx) }()
 	go func() { defer bg.Done(); dispatchWorker.Run(bgCtx) }()
 	go func() { defer bg.Done(); mobileSSE.Run(bgCtx, mobileSSEMessageCh) }()
 	go func() { defer bg.Done(); publicSSE.Run(bgCtx, publicSSEMessageCh) }()
 	go func() { defer bg.Done(); coverageSvc.Run(bgCtx) }()
+	go func() { defer bg.Done(); hostCompJob.Run(bgCtx) }()
 	if err := hub.Start(bgCtx); err != nil {
 		slog.Error("failed to start receiver hub workers", "error", err)
 		os.Exit(1)
@@ -286,7 +305,7 @@ func main() {
 				Store:    database,
 				Hub:      hub,
 				Releases: installHandlers,
-			}, coverageSvc))
+			}, coverageSvc, adminApplicationMailer))
 
 			// Mobile API
 			r.Mount("/v2/mobile", mobile.Router(database.Conn(), cfg.JWTSecret, cfg.AppleBundleID, mobileSSE, iapHandler, hub, authOptions))
@@ -305,6 +324,9 @@ func main() {
 				r.Get("/capcodes/unknown", publicHandlers.UnknownCapcodes)
 				r.Get("/capcodes/messages", publicHandlers.CapcodeMessages)
 				r.Get("/systems/{uuid}/uptime", publicHandlers.SystemUptime)
+				// Public coverage map, reduced from the admin report and
+				// cached 15 minutes per window.
+				r.Get("/coverage", public.Coverage(coverageSvc))
 				r.Get("/events", publicSSE.Handler)
 			})
 

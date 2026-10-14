@@ -10,6 +10,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/the-it-dept/rfspager/internal/hostcomp"
 	"github.com/the-it-dept/rfspager/internal/models"
 )
 
@@ -204,23 +205,25 @@ func isDuplicateMessage(ctx context.Context, q queryer, address, message string,
 	return exists, err
 }
 
-// GetSubscribedUsers returns user IDs subscribed to a given capcode, filtered to active subscribers.
+// GetSubscribedUsers returns user IDs subscribed to a given capcode, filtered
+// to users with Pro (a store subscription or a host comp).
 func (d *DB) GetSubscribedUsers(ctx context.Context, capcodeID int64) ([]int64, error) {
 	var userIDs []int64
 	err := d.conn.SelectContext(ctx, &userIDs,
 		`SELECT DISTINCT s.user_id FROM subscriptions s
 		 JOIN users u ON u.id = s.user_id
-		 WHERE s.capcode_id = $1 AND u.subscription_valid = true`, capcodeID)
+		 WHERE s.capcode_id = $1 AND `+hostcomp.Access("u"), capcodeID)
 	return userIDs, err
 }
 
-// GetAlertzoneUsers returns user IDs whose alertzones contain the given lat/lng, filtered to active subscribers.
+// GetAlertzoneUsers returns user IDs whose alertzones contain the given
+// lat/lng, filtered to users with Pro (a store subscription or a host comp).
 func (d *DB) GetAlertzoneUsers(ctx context.Context, lat, lng float64) ([]int64, error) {
 	var userIDs []int64
 	err := d.conn.SelectContext(ctx, &userIDs,
 		`SELECT DISTINCT a.user_id FROM alertzones a
 		 JOIN users u ON u.id = a.user_id
-		 WHERE u.subscription_valid = true
+		 WHERE `+hostcomp.Access("u")+`
 		 AND ST_DWithin(
 			ST_SetSRID(ST_MakePoint(a.lng, a.lat), 4326)::geography,
 			ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,

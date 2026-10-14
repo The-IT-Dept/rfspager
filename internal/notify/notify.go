@@ -199,3 +199,69 @@ func (n *Notifier) NotifySystemApproved(ctx context.Context, userID int64, syste
 		}
 	}
 }
+
+// NotifyHostCompStarted tells a receiver host they have Pro free while their
+// receiver stays online. Best-effort, like NotifySystemApproved.
+func (n *Notifier) NotifyHostCompStarted(ctx context.Context, userID int64, systemName string) {
+	title, body := HostCompStartedPush(systemName)
+	n.pushToUser(ctx, userID, title, body, "host comp started")
+}
+
+// NotifyHostCompLapsed tells a receiver host their free Pro has paused
+// because the receiver has not been online enough. Best-effort.
+func (n *Notifier) NotifyHostCompLapsed(ctx context.Context, userID int64, systemName string) {
+	title, body := HostCompLapsedPush(systemName)
+	n.pushToUser(ctx, userID, title, body, "host comp lapsed")
+}
+
+// HostCompStartedPush is the start push copy.
+func HostCompStartedPush(systemName string) (title, body string) {
+	return "Pro is on us", fmt.Sprintf("Thanks for hosting %s. You've got RFSPager Pro free while it stays online.", receiverLabel(systemName))
+}
+
+// HostCompLapsedPush is the lapse push copy.
+func HostCompLapsedPush(systemName string) (title, body string) {
+	return "Free Pro paused", fmt.Sprintf("%s hasn't been online enough lately. Pro comes back once it's been steadily online for about three days.", upperFirst(receiverLabel(systemName)))
+}
+
+func receiverLabel(systemName string) string {
+	if systemName == "" {
+		return "your receiver"
+	}
+	return `"` + systemName + `"`
+}
+
+func upperFirst(s string) string {
+	if s == "" || s[0] < 'a' || s[0] > 'z' {
+		return s
+	}
+	return string(s[0]-'a'+'A') + s[1:]
+}
+
+// pushToUser sends title/body to every push target the user has.
+func (n *Notifier) pushToUser(ctx context.Context, userID int64, title, body, what string) {
+	if n == nil || n.db == nil {
+		return
+	}
+	targets, err := n.db.GetPushTokensForUsers(ctx, []int64{userID})
+	if err != nil {
+		slog.Error("failed to get push tokens", "what", what, "error", err, "user_id", userID)
+		return
+	}
+	for _, target := range targets {
+		switch target.PushType {
+		case "GCM":
+			if n.fcm != nil {
+				if err := n.fcm.Send(ctx, target.PushToken, title, body, 0); err != nil {
+					slog.Error("FCM send failed", "what", what, "error", err, "user_id", userID)
+				}
+			}
+		case "APN":
+			if n.apn != nil {
+				if err := n.apn.Send(ctx, target.PushToken, title, body, 0); err != nil {
+					slog.Error("APN send failed", "what", what, "error", err, "user_id", userID)
+				}
+			}
+		}
+	}
+}

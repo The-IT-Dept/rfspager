@@ -10,7 +10,8 @@ export function meta() {
 export default function Login() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const next = safeNext(searchParams.get("next"), "/pager");
+  const rawNext = searchParams.get("next");
+  const next = safeNext(rawNext, "/pager");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -48,7 +49,7 @@ export default function Login() {
       footer={
         <>
           New here?{" "}
-          <Link to="/register" className={linkClass}>
+          <Link to={rawNext ? `/register?next=${encodeURIComponent(rawNext)}` : "/register"} className={linkClass}>
             Create an account
           </Link>
         </>

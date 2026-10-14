@@ -32,6 +32,8 @@ export interface CustomerUser {
   subscription_expiry: string | null;
   will_renew: boolean | null;
   subscription_platform: string | null;
+  /** Free Pro for hosting a receiver; rolls forward while the receiver stays online. */
+  host_comp_until?: string | null;
   notifications_count?: number;
   unread_notifications_count?: number;
 }
@@ -89,7 +91,45 @@ export const customerApi = {
     }),
 
   logout: () => request<{ status: string }>("POST", "/auth/logout").catch(() => null),
+
+  /** Apply to host a receiver. 422 `{error}` on validation. */
+  createSystem: (input: CreateSystemInput) => request<CreatedSystem>("POST", "/systems", input),
+
+  /** The signed-in user's receivers, pending and approved. */
+  mySystems: () => request<MySystem[]>("GET", "/my-systems"),
 };
+
+export interface CreateSystemInput {
+  name: string;
+  suburb: string;
+  notes?: string;
+  accepted_terms: true;
+}
+
+export interface CreatedSystem {
+  id: number;
+  uuid: string;
+  name: string;
+  suburb: string;
+  is_pending: boolean;
+  is_owner: boolean;
+}
+
+/** Row from GET /my-systems (internal/mobile/handlers.go MySystems). */
+export interface MySystem {
+  uuid: string;
+  name: string;
+  suburb: string | null;
+  request_notes: string | null;
+  /** Only set once approved. */
+  api_key: string | null;
+  approved_at: string | null;
+  created_at: string | null;
+  is_pending: boolean;
+  last_message_at: string | null;
+  /** Present when the system has an api_key. */
+  install_command?: string;
+}
 
 // Friendly label for a product ID. Mirrors apps/mobile's useProductName so the
 // two surfaces stay aligned.
@@ -98,5 +138,6 @@ export function productLabel(productId: string | null | undefined): string {
   if (productId.endsWith(".monthly")) return "Monthly";
   if (productId.endsWith(".yearly")) return "Yearly";
   if (productId.endsWith(".gifted")) return "Gifted";
+  if (productId.endsWith(".host")) return "Free while hosting";
   return productId;
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/the-it-dept/rfspager/internal/hostcomp"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -213,6 +214,7 @@ func (s *Store) DeleteAdminUser(ctx context.Context, id int64) error {
 
 func (s *Store) ListUsers(ctx context.Context, p ListParams) (*PaginatedResult, error) {
 	return s.paginatedQuery(ctx, "users u", `u.*,
+		`+userProAccessColumn("u")+`,
 		(SELECT COUNT(*) FROM installations i WHERE i.user_id = u.id AND i.deleted_at IS NULL) as installations_count,
 		(SELECT COUNT(*) FROM subscriptions s WHERE s.user_id = u.id) as subscriptions_count,
 		(SELECT COUNT(*) FROM alertzones a WHERE a.user_id = u.id) as alertzones_count`,
@@ -220,7 +222,15 @@ func (s *Store) ListUsers(ctx context.Context, p ListParams) (*PaginatedResult, 
 }
 
 func (s *Store) GetUser(ctx context.Context, id int64) (map[string]any, error) {
-	return s.getRow(ctx, "users", id, "")
+	return s.getRow(ctx, "users", id, "*, "+userProAccessColumn(""))
+}
+
+// userProAccessColumn adds pro_access, the user's effective access (a valid
+// store subscription OR a running host comp), next to the raw columns: the
+// store slot (subscription_*) and the comp (host_comp_until, host_comp_since)
+// are both shown as stored.
+func userProAccessColumn(alias string) string {
+	return hostcomp.Access(alias) + " AS pro_access"
 }
 
 func (s *Store) CreateUser(ctx context.Context, data map[string]any) (int64, error) {
@@ -402,7 +412,8 @@ func (s *Store) GetSystem(ctx context.Context, id int64) (map[string]any, error)
 // systemSelectColumns is the column list joined onto system rows for admin
 // views. Bundles receiver-agent connection info (online/version/host/dongles)
 // alongside the system fields the UI already shows.
-const systemSelectColumns = `s.*, u.name as user_name,
+var systemSelectColumns = `s.*, u.name as user_name,
+	u.host_comp_until as owner_host_comp_until,
 	(SELECT MAX(m.created_at) FROM messages m WHERE m.system_id = s.id) as last_message_at,
 	sc.pod_id            as receiver_pod_id,
 	sc.connected_at      as receiver_connected_at,
@@ -1038,11 +1049,14 @@ func compareVersions(a, b string) int {
 
 // BillingStats is the headline IAP/Stripe billing snapshot for the dashboard.
 type BillingStats struct {
-	ActiveTotal      int64 `json:"active_total" db:"active_total"`
-	ActiveApple      int64 `json:"active_apple" db:"active_apple"`
-	ActiveGoogle     int64 `json:"active_google" db:"active_google"`
-	ActiveStripe     int64 `json:"active_stripe" db:"active_stripe"`
-	ActiveGifted     int64 `json:"active_gifted" db:"active_gifted"`
+	ActiveTotal  int64 `json:"active_total" db:"active_total"`
+	ActiveApple  int64 `json:"active_apple" db:"active_apple"`
+	ActiveGoogle int64 `json:"active_google" db:"active_google"`
+	ActiveStripe int64 `json:"active_stripe" db:"active_stripe"`
+	ActiveGifted int64 `json:"active_gifted" db:"active_gifted"`
+	// ActiveHostComp counts running receiver-host comps. They are not store
+	// subscriptions, so the other active_* counts and MRR leave them out.
+	ActiveHostComp   int64 `json:"active_host_comp" db:"active_host_comp"`
 	NewSubs7d        int64 `json:"new_subs_7d" db:"new_subs_7d"`
 	NewSubs30d       int64 `json:"new_subs_30d" db:"new_subs_30d"`
 	Cancellations30d int64 `json:"cancellations_30d" db:"cancellations_30d"`
@@ -1096,6 +1110,7 @@ func (s *Store) fetchBillingStats(ctx context.Context) (*BillingStats, error) {
 			(SELECT COUNT(*) FROM users WHERE subscription_valid = true AND subscription_platform = 'google') AS active_google,
 			(SELECT COUNT(*) FROM users WHERE subscription_valid = true AND subscription_platform = 'stripe') AS active_stripe,
 			(SELECT COUNT(*) FROM users WHERE subscription_valid = true AND subscription_product_id LIKE '%gifted%') AS active_gifted,
+			(SELECT COUNT(*) FROM users WHERE host_comp_until > NOW()) AS active_host_comp,
 			(SELECT COUNT(DISTINCT user_id) FROM iap_transactions
 				WHERE event_type = 'purchase' AND is_valid = true AND created_at >= NOW() - INTERVAL '7 days') AS new_subs_7d,
 			(SELECT COUNT(DISTINCT user_id) FROM iap_transactions
