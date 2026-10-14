@@ -126,7 +126,7 @@ func runHistory(client *iap.AppleClient, env string, window time.Duration, repla
 				verifyFailures++
 				line += fmt.Sprintf("  TRANSACTION VERIFY FAILED: %v", err)
 			} else {
-				line += fmt.Sprintf("  %s expires %s", txn.ProductID, time.UnixMilli(txn.ExpiresDate).UTC().Format("2006-01-02"))
+				line += fmt.Sprintf("  %s expires %s otx=%s exp_ms=%d", txn.ProductID, time.UnixMilli(txn.ExpiresDate).UTC().Format("2006-01-02"), txn.OriginalTransactionID, txn.ExpiresDate)
 			}
 			if notif.Data.SignedRenewalInfo != "" {
 				if _, err := iap.DecodeRenewalInfo(notif.Data.SignedRenewalInfo); err != nil {
