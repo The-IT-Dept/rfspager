@@ -38,8 +38,12 @@ type ReceiverApplication struct {
 //
 // Beyond the reset mailer's permissions, the API agent needs messages:write
 // (the approval reply) and conversations:update_team_assignee (when a team
-// is configured). The conversation stays assigned to the agent, so it keeps
-// read access through conversations:read_assigned.
+// is configured). Assigning a team makes Libredesk drop the user assignee,
+// so the conversation lands unassigned in the team queue and the agent
+// loses conversations:read_assigned access to it. To reply later the agent
+// must be a member of that team with conversations:read_team_all, and its
+// availability set to away_manual so round-robin never hands it customer
+// conversations. Without that, replies fail with 403 and are logged.
 type LibredeskApplicationMailer struct {
 	*libredeskClient
 	teamID int

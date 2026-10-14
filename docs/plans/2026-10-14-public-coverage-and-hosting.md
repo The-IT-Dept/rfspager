@@ -97,8 +97,11 @@ Wiring:
   AGENT_ID; add optional `LIBREDESK_TEAM_ID`.
 - Libredesk side (ops, done by hand): bot role gains `messages:write` and
   `conversations:update_team_assignee`; tag `receiver-application` exists.
-  The conversation stays user-assigned to the bot, so the bot keeps read
-  access via `conversations:read_assigned` without `read_all`.
+  **Correction (found on deploy):** assigning a team makes Libredesk drop
+  the user assignee, so the bot loses `read_assigned` access. The bot
+  (agent 19) is therefore a member of team 5 with
+  `conversations:read_team_all` and availability `away_manual`, so
+  round-robin skips it. Still no `read_all`.
 
 ## 3. Web
 
