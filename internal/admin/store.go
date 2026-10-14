@@ -421,11 +421,24 @@ const systemSelectColumns = `s.*, u.name as user_name,
 	(sc.system_id IS NOT NULL AND sc.last_ping_at > NOW() - INTERVAL '90 seconds') as receiver_online`
 
 func (s *Store) CreateSystem(ctx context.Context, data map[string]any) (int64, error) {
+	blankToNull(data, "lat", "lng", "located_since")
 	return s.insertRow(ctx, "systems", data)
 }
 
 func (s *Store) UpdateSystem(ctx context.Context, id int64, data map[string]any) error {
+	blankToNull(data, "lat", "lng", "located_since")
 	return s.updateRow(ctx, "systems", id, data)
+}
+
+// blankToNull turns "" into NULL for typed columns a form may submit empty
+// (a cleared location or located_since), which Postgres would otherwise
+// reject as an invalid number or timestamp.
+func blankToNull(data map[string]any, fields ...string) {
+	for _, f := range fields {
+		if v, ok := data[f].(string); ok && strings.TrimSpace(v) == "" {
+			data[f] = nil
+		}
+	}
 }
 
 func (s *Store) DeleteSystem(ctx context.Context, id int64) error {
@@ -1396,8 +1409,8 @@ var writableFields = map[string]map[string]struct{}{
 	"admin_users":      fieldSet("email", "name", "role", "active", "password_hash"),
 	"users":            fieldSet("user_id", "name", "email", "password", "email_verified_at", "adapty_id", "last_adapty_sync_at", "last_store_sync_at", "subscription_product_id", "subscription_platform", "subscription_expiry", "subscription_valid", "will_renew", "cancellation_reason", "apple_original_transaction_id", "google_purchase_token", "superuser"),
 	"capcodes":         fieldSet("address", "agency_id", "alias", "icon", "colour", "ignore"),
-	"agencies":         fieldSet("agency"),
-	"systems":          fieldSet("user_id", "system_id", "name", "api_key", "sync", "steal_capcodes", "frequency", "base_url", "lat", "lng", "suburb", "request_notes"),
+	"agencies":         fieldSet("agency", "coverage_district"),
+	"systems":          fieldSet("user_id", "system_id", "name", "api_key", "sync", "steal_capcodes", "frequency", "base_url", "lat", "lng", "located_since", "suburb", "request_notes"),
 	"messages":         fieldSet("system_id", "capcode_id", "address", "message", "lat", "lng", "created_at"),
 	"subscriptions":    fieldSet("user_id", "capcode_id"),
 	"alertzones":       fieldSet("user_id", "name", "lat", "lng", "radius"),

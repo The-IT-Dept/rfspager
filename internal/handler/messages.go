@@ -198,18 +198,6 @@ func (h *MessageHandler) createMessage(ctx context.Context, system *models.Syste
 			timestamp.Format(time.RFC3339), time.Now().Format(time.RFC3339)), nil
 	}
 
-	// Cheap early exit for exact repeats. Copies that could replace a
-	// worse stored copy are handled by the upsert below.
-	if quality == nil {
-		isDup, err := h.db.IsDuplicateMessage(ctx, address, message, timestamp)
-		if err != nil {
-			slog.Error("duplicate check failed", "error", err)
-		}
-		if isDup {
-			return "Duplicate message.", nil
-		}
-	}
-
 	// Find matching capcode
 	capcode, err := h.db.FindCapcodeByAddress(ctx, address)
 	if err == nil && capcode != nil && capcode.Ignore {
@@ -218,6 +206,23 @@ func (h *MessageHandler) createMessage(ctx context.Context, system *models.Syste
 		// here or they show up in the public feed and get fanned out.
 		return "Ignored capcode.", nil
 	}
+
+	// Every receiver's copy counts for the coverage map, so this goes
+	// before either duplicate check.
+	h.recordReception(ctx, system, address, message, timestamp, capcode, quality)
+
+	// Cheap early exit for exact repeats. Copies that could replace a
+	// worse stored copy are handled by the upsert below.
+	if quality == nil {
+		isDup, dupErr := h.db.IsDuplicateMessage(ctx, address, message, timestamp)
+		if dupErr != nil {
+			slog.Error("duplicate check failed", "error", dupErr)
+		}
+		if isDup {
+			return "Duplicate message.", nil
+		}
+	}
+
 	if err != nil && system.StealCapcodes != "" && system.StealCapcodes != "0" && ingress != nil {
 		// Try to steal/create the capcode if all fields are present
 		if ingress.Agency != "" && ingress.Alias != "" && ingress.Address != "" && ingress.Icon != "" && ingress.Color != "" {

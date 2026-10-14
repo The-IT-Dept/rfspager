@@ -18,6 +18,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/the-it-dept/rfspager/internal/admin"
 	"github.com/the-it-dept/rfspager/internal/config"
+	"github.com/the-it-dept/rfspager/internal/coverage"
 	"github.com/the-it-dept/rfspager/internal/db"
 	"github.com/the-it-dept/rfspager/internal/dispatch"
 	"github.com/the-it-dept/rfspager/internal/handler"
@@ -203,13 +204,21 @@ func main() {
 		slog.Warn("capture directory is not writable; capture uploads will fail", "dir", cfg.CaptureDir, "error", err)
 	}
 
+	// Admin coverage map: report cache, plus the daily ACMA transmitter
+	// import check, district recompute and page_receptions prune.
+	coverageSvc := coverage.NewService(database.Conn(), coverage.Options{
+		ACMAURL:        cfg.ACMARRLURL,
+		ImportDisabled: cfg.ACMAImportDisabled,
+	})
+
 	bgCtx, cancelBg := context.WithCancel(context.Background())
 	var bg sync.WaitGroup
-	bg.Add(4)
+	bg.Add(5)
 	go func() { defer bg.Done(); fanoutWorker.Run(bgCtx) }()
 	go func() { defer bg.Done(); dispatchWorker.Run(bgCtx) }()
 	go func() { defer bg.Done(); mobileSSE.Run(bgCtx, mobileSSEMessageCh) }()
 	go func() { defer bg.Done(); publicSSE.Run(bgCtx, publicSSEMessageCh) }()
+	go func() { defer bg.Done(); coverageSvc.Run(bgCtx) }()
 	if err := hub.Start(bgCtx); err != nil {
 		slog.Error("failed to start receiver hub workers", "error", err)
 		os.Exit(1)
@@ -271,12 +280,13 @@ func main() {
 			r.Get("/binaries/receiver/{platform}", installHandlers.Binary)
 
 			// Admin API, including receiver remote management (config,
-			// stats history, commands, captures, latest release).
+			// stats history, commands, captures, latest release) and the
+			// coverage map.
 			r.Mount("/v1/admin", admin.Router(database.Conn(), cfg.JWTSecret, notifier, &admin.ReceiverDeps{
 				Store:    database,
 				Hub:      hub,
 				Releases: installHandlers,
-			}))
+			}, coverageSvc))
 
 			// Mobile API
 			r.Mount("/v2/mobile", mobile.Router(database.Conn(), cfg.JWTSecret, cfg.AppleBundleID, mobileSSE, iapHandler, hub, authOptions))
