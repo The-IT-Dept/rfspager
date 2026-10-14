@@ -10,7 +10,7 @@ import (
 )
 
 // ExpiryGrace is how long past its expiry a subscription stays entitled
-// without a store event. Expiries normally arrive as Adapty or store
+// without a store event. Expiries normally arrive as store
 // webhooks; this sweep is the safety net for ones that never do (missed
 // webhooks, accounts Laravel left valid). The margin exceeds every store
 // grace window (Apple billing grace up to 16 days, Google up to 30), so a

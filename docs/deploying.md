@@ -66,6 +66,6 @@ path once both of these are done.
   subscription on the RTDN topic named in Play Console, authenticated with an
   OIDC token the server checks (`GOOGLE_PUBSUB_AUDIENCE`,
   `GOOGLE_PUBSUB_SERVICE_EMAIL` in `.env`).
-- Then cancel the Adapty plan in its dashboard and delete its webhook
-  integration and its Pub/Sub subscription. `POST /api/adapty-webhook` can be
-  removed from the server afterwards.
+- Adapty is out of the path since 2026-10-15: its Pub/Sub subscription and
+  the server's `/api/adapty-webhook` route are gone and the plan cancellation
+  was requested the same day. `cmd/adapty-backfill` remains only as history.
