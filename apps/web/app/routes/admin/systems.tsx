@@ -27,6 +27,20 @@ function ApiKeyCell({ value }: { value: unknown }) {
   );
 }
 
+function LocationCell({ row }: { row: Record<string, any> }) {
+  const lat = row.lat == null || row.lat === "" ? NaN : Number(row.lat);
+  const lng = row.lng == null || row.lng === "" ? NaN : Number(row.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span
+      className="font-mono text-xs whitespace-nowrap"
+      title={row.located_since ? `located since ${new Date(row.located_since).toLocaleString()}` : undefined}
+    >
+      {lat.toFixed(2)}, {lng.toFixed(2)}
+    </span>
+  );
+}
+
 function DeletedBadge({ value }: { value: unknown }) {
   if (!value) return null;
   return <Badge variant="destructive">deleted</Badge>;
@@ -144,6 +158,11 @@ export default function SystemsPage() {
       ),
     },
     { key: "suburb", label: "Suburb", sortable: true },
+    {
+      key: "lat",
+      label: "Location",
+      render: (_, row) => <LocationCell row={row as Record<string, any>} />,
+    },
     { key: "system_id", label: "UUID" },
     { key: "api_key", label: "Ingress Key", render: (v) => <ApiKeyCell value={v} /> },
     { key: "last_message_at", label: "Last Message", sortable: true },

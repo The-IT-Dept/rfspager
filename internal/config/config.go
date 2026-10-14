@@ -82,6 +82,11 @@ type Config struct {
 	// CaptureDir is where receiver spectrum/audio/IQ captures are stored,
 	// one subdirectory per system. Prod uses /var/lib/rfspager-go/captures.
 	CaptureDir string
+
+	// Coverage map: the ACMA register zip the paging transmitters are
+	// imported from, and a switch for the scheduled import (dev boxes).
+	ACMARRLURL         string
+	ACMAImportDisabled bool
 }
 
 func Load() (*Config, error) {
@@ -129,6 +134,8 @@ func Load() (*Config, error) {
 		GitHubRepo:               getEnv("GITHUB_REPO", "the-it-dept/rfspager"),
 		PublicBaseURL:            os.Getenv("PUBLIC_BASE_URL"),
 		CaptureDir:               getEnv("CAPTURE_DIR", "./captures"),
+		ACMARRLURL:               os.Getenv("ACMA_RRL_URL"), // empty: importer.DefaultACMARRLURL
+		ACMAImportDisabled:       isTruthy(os.Getenv("ACMA_IMPORT_DISABLED")),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -220,6 +227,15 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// isTruthy reads an on/off switch: 1, true, yes or on (any case).
+func isTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // parseTrustedProxyCIDRs reads TRUSTED_PROXY_CIDRS, dropping empty entries so a

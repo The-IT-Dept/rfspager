@@ -17,6 +17,16 @@ export function isAuthenticated(): boolean {
   return !!getToken();
 }
 
+/** Error thrown for non-2xx responses; `status` lets callers tell e.g. 409 apart. */
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -37,7 +47,7 @@ async function request<T = any>(path: string, options: RequestInit = {}): Promis
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `Request failed: ${res.status}`);
+    throw new ApiError(body.error || `Request failed: ${res.status}`, res.status);
   }
 
   return res.json();

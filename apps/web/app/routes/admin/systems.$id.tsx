@@ -47,8 +47,9 @@ interface SystemDetail {
   updated_at?: string;
   sync?: boolean;
   frequency?: number;
-  lat?: number | null;
-  lng?: number | null;
+  lat?: number | string | null;
+  lng?: number | string | null;
+  located_since?: string | null;
   last_message_at?: string | null;
 
   // Receiver-agent connection fields (joined from system_connections).
@@ -81,6 +82,14 @@ function isTab(v: unknown): v is TabId {
 function fmtDate(s?: string | null): string {
   if (!s) return "—";
   return new Date(s).toLocaleString();
+}
+
+function fmtLatLng(lat?: number | string | null, lng?: number | string | null): string {
+  if (lat == null || lng == null || lat === "" || lng === "") return "—";
+  const la = Number(lat);
+  const ln = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(ln)) return "—";
+  return `${la.toFixed(2)}, ${ln.toFixed(2)}`;
 }
 
 function Field({ label, children, mono }: { label: string; children: React.ReactNode; mono?: boolean }) {
@@ -340,6 +349,8 @@ export default function SystemDetailPage() {
               </Field>
               <Field label="Frequency">{freqDisplay}</Field>
               <Field label="Suburb">{system.suburb || "—"}</Field>
+              <Field label="Location">{fmtLatLng(system.lat, system.lng)}</Field>
+              <Field label="Located Since">{system.located_since ? fmtDate(system.located_since) : "always"}</Field>
               <Field label="Ingress API Key"><CopyValue value={system.api_key} /></Field>
             </CardContent>
           </Card>

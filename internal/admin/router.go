@@ -3,14 +3,16 @@ package admin
 import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jmoiron/sqlx"
+	"github.com/the-it-dept/rfspager/internal/coverage"
 	"github.com/the-it-dept/rfspager/internal/notify"
 )
 
 // Router creates the admin API router mounted at /api/v1/admin. receivers
 // wires the receiver remote-management routes; nil leaves them out. The
 // two receiver SSE streams are not here: cmd/server mounts them outside
-// the request-timeout group (see ReceiverStatsStream).
-func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, receivers *ReceiverDeps) chi.Router {
+// the request-timeout group (see ReceiverStatsStream). coverageSvc wires the
+// coverage map routes; nil leaves them out.
+func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, receivers *ReceiverDeps, coverageSvc *coverage.Service) chi.Router {
 	store := NewStore(db)
 	auth := NewAuthHandler(store, jwtSecret)
 	h := NewHandlers(store, notifier)
@@ -52,8 +54,13 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, receivers 
 			r.Get("/transactions/{id}", h.GetIAPTransaction)
 		})
 
+		// Capcode, agency and system edits change what the coverage map
+		// shows (districts, receiver locations); drop its cached reports.
+		invalidate := invalidateCoverage(coverageSvc)
+
 		// Capcodes
 		r.Route("/capcodes", func(r chi.Router) {
+			r.Use(invalidate)
 			r.Get("/", h.ListCapcodes)
 			r.Post("/", h.CreateCapcode)
 			r.Get("/{id}", h.GetCapcode)
@@ -63,6 +70,7 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, receivers 
 
 		// Agencies
 		r.Route("/agencies", func(r chi.Router) {
+			r.Use(invalidate)
 			r.Get("/", h.ListAgencies)
 			r.Post("/", h.CreateAgency)
 			r.Get("/{id}", h.GetAgency)
@@ -72,6 +80,7 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, receivers 
 
 		// Systems
 		r.Route("/systems", func(r chi.Router) {
+			r.Use(invalidate)
 			r.Get("/", h.ListSystems)
 			r.Post("/", h.CreateSystem)
 			r.Get("/{id}", h.GetSystem)
@@ -86,6 +95,11 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, receivers 
 		})
 		if rx != nil {
 			r.Get("/receivers/latest-version", rx.LatestVersion)
+		}
+
+		// Coverage map (coverage.go)
+		if coverageSvc != nil {
+			mountCoverageRoutes(r, coverageSvc)
 		}
 
 		// Messages

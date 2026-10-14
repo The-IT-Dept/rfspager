@@ -11,15 +11,32 @@ import { api } from "~/lib/api";
 export interface FieldDef {
   name: string;
   label: string;
-  type?: "text" | "email" | "password" | "number" | "textarea" | "toggle" | "color" | "datetime" | "select" | "hidden";
+  // "datetime" is a plain text input holding the raw value (legacy). Use
+  // "datetime-local" for a native picker: the value is shown in local time and
+  // submitted as an ISO-8601 UTC string (unchanged values are sent back as-is).
+  type?: "text" | "email" | "password" | "number" | "textarea" | "toggle" | "color" | "datetime" | "datetime-local" | "select" | "hidden";
   required?: boolean;
   disabled?: boolean;
   options?: { value: string; label: string }[];
   placeholder?: string;
+  /** HTML `step` for number inputs, e.g. "any" for decimals. */
+  step?: string;
   // Optional escape hatch: render a fully custom input for this field. The
   // render function controls value display + dispatch; the form still wraps
   // it in the standard Label/spacing and includes the value on submit.
   render?: (props: { value: any; onChange: (v: any) => void; disabled?: boolean }) => React.ReactNode;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/** ISO/RFC 3339 timestamp -> "YYYY-MM-DDTHH:mm" in local time for <input type="datetime-local">. */
+function toLocalInput(v: unknown): string {
+  if (v == null || v === "") return "";
+  const d = new Date(String(v));
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 interface ResourceFormProps {
@@ -37,6 +54,7 @@ export function ResourceForm({ title, fields, endpoint, method = "POST", initial
     const d: Record<string, any> = {};
     fields.forEach((f) => {
       if (f.type === "toggle") d[f.name] = initialData?.[f.name] ?? false;
+      else if (f.type === "datetime-local") d[f.name] = toLocalInput(initialData?.[f.name]);
       else d[f.name] = initialData?.[f.name] ?? "";
     });
     return d;
@@ -60,6 +78,16 @@ export function ResourceForm({ title, fields, endpoint, method = "POST", initial
           else if (initial != null) payload[f.name] = null; // explicitly cleared
         } else if (f.type === "toggle") {
           payload[f.name] = !!v;
+        } else if (f.type === "datetime-local") {
+          if (isBlank) {
+            if (initial != null && initial !== "") payload[f.name] = null; // explicitly cleared
+          } else if (initial != null && v === toLocalInput(initial)) {
+            payload[f.name] = initial; // untouched: keep full precision
+          } else {
+            const d = new Date(String(v)); // no offset in the string = local time
+            if (Number.isNaN(d.getTime())) throw new Error(`${f.label}: invalid date`);
+            payload[f.name] = d.toISOString();
+          }
         } else if (!isBlank) {
           payload[f.name] = v;
         } else if (initial != null && initial !== "") {
@@ -113,6 +141,7 @@ export function ResourceForm({ title, fields, endpoint, method = "POST", initial
                 ) : (
                   <Input id={field.name} type={field.type || "text"} value={data[field.name] ?? ""}
                     disabled={field.disabled} required={field.required} placeholder={field.placeholder}
+                    step={field.step}
                     onChange={(e) => setData({ ...data, [field.name]: e.target.value })} />
                 )}
               </div>

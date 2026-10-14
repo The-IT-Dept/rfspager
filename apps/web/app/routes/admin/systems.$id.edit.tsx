@@ -17,6 +17,12 @@ const fields: FieldDef[] = [
   },
   { name: "sync", label: "Sync Enabled", type: "toggle" },
   { name: "frequency", label: "Frequency", type: "number" },
+  // Suburb-level only (2 decimals): the mobile systems endpoint exposes these.
+  { name: "lat", label: "Latitude", type: "number", step: "any", placeholder: "-33.23" },
+  { name: "lng", label: "Longitude", type: "number", step: "any", placeholder: "151.56" },
+  // Receptions before this aren't attributed to the current location on the
+  // coverage map (e.g. a feed that moved). Blank = always been here.
+  { name: "located_since", label: "Located Since", type: "datetime-local" },
 ];
 
 export default function EditSystemPage() {
