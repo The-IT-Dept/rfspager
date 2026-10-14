@@ -29,8 +29,13 @@ if [ -z "$TOPIC" ]; then
   exit 1
 fi
 
-# Pub/Sub's service agent must be allowed to mint tokens as the service account.
+# Pub/Sub's service agent must exist and be allowed to mint tokens as the
+# service account. The topic may live in another project (Play Console's own
+# "pc-api-…" project): pass its full projects/…/topics/… name.
 PROJECT_NUMBER="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')"
+# (If the binding below fails with "does not exist", the Pub/Sub service agent
+# has not been provisioned yet: `gcloud beta services identity create
+# --service=pubsub.googleapis.com --project $PROJECT` once, interactively.)
 gcloud iam service-accounts add-iam-policy-binding "$SA" --project "$PROJECT" \
   --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-pubsub.iam.gserviceaccount.com" \
   --role=roles/iam.serviceAccountTokenCreator -q >/dev/null

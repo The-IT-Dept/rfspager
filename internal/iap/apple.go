@@ -23,6 +23,7 @@ type AppleClient struct {
 	privateKey *ecdsa.PrivateKey
 	bundleID   string
 	production bool
+	apiBase    string // tests only: replaces Apple's hosts
 }
 
 func NewAppleClient(keyID, issuerID, privateKeyPEM, bundleID string, production bool) (*AppleClient, error) {
@@ -277,4 +278,74 @@ func DecodeRenewalInfo(signedRenewalInfo string) (*AppleRenewalInfoPayload, erro
 		return nil, fmt.Errorf("unmarshaling renewal info: %w", err)
 	}
 	return &info, nil
+}
+
+// AppleTestNotification is Apple's record of a TEST notification: the payload
+// it sent and each delivery attempt to the URL configured in App Store Connect.
+type AppleTestNotification struct {
+	SignedPayload string `json:"signedPayload"`
+	SendAttempts  []struct {
+		AttemptDate       int64  `json:"attemptDate"`
+		SendAttemptResult string `json:"sendAttemptResult"`
+	} `json:"sendAttempts"`
+}
+
+func (c *AppleClient) base(environment string) string {
+	if c.apiBase != "" {
+		return c.apiBase
+	}
+	if environment == "Sandbox" {
+		return appleSandboxURL
+	}
+	return appleProductionURL
+}
+
+// RequestTestNotification asks Apple to send a TEST App Store Server
+// Notification to the URL configured in App Store Connect for the
+// environment ("Production" or "Sandbox") and returns the token that
+// identifies it for TestNotificationStatus.
+func (c *AppleClient) RequestTestNotification(environment string) (string, error) {
+	var out struct {
+		Token string `json:"testNotificationToken"`
+	}
+	if err := c.call(http.MethodPost, c.base(environment)+"/inApps/v1/notifications/test", &out); err != nil {
+		return "", err
+	}
+	if out.Token == "" {
+		return "", errors.New("Apple returned no testNotificationToken")
+	}
+	return out.Token, nil
+}
+
+// TestNotificationStatus reports Apple's delivery attempts for a test
+// notification. Apple answers 404 until it has processed the request.
+func (c *AppleClient) TestNotificationStatus(environment, token string) (*AppleTestNotification, error) {
+	var out AppleTestNotification
+	if err := c.call(http.MethodGet, c.base(environment)+"/inApps/v1/notifications/test/"+url.PathEscape(token), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *AppleClient) call(method, endpoint string, out any) error {
+	authToken, err := c.generateAuthToken()
+	if err != nil {
+		return fmt.Errorf("generating auth token: %w", err)
+	}
+	req, err := http.NewRequest(method, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+authToken)
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("calling Apple API: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("Apple API returned %d: %s", resp.StatusCode, string(body))
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out)
 }

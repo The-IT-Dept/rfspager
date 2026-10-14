@@ -55,8 +55,10 @@ path once both of these are done.
   Notifications. There is no API for this field. Production Server URL and
   Sandbox Server URL are both `https://rfspager.app/api/webhooks/apple`
   (Version 2). The server verifies Apple's signature chain and the bundle ID.
-  A renewal usually arrives within the hour: `journalctl -u rfspager-go | grep
-  'apple webhook received'`.
+  Verify without waiting for a renewal: build `cmd/apple-notify-test` for the
+  box, run it from `/opt/rfspager-go`, and it asks Apple for a TEST
+  notification and prints each delivery attempt (`SUCCESS` once the handler
+  answers 200).
 - **Google**: `scripts/google-rtdn-subscription.sh <topic>` adds a Pub/Sub push
   subscription on the RTDN topic named in Play Console, authenticated with an
   OIDC token the server checks (`GOOGLE_PUBSUB_AUDIENCE`,
