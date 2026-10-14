@@ -77,6 +77,14 @@ func (h *WebhookHandler) AppleNotification(w http.ResponseWriter, r *http.Reques
 	slog.Info("apple webhook received", "type", notif.NotificationType, "subtype", notif.Subtype)
 
 	// Decode + verify the transaction info JWS.
+	if !appleNotificationHasTransaction(notif) {
+		// TEST (requested through the App Store Server API) and the
+		// external-purchase types carry no transaction. Acknowledge them,
+		// otherwise Apple records a failed attempt and keeps retrying.
+		slog.Info("apple webhook: acknowledged without a transaction", "type", notif.NotificationType)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	txn, err := DecodeAppleJWS(notif.Data.SignedTransactionInfo)
 	if err != nil {
 		slog.Error("apple webhook: transaction JWS verification failed", "error", err)
@@ -273,4 +281,11 @@ func (h *WebhookHandler) GoogleNotification(w http.ResponseWriter, r *http.Reque
 	slog.Info("google webhook processed", "purchase_token", purchaseToken, "updated_current", updated)
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// appleNotificationHasTransaction reports whether a notification carries a
+// signed transaction to act on. TEST notifications and the external-purchase
+// types do not.
+func appleNotificationHasTransaction(n *AppleNotificationPayload) bool {
+	return n != nil && n.Data.SignedTransactionInfo != ""
 }
