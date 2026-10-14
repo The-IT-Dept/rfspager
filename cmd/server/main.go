@@ -349,8 +349,6 @@ func main() {
 			// Webhooks (public, signature-verified by the handlers themselves)
 			r.Post("/webhooks/apple", webhookHandler.AppleNotification)
 			r.Post("/webhooks/google", webhookHandler.GoogleNotification)
-			// Adapty (old app): same path Laravel served, so the dashboard is unchanged.
-			r.Post("/adapty-webhook", iap.NewAdaptyWebhookHandler(database.Conn(), cfg.AdaptyWebhookAuth).Handle)
 			if stripeHandler != nil {
 				r.Post("/webhooks/stripe", stripeHandler.Webhook)
 			}
@@ -363,7 +361,7 @@ func main() {
 	defer imp.Stop()
 
 	// Daily safety net: switch off subscriptions long past expiry that no
-	// store or Adapty event ever closed (iap.ExpiryGrace).
+	// store event ever closed (iap.ExpiryGrace).
 	expiry := iap.NewExpirySweeper(database.Conn(), 24*time.Hour)
 	expiry.Start()
 	defer expiry.Stop()

@@ -64,7 +64,7 @@ func applySubscription(ctx context.Context, db *sqlx.DB, userID int64, result *V
 	// A store validation only speaks for its own subscription. When the
 	// account already holds access running past this result's expiry (a gift,
 	// a comp, a purchase on the other platform), the subscription columns are
-	// left alone: the Adapty and webhook paths apply the same rule, and the
+	// left alone: the store webhooks apply the same rule, and the
 	// app re-validating its purchase must never shorten access granted
 	// elsewhere. The store identity and the audit row are still recorded.
 	query := fmt.Sprintf(`
