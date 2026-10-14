@@ -9,6 +9,7 @@ import {
   getCustomerToken,
   type CreatedSystem,
   type CustomerUser,
+  type HostHardware,
   type MySystem,
 } from "~/lib/customer-api";
 import { HOSTING_TERMS_SECTIONS, HOSTING_TERMS_VERSION } from "~/lib/hosting-terms";
@@ -184,7 +185,7 @@ function Intro() {
         ))}
       </ul>
       <p className="mt-3 text-xs leading-relaxed text-gray-500">
-        The hardware is yours: we don't supply or pay for it, and hosting is free.
+        Usually it's your own gear, but if you're somewhere we need coverage we may help with it. Hosting is free.
       </p>
 
       <h2 className={`${heading} mt-10 text-base font-bold text-gray-900`}>How it works</h2>
@@ -264,10 +265,35 @@ function CheckRow({ label, checked, onChange }: { label: string; checked: boolea
   );
 }
 
+function ChoiceRow({
+  label,
+  hint,
+  selected,
+  onSelect,
+}: {
+  label: string;
+  hint: string;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <label
+      className={`flex cursor-pointer items-start gap-3 rounded-lg border px-4 py-3 text-sm transition-colors ${
+        selected ? "border-[#F7241D]/40 bg-red-50/60 text-gray-900" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+      }`}
+    >
+      <input type="radio" name="hardware" className="mt-0.5 size-4 shrink-0 accent-[#F7241D]" checked={selected} onChange={onSelect} />
+      <span>
+        <span className="block font-medium">{label}</span>
+        <span className="mt-0.5 block text-xs leading-relaxed text-gray-500">{hint}</span>
+      </span>
+    </label>
+  );
+}
+
 function Wizard({ another, onCreated }: { another: boolean; onCreated: (s: CreatedSystem) => void }) {
   const [step, setStep] = useState<Step>("hardware");
-  const [hasPi, setHasPi] = useState(false);
-  const [hasSdr, setHasSdr] = useState(false);
+  const [hardware, setHardware] = useState<HostHardware | null>(null);
   const [accepted, setAccepted] = useState(false);
   const [name, setName] = useState("");
   const [suburb, setSuburb] = useState("");
@@ -300,6 +326,7 @@ function Wizard({ another, onCreated }: { another: boolean; onCreated: (s: Creat
         name: name.trim(),
         suburb: suburb.trim(),
         notes: notes.trim() || undefined,
+        hardware: hardware ?? "own",
         accepted_terms: true,
       });
       onCreated(created);
@@ -328,18 +355,25 @@ function Wizard({ another, onCreated }: { another: boolean; onCreated: (s: Creat
           <div>
             <h3 className={`${heading} text-base font-bold text-gray-900`}>Do you have the hardware?</h3>
             <p className="mt-1.5 text-sm leading-relaxed text-gray-500">
-              A receiver is a Raspberry Pi 4 or 5 and an RTL-SDR USB dongle with a VHF antenna, hosted wherever you want
-              coverage. We don't provide hardware.
+              A receiver is a Raspberry Pi 4 or 5 and an RTL-SDR USB dongle with a VHF antenna. Most hosts use their own,
+              but if you're somewhere we really need coverage we may be able to lend, donate or buy the gear.
             </p>
             <div className="mt-5 space-y-2.5">
-              <CheckRow label="I have a Raspberry Pi 4 or 5" checked={hasPi} onChange={setHasPi} />
-              <CheckRow label="I have an RTL-SDR (or compatible) dongle and an antenna" checked={hasSdr} onChange={setHasSdr} />
+              <ChoiceRow
+                label="I have the gear"
+                hint="A Raspberry Pi 4 or 5, an RTL-SDR (or compatible) dongle and an antenna."
+                selected={hardware === "own"}
+                onSelect={() => setHardware("own")}
+              />
+              <ChoiceRow
+                label="I'd host one if you can help with the gear"
+                hint="Tell us where it would go in the next steps and we'll let you know what we can do."
+                selected={hardware === "needs"}
+                onSelect={() => setHardware("needs")}
+              />
             </div>
-            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs leading-relaxed text-gray-500">
-                {hasPi && hasSdr ? "" : "You'll need both before we can approve a receiver. Come back when you've got them."}
-              </p>
-              <button type="button" disabled={!(hasPi && hasSdr)} onClick={() => go("terms")} className={`${primaryBtn} shrink-0`}>
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-end">
+              <button type="button" disabled={hardware === null} onClick={() => go("terms")} className={`${primaryBtn} shrink-0`}>
                 Continue
               </button>
             </div>

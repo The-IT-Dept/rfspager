@@ -99,10 +99,14 @@ export const customerApi = {
   mySystems: () => request<MySystem[]>("GET", "/my-systems"),
 };
 
+/** "own": has a Pi, dongle and antenna. "needs": would host one if we help with the gear. */
+export type HostHardware = "own" | "needs";
+
 export interface CreateSystemInput {
   name: string;
   suburb: string;
   notes?: string;
+  hardware: HostHardware;
   accepted_terms: true;
 }
 
@@ -121,6 +125,7 @@ export interface MySystem {
   name: string;
   suburb: string | null;
   request_notes: string | null;
+  hardware: HostHardware | null;
   /** Only set once approved. */
   api_key: string | null;
   approved_at: string | null;

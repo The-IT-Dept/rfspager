@@ -594,8 +594,10 @@ func (h *Handlers) ListSystems(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, data)
 }
 
-// CreateSystem registers an interest. Body: { name, suburb, notes,
-// accepted_terms }. Inserts a pending row (approved_at NULL, no api_key).
+// CreateSystem registers an interest. Body: { name, suburb, notes, hardware,
+// accepted_terms }. hardware is "own" or "needs" (would host one if we help
+// with the gear); app builds before it was asked required owning the
+// hardware, so a missing value means "own". Inserts a pending row (approved_at NULL, no api_key).
 // An admin must approve it before the api_key is issued.
 func (h *Handlers) CreateSystem(w http.ResponseWriter, r *http.Request) {
 	user := GetUser(r.Context())
@@ -604,6 +606,7 @@ func (h *Handlers) CreateSystem(w http.ResponseWriter, r *http.Request) {
 		Name          string `json:"name"`
 		Suburb        string `json:"suburb"`
 		Notes         string `json:"notes"`
+		Hardware      string `json:"hardware"`
 		AcceptedTerms bool   `json:"accepted_terms"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -613,6 +616,14 @@ func (h *Handlers) CreateSystem(w http.ResponseWriter, r *http.Request) {
 	req.Name = strings.TrimSpace(req.Name)
 	req.Suburb = strings.TrimSpace(req.Suburb)
 	req.Notes = strings.TrimSpace(req.Notes)
+	req.Hardware = strings.TrimSpace(req.Hardware)
+	if req.Hardware == "" {
+		req.Hardware = mail.HardwareOwn
+	}
+	if req.Hardware != mail.HardwareOwn && req.Hardware != mail.HardwareNeeds {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": `hardware must be "own" or "needs"`})
+		return
+	}
 
 	if !req.AcceptedTerms {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "you must accept the hosting terms"})
@@ -632,13 +643,13 @@ func (h *Handlers) CreateSystem(w http.ResponseWriter, r *http.Request) {
 	var insertedID int64
 	err := h.db.QueryRowxContext(r.Context(),
 		`INSERT INTO systems
-		   (user_id, system_id, name, suburb, request_notes,
+		   (user_id, system_id, name, suburb, request_notes, hardware,
 		    sync, frequency, steal_capcodes, created_at, updated_at)
 		 VALUES
-		   ($1, $2, $3, $4, NULLIF($5, ''),
+		   ($1, $2, $3, $4, NULLIF($5, ''), $6,
 		    false, 0, '', NOW(), NOW())
 		 RETURNING id`,
-		user.ID, systemUUID, req.Name, req.Suburb, req.Notes).Scan(&insertedID)
+		user.ID, systemUUID, req.Name, req.Suburb, req.Notes, req.Hardware).Scan(&insertedID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -651,7 +662,7 @@ func (h *Handlers) CreateSystem(w http.ResponseWriter, r *http.Request) {
 		if user.Name != nil {
 			name = *user.Name
 		}
-		app := mail.ReceiverApplication{SystemName: req.Name, Suburb: req.Suburb, Notes: req.Notes}
+		app := mail.ReceiverApplication{SystemName: req.Name, Suburb: req.Suburb, Notes: req.Notes, Hardware: req.Hardware}
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), applicationEmailTimeout)
 			defer cancel()
@@ -664,6 +675,7 @@ func (h *Handlers) CreateSystem(w http.ResponseWriter, r *http.Request) {
 		"uuid":       systemUUID,
 		"name":       req.Name,
 		"suburb":     req.Suburb,
+		"hardware":   req.Hardware,
 		"is_pending": true,
 		"is_owner":   true,
 	})
@@ -680,6 +692,7 @@ func (h *Handlers) MySystems(w http.ResponseWriter, r *http.Request) {
 		        s.name,
 		        s.suburb,
 		        s.request_notes,
+		        s.hardware,
 		        s.api_key,
 		        s.approved_at,
 		        s.created_at,

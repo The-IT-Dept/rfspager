@@ -63,6 +63,7 @@ func TestApplicationReceivedBody(t *testing.T) {
 		"<p>Hi Joseph,</p>",
 		"Receiver name: Budgewoi<br>",
 		"Suburb: Budgewoi &lt;NSW&gt;<br>",
+		"Hardware: Your own<br>",
 		"Notes: Roof mount<br>Good view north</p>",
 		`href="https://rfspager.app/host"`,
 		`href="https://rfspager.app/coverage"`,
@@ -75,6 +76,13 @@ func TestApplicationReceivedBody(t *testing.T) {
 	}
 	if body := applicationReceivedHTML("  ", ReceiverApplication{SystemName: "x", Suburb: "y"}); !strings.HasPrefix(body, "<p>Hi,</p>") || !strings.Contains(body, "Notes: None") {
 		t.Errorf("nameless, note-less body = %s", body)
+	}
+	if strings.Contains(body, "help with the hardware") {
+		t.Errorf("hardware-help paragraph in an own-hardware body:\n%s", body)
+	}
+	needs := applicationReceivedHTML("Joseph", ReceiverApplication{SystemName: "x", Suburb: "y", Hardware: HardwareNeeds})
+	if !strings.Contains(needs, "Hardware: You'd need help with it<br>") || !strings.Contains(needs, "help with the hardware") {
+		t.Errorf("needs-hardware body = %s", needs)
 	}
 }
 

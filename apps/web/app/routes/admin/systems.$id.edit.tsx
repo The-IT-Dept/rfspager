@@ -23,6 +23,15 @@ const fields: FieldDef[] = [
   // Receptions before this aren't attributed to the current location on the
   // coverage map (e.g. a feed that moved). Blank = always been here.
   { name: "located_since", label: "Located Since", type: "datetime-local" },
+  {
+    name: "hardware",
+    label: "Hardware",
+    type: "select",
+    options: [
+      { value: "own", label: "Own gear" },
+      { value: "needs", label: "Needs gear (we help with hardware)" },
+    ],
+  },
 ];
 
 export default function EditSystemPage() {

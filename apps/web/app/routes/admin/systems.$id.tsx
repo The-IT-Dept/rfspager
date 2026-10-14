@@ -30,6 +30,7 @@ import { LiveHealthCard } from "~/components/receiver/live-health";
 import { LogPanel } from "~/components/receiver/log-panel";
 import { ToneBadge, configStatusTone } from "~/components/receiver/status-badge";
 import { UpdateTab } from "~/components/receiver/update-tab";
+import { HardwareBadge } from "~/components/receiver/hardware-badge";
 
 interface SystemDetail {
   id: number;
@@ -39,6 +40,7 @@ interface SystemDetail {
   user_name?: string | null;
   suburb?: string | null;
   request_notes?: string | null;
+  hardware?: "own" | "needs" | null;
   api_key?: string | null;
   install_command?: string | null;
   approved_at?: string | null;
@@ -349,6 +351,7 @@ export default function SystemDetailPage() {
               </Field>
               <Field label="Frequency">{freqDisplay}</Field>
               <Field label="Suburb">{system.suburb || "—"}</Field>
+              <Field label="Hardware"><HardwareBadge value={system.hardware} /></Field>
               <Field label="Location">{fmtLatLng(system.lat, system.lng)}</Field>
               <Field label="Located Since">{system.located_since ? fmtDate(system.located_since) : "always"}</Field>
               <Field label="Ingress API Key"><CopyValue value={system.api_key} /></Field>

@@ -3,47 +3,47 @@
  * apps/mobile/src/screens/systems/hosting-terms.ts (keep the two in step);
  * the entity is The IT Dept Pty Ltd.
  */
-export const HOSTING_TERMS_VERSION = "2026-10";
+export const HOSTING_TERMS_VERSION = "2026-10-14";
 
 export const HOSTING_TERMS_SECTIONS: { title: string; body: string }[] = [
   {
-    title: "1. Hardware is on you",
+    title: "1. Your gear, or ours",
     body:
-      "You provide and maintain your own Raspberry Pi 4 or 5, RTL-SDR (or compatible) USB dongle, antenna, power, and reliable internet. RFSPager does not supply, fund, or warrant any of this equipment.",
+      "Most hosts use their own Raspberry Pi, radio dongle and antenna. If you're somewhere we really need coverage, we may be able to lend, donate or buy the hardware, so just ask when you apply. Power and internet are on you.",
   },
   {
-    title: "2. Coverage",
+    title: "2. Where it lives",
     body:
-      "You will host your receiver at the location you describe in the request, and operate it in a way that captures public emergency-services pager traffic in that area. You'll let us know if you substantially relocate the system.",
+      "Keep it roughly where you told us. If you move it, give us a heads-up so the coverage map stays accurate. We only ever show your suburb, never your address.",
   },
   {
-    title: "3. Forwarding",
+    title: "3. Sharing the pages",
     body:
-      "Decoded pages from your system are forwarded only to RFSPager. You will not re-broadcast, mirror, or sell that data to any third party.",
+      "What your receiver hears is a public broadcast, and you're welcome to forward it on: to your brigade, a local group, your own dashboard or another service. We just ask that it's in good faith. Don't use it to harass anyone or get in the way of crews.",
   },
   {
-    title: "4. Data handling",
+    title: "4. What we do with it",
     body:
-      "Once a page reaches The IT Dept Pty Ltd we process and distribute it under our standard public-information policy. You retain no exclusive rights to the forwarded data.",
+      "Everything your receiver sends us goes into RFSPager for everyone: the live feed, the map and alerts.",
   },
   {
-    title: "5. Best effort, no SLA",
+    title: "5. No promises either way",
     body:
-      "This is a volunteer community service. We make no uptime guarantees to users and you make none to us. We may suspend or revoke a system at any time. You may stop hosting at any time.",
+      "This is a community effort. Receivers drop out and internet goes down; that's fine. We can't guarantee uptime to anyone, and we don't expect it from you. We might pause or remove a receiver (we'll tell you why), and you can stop hosting whenever you like.",
   },
   {
-    title: "6. No commercial use",
+    title: "6. Free Pro while you host",
     body:
-      "You will not on-sell access to your system, charge for the data it produces, or fold it into a paid product.",
+      "While your receiver is online and picking up pages, your account gets RFSPager Pro free. If it's offline for more than about a week, that pauses until it's back.",
   },
   {
-    title: "7. Legal compliance",
+    title: "7. Use common sense",
     body:
-      "You are responsible for confirming that monitoring these transmissions complies with the law in your jurisdiction (e.g. the Radiocommunications Act in Australia). The IT Dept Pty Ltd is not liable for misuse.",
+      "Listening to these broadcasts is generally fine in Australia, but how you use what you receive is up to you. Respect people's privacy and the crews doing the work.",
   },
   {
-    title: "8. Changes",
+    title: "8. If things change",
     body:
-      "We may update these terms with reasonable notice. Continuing to host your system after an update means you accept the new terms.",
+      "If we update these terms we'll let you know. You can always stop hosting if you'd rather not carry on.",
   },
 ];
