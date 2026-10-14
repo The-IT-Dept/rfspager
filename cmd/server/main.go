@@ -26,6 +26,7 @@ import (
 	"github.com/the-it-dept/rfspager/internal/iap"
 	"github.com/the-it-dept/rfspager/internal/importer"
 	"github.com/the-it-dept/rfspager/internal/install"
+	"github.com/the-it-dept/rfspager/internal/legacy"
 	resetmail "github.com/the-it-dept/rfspager/internal/mail"
 	"github.com/the-it-dept/rfspager/internal/middleware"
 	"github.com/the-it-dept/rfspager/internal/mobile"
@@ -262,6 +263,11 @@ func main() {
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
+
+	// The retired Laravel GraphQL API. The old 4.x app gets a fixed
+	// "update required" notice in its feed; see internal/legacy.
+	r.HandleFunc("/graphql", legacy.GraphQL(time.Now))
+	r.HandleFunc("/graphql/*", legacy.GraphQL(time.Now))
 
 	r.Route("/api", func(r chi.Router) {
 		// --- Streaming endpoints (NO chi.Timeout) ---
