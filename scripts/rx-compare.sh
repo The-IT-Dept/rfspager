@@ -22,7 +22,7 @@ HOST="${RX_COMPARE_HOST:-root@100.64.244.122}"
 ssh -o BatchMode=yes "$HOST" \
   "sudo -u postgres psql -d rfspager -X -q -P pager=off -v a=$A -v b=$B -v since=$(printf %q "${SINCE:-}") -f -" <<'SQL'
 \set ON_ERROR_STOP on
-SELECT CASE WHEN :'since' = '' THEN now() - interval '1 hour' ELSE :'since'::timestamptz END AS t0 \gset
+SELECT coalesce(nullif(:'since', '')::timestamptz, now() - interval '1 hour') AS t0 \gset
 
 \echo
 SELECT id, name, to_char(:'t0'::timestamptz AT TIME ZONE 'Australia/Sydney', 'YYYY-MM-DD HH24:MI') AS since_local,
