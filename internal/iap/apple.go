@@ -1,6 +1,7 @@
 package iap
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/json"
@@ -280,14 +281,54 @@ func DecodeRenewalInfo(signedRenewalInfo string) (*AppleRenewalInfoPayload, erro
 	return &info, nil
 }
 
+// AppleSendAttempt is one delivery attempt of a notification to the URL
+// configured in App Store Connect.
+type AppleSendAttempt struct {
+	AttemptDate       int64  `json:"attemptDate"`
+	SendAttemptResult string `json:"sendAttemptResult"`
+}
+
 // AppleTestNotification is Apple's record of a TEST notification: the payload
-// it sent and each delivery attempt to the URL configured in App Store Connect.
+// it sent and each delivery attempt.
 type AppleTestNotification struct {
-	SignedPayload string `json:"signedPayload"`
-	SendAttempts  []struct {
-		AttemptDate       int64  `json:"attemptDate"`
-		SendAttemptResult string `json:"sendAttemptResult"`
-	} `json:"sendAttempts"`
+	SignedPayload string             `json:"signedPayload"`
+	SendAttempts  []AppleSendAttempt `json:"sendAttempts"`
+}
+
+// AppleNotificationHistoryItem is one notification from Apple's history: the
+// signed payload exactly as it was (or will be) delivered, with the attempts.
+type AppleNotificationHistoryItem struct {
+	SignedPayload string             `json:"signedPayload"`
+	SendAttempts  []AppleSendAttempt `json:"sendAttempts"`
+}
+
+// NotificationHistory returns every notification Apple produced for the app
+// between start and end (at most 180 days back), following pagination. The
+// payloads are real Apple-signed notifications, so they can be run through
+// the same verification as the webhook, or replayed to it.
+func (c *AppleClient) NotificationHistory(environment string, start, end time.Time) ([]AppleNotificationHistoryItem, error) {
+	var items []AppleNotificationHistoryItem
+	token := ""
+	for {
+		endpoint := c.base(environment) + "/inApps/v1/notifications/history"
+		if token != "" {
+			endpoint += "?paginationToken=" + url.QueryEscape(token)
+		}
+		var page struct {
+			NotificationHistory []AppleNotificationHistoryItem `json:"notificationHistory"`
+			HasMore             bool                           `json:"hasMore"`
+			PaginationToken     string                         `json:"paginationToken"`
+		}
+		body := map[string]any{"startDate": start.UnixMilli(), "endDate": end.UnixMilli()}
+		if err := c.call(http.MethodPost, endpoint, body, &page); err != nil {
+			return items, err
+		}
+		items = append(items, page.NotificationHistory...)
+		if !page.HasMore || page.PaginationToken == "" {
+			return items, nil
+		}
+		token = page.PaginationToken
+	}
 }
 
 func (c *AppleClient) base(environment string) string {
@@ -308,7 +349,7 @@ func (c *AppleClient) RequestTestNotification(environment string) (string, error
 	var out struct {
 		Token string `json:"testNotificationToken"`
 	}
-	if err := c.call(http.MethodPost, c.base(environment)+"/inApps/v1/notifications/test", &out); err != nil {
+	if err := c.call(http.MethodPost, c.base(environment)+"/inApps/v1/notifications/test", nil, &out); err != nil {
 		return "", err
 	}
 	if out.Token == "" {
@@ -321,22 +362,33 @@ func (c *AppleClient) RequestTestNotification(environment string) (string, error
 // notification. Apple answers 404 until it has processed the request.
 func (c *AppleClient) TestNotificationStatus(environment, token string) (*AppleTestNotification, error) {
 	var out AppleTestNotification
-	if err := c.call(http.MethodGet, c.base(environment)+"/inApps/v1/notifications/test/"+url.PathEscape(token), &out); err != nil {
+	if err := c.call(http.MethodGet, c.base(environment)+"/inApps/v1/notifications/test/"+url.PathEscape(token), nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-func (c *AppleClient) call(method, endpoint string, out any) error {
+func (c *AppleClient) call(method, endpoint string, body any, out any) error {
 	authToken, err := c.generateAuthToken()
 	if err != nil {
 		return fmt.Errorf("generating auth token: %w", err)
 	}
-	req, err := http.NewRequest(method, endpoint, nil)
+	var payload io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		payload = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, endpoint, payload)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+authToken)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
