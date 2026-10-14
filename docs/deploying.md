@@ -56,9 +56,12 @@ path once both of these are done.
   Sandbox Server URL are both `https://rfspager.app/api/webhooks/apple`
   (Version 2). The server verifies Apple's signature chain and the bundle ID.
   Verify without waiting for a renewal: build `cmd/apple-notify-test` for the
-  box, run it from `/opt/rfspager-go`, and it asks Apple for a TEST
+  box and run it from `/opt/rfspager-go`. Plain, it asks Apple for a TEST
   notification and prints each delivery attempt (`SUCCESS` once the handler
-  answers 200).
+  answers 200). `-history 48h` lists what Apple actually sent and runs every
+  signed payload through the webhook's verification; add `-replay <url>` to
+  POST them to a webhook (the dev server's, to exercise the database path on
+  the prod-data copy). Verified this way on 2026-10-15 before Adapty was cut.
 - **Google**: `scripts/google-rtdn-subscription.sh <topic>` adds a Pub/Sub push
   subscription on the RTDN topic named in Play Console, authenticated with an
   OIDC token the server checks (`GOOGLE_PUBSUB_AUDIENCE`,
