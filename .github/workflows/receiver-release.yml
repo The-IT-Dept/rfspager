@@ -84,6 +84,10 @@ jobs:
             asset: rfspager-receiver-linux-arm64
           - platform: linux/amd64
             asset: rfspager-receiver-linux-amd64
+          # Pi 2 (and 32-bit Raspberry Pi OS on later boards). The installer and
+          # self-update already ask for linux-armv7 on armv7l hosts.
+          - platform: linux/arm/v7
+            asset: rfspager-receiver-linux-armv7
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
