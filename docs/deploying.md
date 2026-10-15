@@ -66,6 +66,11 @@ path once both of these are done.
   subscription on the RTDN topic named in Play Console, authenticated with an
   OIDC token the server checks (`GOOGLE_PUBSUB_AUDIENCE`,
   `GOOGLE_PUBSUB_SERVICE_EMAIL` in `.env`).
+- `cmd/google-sub-check` (run on apps01 from `/opt/rfspager-go`) compares every
+  live Google subscription with the Play API and prints mismatches; it never
+  writes. To re-apply Google's state for one user, publish a RENEWED
+  notification for their token to the RTDN topic (see the RTDN script's test
+  command) and the webhook does the rest.
 - Adapty is out of the path since 2026-10-15: its Pub/Sub subscription and
   the server's `/api/adapty-webhook` route are gone and the plan cancellation
   was requested the same day. `cmd/adapty-backfill` remains only as history.
