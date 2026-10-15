@@ -305,7 +305,7 @@ func (h *extensionHandlers) Grant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ext := AccountExtension{
-		UserID: userID, AdminUserID: adminID, Method: method, DaysRequested: body.Days,
+		UserID: userID, AdminUserID: adminID, AdminEmail: nilIfEmpty(adminEmail), Method: method, DaysRequested: body.Days,
 		Note: body.Note, ExpiryBefore: account.Expiry, StoreRequests: pq.StringArray{},
 	}
 	switch method {
@@ -400,8 +400,9 @@ func (h *extensionHandlers) extendApple(ext *AccountExtension, otx string, reaso
 }
 
 // giveGift moves the account to the gifted product, running days past the
-// current expiry when access is still running, otherwise from now, and
-// records an iap_transactions row the way store events do.
+// current expiry when access is still running, otherwise from now, clears a
+// stale cancellation reason, and records an iap_transactions row the way
+// store events do.
 func giveGift(ctx context.Context, tx *sqlx.Tx, userID int64, days int) (time.Time, error) {
 	var expiry time.Time
 	if err := tx.GetContext(ctx, &expiry, `
@@ -412,6 +413,7 @@ func giveGift(ctx context.Context, tx *sqlx.Tx, userID int64, days int) (time.Ti
 			subscription_product_id = $3,
 			subscription_platform   = NULL,
 			will_renew              = NULL,
+			cancellation_reason     = NULL,
 			updated_at              = NOW()
 		 WHERE id = $1
 		RETURNING subscription_expiry`, userID, days, giftedProductID); err != nil {
@@ -424,6 +426,13 @@ func giveGift(ctx context.Context, tx *sqlx.Tx, userID int64, days int) (time.Ti
 		return time.Time{}, fmt.Errorf("recording gift: %w", err)
 	}
 	return expiry.UTC(), nil
+}
+
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func newRequestID() (string, error) {

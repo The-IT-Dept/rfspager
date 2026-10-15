@@ -87,6 +87,7 @@ func TestGiveFreeTime(t *testing.T) {
 		VALUES (gen_random_uuid(), 'google@example.invalid', '!', true, $1, 'google', 'io.devlan.rfspager.monthly', 'tok-1') RETURNING id`, renews)
 	lapsed := insertID(t, conn, `INSERT INTO users (user_id, email, password, subscription_valid, subscription_expiry, subscription_platform, subscription_product_id, apple_original_transaction_id)
 		VALUES (gen_random_uuid(), 'lapsed@example.invalid', '!', false, NOW() - INTERVAL '40 days', 'apple', 'io.devlan.rfspager.monthly', '5000002') RETURNING id`)
+	mustExec(t, conn, `UPDATE users SET cancellation_reason = 'voluntarily_cancelled' WHERE id = $1`, lapsed)
 	gifted := insertID(t, conn, `INSERT INTO users (user_id, email, password, subscription_valid, subscription_expiry, subscription_product_id)
 		VALUES (gen_random_uuid(), 'gifted@example.invalid', '!', true, $1, 'io.devlan.rfspager.gifted') RETURNING id`, renews)
 
@@ -153,12 +154,13 @@ func TestGiveFreeTime(t *testing.T) {
 		Product  string    `db:"subscription_product_id"`
 		Platform *string   `db:"subscription_platform"`
 		Renew    *bool     `db:"will_renew"`
+		Reason   *string   `db:"cancellation_reason"`
 	}
-	if err := conn.GetContext(ctx, &u, `SELECT subscription_valid, subscription_expiry, subscription_product_id, subscription_platform, will_renew FROM users WHERE id = $1`, lapsed); err != nil {
+	if err := conn.GetContext(ctx, &u, `SELECT subscription_valid, subscription_expiry, subscription_product_id, subscription_platform, will_renew, cancellation_reason FROM users WHERE id = $1`, lapsed); err != nil {
 		t.Fatal(err)
 	}
 	want := before.AddDate(0, 0, 30)
-	if !u.Valid || u.Product != "io.devlan.rfspager.gifted" || u.Platform != nil || u.Renew != nil ||
+	if !u.Valid || u.Product != "io.devlan.rfspager.gifted" || u.Platform != nil || u.Renew != nil || u.Reason != nil ||
 		u.Expiry.Before(want.Add(-time.Minute)) || u.Expiry.After(want.Add(time.Minute)) {
 		t.Fatalf("gifted user = %+v", u)
 	}
