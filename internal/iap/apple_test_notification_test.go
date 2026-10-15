@@ -69,3 +69,28 @@ func TestRequestAndCheckTestNotification(t *testing.T) {
 		t.Errorf("base URL selection wrong")
 	}
 }
+
+func TestExtendRenewalDate(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/inApps/v1/subscriptions/extend/500001" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			ExtendByDays      int    `json:"extendByDays"`
+			ExtendReasonCode  int    `json:"extendReasonCode"`
+			RequestIdentifier string `json:"requestIdentifier"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ExtendByDays != 90 || body.ExtendReasonCode != ExtendReasonServiceIssue || body.RequestIdentifier != "req-1" {
+			t.Errorf("extend body: %+v err=%v", body, err)
+		}
+		w.Write([]byte(`{"effectiveDate":1806000000000,"originalTransactionId":"500001","success":true,"webOrderLineItemId":"w1"}`))
+	}))
+	defer srv.Close()
+
+	c := &AppleClient{keyID: "k", issuerID: "i", privateKey: key, bundleID: "io.devlan.rfspager", production: true, apiBase: srv.URL}
+	res, err := c.ExtendRenewalDate("Production", "500001", 90, ExtendReasonServiceIssue, "req-1")
+	if err != nil || res.EffectiveDate != 1806000000000 || res.OriginalTransactionID != "500001" {
+		t.Fatalf("extend: %+v err=%v", res, err)
+	}
+}

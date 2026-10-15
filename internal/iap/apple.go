@@ -368,6 +368,41 @@ func (c *AppleClient) TestNotificationStatus(environment, token string) (*AppleT
 	return &out, nil
 }
 
+// Apple's reason codes for ExtendRenewalDate.
+const (
+	ExtendReasonUndeclared           = 0
+	ExtendReasonCustomerSatisfaction = 1
+	ExtendReasonOther                = 2
+	ExtendReasonServiceIssue         = 3
+)
+
+// AppleExtendResult is Apple's answer to a renewal date extension.
+type AppleExtendResult struct {
+	EffectiveDate         int64  `json:"effectiveDate"`
+	OriginalTransactionID string `json:"originalTransactionId"`
+	Success               bool   `json:"success"`
+	WebOrderLineItemID    string `json:"webOrderLineItemId"`
+}
+
+// ExtendRenewalDate pushes an active auto-renewable subscription's next
+// renewal back by days (at most 90), so the customer gets that time free.
+// Apple allows two extensions per subscription in any 365 days. requestID is
+// Apple's idempotency key: retrying with the same one never extends twice.
+// Apple then sends RENEWAL_EXTENDED, which the webhook applies like any
+// other notification.
+func (c *AppleClient) ExtendRenewalDate(environment, originalTransactionID string, days, reason int, requestID string) (*AppleExtendResult, error) {
+	var out AppleExtendResult
+	body := map[string]any{"extendByDays": days, "extendReasonCode": reason, "requestIdentifier": requestID}
+	endpoint := c.base(environment) + "/inApps/v1/subscriptions/extend/" + url.PathEscape(originalTransactionID)
+	if err := c.call(http.MethodPut, endpoint, body, &out); err != nil {
+		return nil, err
+	}
+	if !out.Success {
+		return &out, errors.New("Apple reported the extension as unsuccessful")
+	}
+	return &out, nil
+}
+
 func (c *AppleClient) call(method, endpoint string, body any, out any) error {
 	authToken, err := c.generateAuthToken()
 	if err != nil {

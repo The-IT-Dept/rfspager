@@ -62,6 +62,14 @@ path once both of these are done.
   signed payload through the webhook's verification; add `-replay <url>` to
   POST them to a webhook (the dev server's, to exercise the database path on
   the prod-data copy). Verified this way on 2026-10-15 before Adapty was cut.
+- **Free time for an Apple subscriber**: `cmd/apple-extend -otx <original
+  transaction id> -days 90` (on apps01 from `/opt/rfspager-go`) pushes their
+  next renewal back through the App Store Server API, so Apple doesn't charge
+  them until it runs out. Editing `subscription_expiry` does nothing for an
+  auto-renewing subscriber, because Apple still charges on the original date.
+  Apple allows at most 90 days per call and two calls per subscription in any
+  365 days, so two calls give about six months. Apple then sends
+  `RENEWAL_EXTENDED`, and the webhook moves the expiry.
 - **Google**: `scripts/google-rtdn-subscription.sh <topic>` adds a Pub/Sub push
   subscription on the RTDN topic named in Play Console, authenticated with an
   OIDC token the server checks (`GOOGLE_PUBSUB_AUDIENCE`,
