@@ -19,7 +19,9 @@ const ExpiryGrace = 30 * 24 * time.Hour
 
 // ExpireLapsedSubscriptions switches off subscriptions whose expiry passed
 // more than grace ago, recording an iap_transactions audit row for each.
-// Gifted entitlements and rows with no expiry (comps) are never touched.
+// A gift given with "Give free time" (an applied gift in account_extensions)
+// lapses at its expiry, without the grace: no store is retrying it. Older
+// gifts and rows with no expiry (comps) are never touched.
 // Returns the user IDs it expired.
 func ExpireLapsedSubscriptions(ctx context.Context, db *sqlx.DB, grace time.Duration) ([]int64, error) {
 	var ids []int64
@@ -29,12 +31,18 @@ func ExpireLapsedSubscriptions(ctx context.Context, db *sqlx.DB, grace time.Dura
 			   SET subscription_valid = false, updated_at = NOW()
 			 WHERE subscription_valid
 			   AND subscription_expiry IS NOT NULL
-			   AND subscription_expiry < NOW() - make_interval(secs => $1)
-			   AND COALESCE(subscription_product_id, '') NOT ILIKE '%gifted%'
+			   AND (
+			       (subscription_expiry < NOW() - make_interval(secs => $1)
+			        AND COALESCE(subscription_product_id, '') NOT ILIKE '%gifted%')
+			    OR (subscription_expiry < NOW()
+			        AND subscription_product_id ILIKE '%gifted%'
+			        AND EXISTS (SELECT 1 FROM account_extensions e
+			                     WHERE e.user_id = users.id AND e.method = 'gift' AND e.status = 'applied'))
+			   )
 			RETURNING id, subscription_platform, subscription_product_id, subscription_expiry
 		)
 		INSERT INTO iap_transactions (user_id, platform, product_id, event_type, is_valid, expires_at, raw_payload)
-		SELECT id, COALESCE(subscription_platform, 'unknown'), COALESCE(subscription_product_id, 'unknown'),
+		SELECT id, COALESCE(subscription_platform, CASE WHEN subscription_product_id ILIKE '%gifted%' THEN 'gift' END, 'unknown'), COALESCE(subscription_product_id, 'unknown'),
 		       'expiry:sweep', false, subscription_expiry,
 		       'expired by the daily sweep: no store event within the grace period'
 		  FROM lapsed

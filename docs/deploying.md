@@ -62,6 +62,17 @@ path once both of these are done.
   signed payload through the webhook's verification; add `-replay <url>` to
   POST them to a webhook (the dev server's, to exercise the database path on
   the prod-data copy). Verified this way on 2026-10-15 before Adapty was cut.
+- **Free time**: the admin user page has a *Free time* card (superadmin). *Give
+  free time* follows the account: an active Apple subscription gets its
+  renewal date extended through the App Store Server API (at most 90 days per
+  call, two calls per subscription in any 365 days, so up to 180 days), an
+  active Google one is deferred through the Play API (up to 365 days), and
+  everyone else gets `io.devlan.rfspager.gifted` in our own columns (up to
+  730 days; the expiry sweep lapses it on time). Editing
+  `subscription_expiry` by hand does nothing for an auto-renewing subscriber,
+  because the store still charges on the original date. Store grants then
+  arrive as `RENEWAL_EXTENDED` / `SUBSCRIPTION_DEFERRED` webhooks, which move
+  the expiry. Every grant, failed ones included, is in `account_extensions`.
 - **Google**: `scripts/google-rtdn-subscription.sh <topic>` adds a Pub/Sub push
   subscription on the RTDN topic named in Play Console, authenticated with an
   OIDC token the server checks (`GOOGLE_PUBSUB_AUDIENCE`,

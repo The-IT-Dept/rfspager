@@ -14,6 +14,7 @@ import {
 } from "~/components/ui/table";
 import { Pencil, ArrowLeft, ShieldCheck, Copy, Check } from "lucide-react";
 import { api } from "~/lib/api";
+import { FreeTimeCard } from "~/components/free-time";
 
 interface UserDetail {
   id: number;
@@ -41,6 +42,8 @@ interface UserDetail {
   stripe_subscription_end_date?: string | null;
   adapty_id?: string | null;
   last_adapty_sync_at?: string | null;
+  free_time_days?: number | null; // total given with "Give free time"
+  free_time_last_at?: string | null;
 }
 
 interface Installation {
@@ -120,7 +123,7 @@ export default function UserDetailPage() {
   const [txns, setTxns] = useState<TxnRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
     if (!id) return;
     Promise.all([
       api.get<UserDetail>(`/users/${id}`),
@@ -133,7 +136,9 @@ export default function UserDetailPage() {
         setTxns(tx.data || []);
       })
       .catch((e) => setError(e.message));
-  }, [id]);
+  };
+
+  useEffect(load, [id]);
 
   if (error) return <p className="text-destructive">{error}</p>;
   if (!user) return <p className="text-muted-foreground">Loading...</p>;
@@ -186,6 +191,12 @@ export default function UserDetailPage() {
             {user.will_renew == null ? "—" : (user.will_renew ? "Yes" : <span className="text-amber-600">No</span>)}
           </Field>
           <Field label="Last Store Sync">{fmtDate(user.last_store_sync_at)}</Field>
+          {!!user.free_time_days && (
+            <Field label="Free Time Given">
+              <Badge variant="secondary">+{user.free_time_days}d</Badge>{" "}
+              <span className="text-muted-foreground">last {fmtDate(user.free_time_last_at)}</span>
+            </Field>
+          )}
           {user.cancellation_reason && (
             <Field label="Cancellation Reason">
               <Badge variant="destructive">{user.cancellation_reason}</Badge>
@@ -193,6 +204,8 @@ export default function UserDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      <FreeTimeCard userId={user.id} onGranted={load} />
 
       <Card>
         <CardHeader><CardTitle>Store Identifiers</CardTitle></CardHeader>
