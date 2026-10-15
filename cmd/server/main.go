@@ -102,6 +102,16 @@ func main() {
 		slog.Error("failed to initialize Google IAP", "error", err)
 	}
 
+	// "Give free time" in the admin UI. Only configured clients go in: a nil
+	// *AppleClient in the interface would look configured.
+	var adminExtenders admin.Extenders
+	if appleIAP != nil {
+		adminExtenders.Apple = appleIAP
+	}
+	if googleIAP != nil {
+		adminExtenders.Google = googleIAP
+	}
+
 	iapHandler := iap.NewHandler(database.Conn(), appleIAP, googleIAP, iap.Options{AllowedProductIDs: strings.Fields(cfg.IAPProductIDs), AppleEnvironment: cfg.AppleIAPEnvironment, GoogleEnvironment: cfg.GoogleIAPEnvironment})
 	webhookHandler := iap.NewWebhookHandler(database.Conn(), appleIAP, googleIAP, iap.WebhookConfig{
 		AppleBundleID:      cfg.AppleBundleID,
@@ -311,7 +321,7 @@ func main() {
 				Store:    database,
 				Hub:      hub,
 				Releases: installHandlers,
-			}, coverageSvc, adminApplicationMailer))
+			}, coverageSvc, adminApplicationMailer, adminExtenders))
 
 			// Mobile API
 			r.Mount("/v2/mobile", mobile.Router(database.Conn(), cfg.JWTSecret, cfg.AppleBundleID, mobileSSE, iapHandler, hub, authOptions))

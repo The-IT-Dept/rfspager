@@ -63,6 +63,10 @@ func testOwnershipDB(t *testing.T) *sqlx.DB {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			PRIMARY KEY (platform, original_transaction_id, user_id)
 		);
+		CREATE TABLE account_extensions (
+			id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			method TEXT NOT NULL, status TEXT NOT NULL
+		);
 		INSERT INTO users DEFAULT VALUES;
 		INSERT INTO users DEFAULT VALUES;
 		CREATE INDEX users_apple_original_transaction_id_idx

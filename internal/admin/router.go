@@ -12,12 +12,14 @@ import (
 // two receiver SSE streams are not here: cmd/server mounts them outside
 // the request-timeout group (see ReceiverStatsStream). coverageSvc wires the
 // coverage map routes; nil leaves them out. applications emails owners the
-// install command on approval; nil sends no email.
-func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, receivers *ReceiverDeps, coverageSvc *coverage.Service, applications ApplicationMailer) chi.Router {
+// install command on approval; nil sends no email. extenders are the store
+// clients behind "Give free time" on a user.
+func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, receivers *ReceiverDeps, coverageSvc *coverage.Service, applications ApplicationMailer, extenders Extenders) chi.Router {
 	store := NewStore(db)
 	auth := NewAuthHandler(store, jwtSecret)
 	h := NewHandlers(store, notifier)
 	h.applications = applications
+	ext := newExtensionHandlers(db, extenders)
 	var rx *receiverHandlers
 	if receivers != nil && receivers.Store != nil {
 		rx = newReceiverHandlers(db, *receivers)
@@ -47,6 +49,8 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, receivers 
 			r.Delete("/{id}", h.DeleteUser)
 			r.Get("/{id}/installations", h.GetUserInstallations)
 			r.Get("/{id}/iap-transactions", h.GetUserIAPTransactions)
+			r.Get("/{id}/extensions", ext.List)
+			r.Post("/{id}/extensions", ext.Grant)
 		})
 
 		// Billing / IAP

@@ -222,8 +222,14 @@ func (s *Store) ListUsers(ctx context.Context, p ListParams) (*PaginatedResult, 
 }
 
 func (s *Store) GetUser(ctx context.Context, id int64) (map[string]any, error) {
-	return s.getRow(ctx, "users", id, "*, "+userProAccessColumn(""))
+	return s.getRow(ctx, "users", id, "*, "+userProAccessColumn("")+", "+userFreeTimeColumns)
 }
+
+// userFreeTimeColumns sums the free time given with "Give free time"
+// (applied and partial grants) and when it was last given; NULL when none.
+const userFreeTimeColumns = `
+	(SELECT SUM(e.days_applied) FROM account_extensions e WHERE e.user_id = users.id AND e.status <> 'failed') AS free_time_days,
+	(SELECT MAX(e.created_at) FROM account_extensions e WHERE e.user_id = users.id AND e.status <> 'failed') AS free_time_last_at`
 
 // userProAccessColumn adds pro_access, the user's effective access (a valid
 // store subscription OR a running host comp), next to the raw columns: the
