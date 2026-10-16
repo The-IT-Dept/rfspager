@@ -37,6 +37,7 @@ import (
 	"github.com/the-it-dept/rfspager/internal/receiver/control"
 	"github.com/the-it-dept/rfspager/internal/receiver/dsp"
 	"github.com/the-it-dept/rfspager/internal/receiver/legacy"
+	"github.com/the-it-dept/rfspager/internal/receiver/localui"
 	"github.com/the-it-dept/rfspager/internal/receiver/sdr"
 	"github.com/the-it-dept/rfspager/internal/receiver/stats"
 	"github.com/the-it-dept/rfspager/internal/receiver/wsclient"
@@ -57,7 +58,9 @@ func main() {
 	_ = godotenv.Load() // .env is optional
 	level := &slog.LevelVar{}
 	base := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})
-	slog.SetDefault(slog.New(base))
+	// Every record also lands in the local UI's log buffer, from the start.
+	uiLogs := localui.NewLogBuffer(2000)
+	slog.SetDefault(slog.New(uiLogs.Handler(base)))
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -113,6 +116,7 @@ func main() {
 		senders   []receiver.NamedSender
 		primaryWS *wsclient.Client
 		primaryEP string
+		upstreams []upstream
 	)
 	for _, ep := range cfg.Endpoints {
 		switch ep.Mode {
@@ -123,11 +127,11 @@ func main() {
 				c.Primary = true
 			}
 			senders = append(senders, receiver.NamedSender{Name: ep.Name, Sender: c})
+			upstreams = append(upstreams, upstream{ep: ep, ws: c})
 		case "legacy":
-			senders = append(senders, receiver.NamedSender{
-				Name:   ep.Name,
-				Sender: legacy.New(ep.URL, ep.SystemUUID),
-			})
+			c := legacy.New(ep.URL, ep.SystemUUID)
+			senders = append(senders, receiver.NamedSender{Name: ep.Name, Sender: c})
+			upstreams = append(upstreams, upstream{ep: ep, legacy: c})
 		}
 	}
 
@@ -137,7 +141,7 @@ func main() {
 	// buffer is full, so this can't block the decode hot path. A legacy-only
 	// receiver has nowhere to ship logs, so it just writes to stdout.
 	if primaryWS != nil {
-		slog.SetDefault(slog.New(wsclient.NewLogShippingHandler(base, primaryWS)))
+		slog.SetDefault(slog.New(uiLogs.Handler(wsclient.NewLogShippingHandler(base, primaryWS))))
 	}
 
 	for _, ep := range cfg.Endpoints {
@@ -170,6 +174,24 @@ func main() {
 	}
 	mgr := control.NewManager(opts)
 
+	// The host's own view of this receiver, on their network. Off with
+	// RECEIVER_UI_ADDR=off; a port clash is logged and decoding carries on.
+	var system atomic.Pointer[localui.System]
+	var ui *localui.Server
+	if addr := config.UIAddr(); addr != "" {
+		ui = localui.New(ctx, addr, store.Dir(), bi, uiLogs, uiSources(mgr, pipe, upstreams, primaryWS, &system, version, source))
+		fwd.Observe = func(p receiver.DecodedPage) {
+			ui.AddPage(localui.Page{
+				TS: p.Time.UnixMilli(), Channel: p.Channel, FreqHz: p.FreqHz, Baud: p.Baud,
+				Address: p.Address, Function: p.Function, Message: p.Message,
+				Posted: p.Posted, Quality: p.Quality,
+			})
+		}
+		go ui.Run(ctx)
+	} else {
+		slog.Info("local ui disabled (RECEIVER_UI_ADDR=off)")
+	}
+
 	if primaryWS != nil {
 		primaryWS.HostInfo = stats.Info
 		primaryWS.ConfigInfo = mgr.HelloConfig
@@ -185,6 +207,7 @@ func main() {
 		primaryWS.OnCommand = mgr.Handle
 		var confirmOnce sync.Once
 		primaryWS.OnWelcome = func(w rxproto.Welcome) {
+			system.Store(&localui.System{Name: w.Name, UUID: w.SystemUUID})
 			confirmOnce.Do(func() { mgr.ConfirmUpdate(marker, bi.Version) })
 			if w.LatestVersion != "" && control.BaseVersion(w.LatestVersion) != control.BaseVersion(bi.Version) {
 				slog.Info("a different receiver release is published", "running", bi.Version, "latest", w.LatestVersion)
@@ -237,10 +260,10 @@ func main() {
 				"config_version", mgr.Version(),
 			)
 		}
-		go statsLoop(ctx, mgr, pipe, primaryWS)
 	} else {
 		slog.Info("no ws endpoint configured; running legacy-only")
 	}
+	go statsLoop(ctx, mgr, pipe, primaryWS, ui)
 
 	// Outer retry loop: open the dongle, run until it dies (unplugged, USB
 	// error, watchdog timeout) or the manager asks for a reopen, then try
@@ -324,9 +347,15 @@ func (p *pipeline) Spectrum(s *receiver.Spectrum) error {
 // CancelSpectrum implements control.Taps.
 func (p *pipeline) CancelSpectrum(s *receiver.Spectrum) { p.spectrum.CompareAndSwap(s, nil) }
 
-// statsLoop ships a stats frame every stats_interval_s (re-read each
-// round, so a config change takes effect after the current wait).
-func statsLoop(ctx context.Context, mgr *control.Manager, pipe *pipeline, ws *wsclient.Client) {
+// statsLoop collects a stats frame every stats_interval_s (re-read each
+// round, so a config change takes effect after the current wait) and hands
+// it to the primary endpoint and the local UI, either of which may be nil.
+// Channel counters are deltas reset by each collection, so this is their
+// only reader.
+func statsLoop(ctx context.Context, mgr *control.Manager, pipe *pipeline, ws *wsclient.Client, ui *localui.Server) {
+	if ws == nil && ui == nil {
+		return
+	}
 	for {
 		interval := mgr.Config().StatsIntervalS
 		if interval < rxproto.MinStatsIntervalS {
@@ -339,7 +368,13 @@ func statsLoop(ctx context.Context, mgr *control.Manager, pipe *pipeline, ws *ws
 			return
 		case <-t.C:
 		}
-		ws.SendStats(collectStats(mgr, pipe, ws, interval))
+		st := collectStats(mgr, pipe, ws, interval)
+		if ws != nil {
+			ws.SendStats(st)
+		}
+		if ui != nil {
+			ui.AddStats(st)
+		}
 	}
 }
 
@@ -362,8 +397,10 @@ func collectStats(mgr *control.Manager, pipe *pipeline, ws *wsclient.Client, int
 			DSPLoad:      load,
 		},
 		Host:     stats.Host(),
-		Link:     ws.LinkStats(),
 		Channels: []rxproto.ChannelStats{},
+	}
+	if ws != nil {
+		st.Link = ws.LinkStats()
 	}
 	for _, ch := range pipe.Channels() {
 		st.Channels = append(st.Channels, ch.Snapshot())

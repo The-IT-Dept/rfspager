@@ -165,7 +165,7 @@ say "Installed $BIN_DIR/receiver"
 # gain or dongle choice someone tuned by hand.
 TUNING=""
 if [ -f "$ENV_FILE" ]; then
-  TUNING="$(grep -E '^(RECEIVER_TUNER_GAIN|RECEIVER_DONGLE_INDEX|RECEIVER_DONGLE_SERIAL|RECEIVER_PPM|RECEIVER_SAMPLE_RATE|RECEIVER_POST_ALL)=' "$ENV_FILE" || true)"
+  TUNING="$(grep -E '^(RECEIVER_TUNER_GAIN|RECEIVER_DONGLE_INDEX|RECEIVER_DONGLE_SERIAL|RECEIVER_PPM|RECEIVER_SAMPLE_RATE|RECEIVER_POST_ALL|RECEIVER_UI_ADDR)=' "$ENV_FILE" || true)"
 fi
 say "Writing $ENV_FILE"
 umask 077
@@ -252,6 +252,18 @@ else
   warn "It is running but has not confirmed a connection yet."
   warn "Watch it with: journalctl -u rfspager-receiver -f"
 fi
+# The receiver serves its own dashboard on the local network (port 8148
+# unless RECEIVER_UI_ADDR moves or disables it).
+UI_ADDR="$(sed -n 's/^RECEIVER_UI_ADDR=//p' "$ENV_FILE" | tail -n1 | tr -d '"'"'"' ')"
+case "${UI_ADDR:-:8148}" in
+  off|0|false|disabled|none) ;;
+  *)
+    UI_PORT="${UI_ADDR:-:8148}"; UI_PORT="${UI_PORT##*:}"
+    LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    echo
+    say "Dashboard: http://${LAN_IP:-$(hostname)}:${UI_PORT} (anyone on this network can open it)"
+    ;;
+esac
 echo
 echo "  status   systemctl status rfspager-receiver"
 echo "  logs     journalctl -u rfspager-receiver -f"

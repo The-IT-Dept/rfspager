@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -28,6 +29,41 @@ type Client struct {
 	BaseURL    string
 	SystemUUID string
 	HTTP       *http.Client
+
+	mu     sync.Mutex
+	status Status
+}
+
+// Status is the endpoint's delivery record for the local UI. Times are unix
+// ms, 0 when never.
+type Status struct {
+	LastOK      bool // the newest post succeeded
+	PagesSent   int64
+	PagesFailed int64
+	LastPageAt  int64
+	LastError   string
+	LastErrorAt int64
+}
+
+// Status reports the delivery counters.
+func (c *Client) Status() Status {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.status
+}
+
+func (c *Client) record(err error) {
+	now := time.Now().UnixMilli()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.status.LastOK = err == nil
+	if err != nil {
+		c.status.PagesFailed++
+		c.status.LastError, c.status.LastErrorAt = err.Error(), now
+		return
+	}
+	c.status.PagesSent++
+	c.status.LastPageAt = now
 }
 
 func New(baseURL, systemUUID string) *Client {
@@ -47,7 +83,9 @@ func (c *Client) SendPage(addr, msg string, when time.Time, fn, baud int) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := c.post(ctx, addr, msg, when); err != nil {
+		err := c.post(ctx, addr, msg, when)
+		c.record(err)
+		if err != nil {
 			// Previously discarded. With one upstream a silent drop was merely
 			// invisible; fanning out to several, it makes "did this page reach
 			// prod?" unanswerable — which is exactly the question a cutover

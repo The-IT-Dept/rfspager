@@ -26,6 +26,25 @@ func StateDir() string {
 	return DefaultStateDir
 }
 
+// DefaultUIAddr is where the local web UI listens (148 for the band).
+const DefaultUIAddr = ":8148"
+
+// UIAddr returns the local UI listen address from RECEIVER_UI_ADDR, or ""
+// when it is set to "off" (or "0", "false", "disabled").
+func UIAddr() string {
+	v := strings.TrimSpace(os.Getenv("RECEIVER_UI_ADDR"))
+	switch strings.ToLower(v) {
+	case "":
+		return DefaultUIAddr
+	case "off", "0", "false", "disabled", "none":
+		return ""
+	}
+	if !strings.Contains(v, ":") {
+		v = ":" + v // a bare port
+	}
+	return v
+}
+
 // RuntimeBootstrap maps the tuning environment variables (RECEIVER_TUNER_GAIN
 // and friends) onto the shared RuntimeConfig, over the defaults. It is only
 // honoured when there is neither a server revision nor a cached one; see
