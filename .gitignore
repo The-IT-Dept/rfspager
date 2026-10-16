@@ -153,3 +153,9 @@ migrate-spike
 
 # Strix security-scan output
 strix_runs/
+
+# local one-off reporting scripts (store/Adapty credentials, buyer reports);
+# the rest of scripts/ is committed
+/scripts/rfspager-revenue-report.py
+/scripts/out/
+/scripts/__pycache__/

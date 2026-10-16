@@ -187,8 +187,8 @@ export default function CapcodesPage({ loaderData }: Route.ComponentProps) {
   const total = scope.kind === "unknown" ? unknown.length : scope.kind === "agency" ? activeAgency!.capcode_count : capcodes.length;
 
   return (
-    <div className="flex-1 bg-gray-50">
-      <div className="mx-auto max-w-[1400px] md:flex md:items-start">
+    <div className="flex-1 bg-white">
+      <div className="md:flex md:items-start">
         <aside className="sticky top-16 hidden h-[calc(100dvh-4rem)] w-72 shrink-0 flex-col border-r border-gray-200 bg-white md:flex lg:w-80">
           <div className="px-6 pb-5 pt-7">
             <h1 className={`${heading} text-2xl font-extrabold tracking-tight text-gray-900`}>Capcodes</h1>
@@ -202,7 +202,7 @@ export default function CapcodesPage({ loaderData }: Route.ComponentProps) {
           {filterPanel("min-h-0 flex-1 space-y-px overflow-y-auto px-3 pb-6 pt-1")}
         </aside>
 
-        <section className="min-w-0 flex-1 bg-white md:max-w-4xl md:border-r md:border-gray-200">
+        <section className="min-w-0 flex-1 bg-white">
           <div className="sticky top-16 z-20 flex h-14 items-center gap-2 border-b border-gray-200 bg-white/95 px-4 backdrop-blur md:hidden">
             <SearchField value={search} onChange={setSearch} onClear={() => setSearch("")} placeholder="Search capcodes" className="flex-1" />
             <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
