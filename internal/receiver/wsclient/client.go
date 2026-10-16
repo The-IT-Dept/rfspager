@@ -82,6 +82,13 @@ type Client struct {
 	// send buffer with stale health reports and crowd out pages.
 	connected atomic.Bool
 	rttMs     atomic.Int64
+
+	// For the local UI's Connections tab.
+	connectedSince atomic.Int64 // unix ms of the welcome, 0 while down
+	pagesSent      atomic.Int64 // pages queued on the socket
+	pagesDropped   atomic.Int64 // pages dropped because the queue was full
+	lastPageAt     atomic.Int64 // unix ms
+	lastErr        atomic.Pointer[linkError]
 	pingMu    sync.Mutex
 	pingID    string
 	pingAt    time.Time
@@ -111,9 +118,11 @@ func (c *Client) Run(ctx context.Context) error {
 	for {
 		err := c.runOnce(ctx)
 		c.connected.Store(false)
+		c.connectedSince.Store(0)
 		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
 			return nil
 		}
+		c.lastErr.Store(&linkError{msg: err.Error(), at: time.Now().UnixMilli()})
 		slog.Warn("ws connection lost", "err", err, "retry_in", backoff)
 		select {
 		case <-time.After(backoff):
@@ -204,6 +213,9 @@ func (c *Client) buildWSURL() (string, error) {
 	u.Path = strings.TrimRight(u.Path, "/") + "/api/receiver/ws"
 	return u.String(), nil
 }
+
+// Dongles lists the attached dongles as the hello frame reports them.
+func (c *Client) Dongles() []rxproto.DongleInfo { return c.dongleList() }
 
 func (c *Client) dongleList() []rxproto.DongleInfo {
 	enum := sdr.Enumerate()
@@ -314,6 +326,7 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 // publishes the welcome to Welcomed, in that order, off the read loop.
 func (c *Client) handleWelcome(w rxproto.Welcome) {
 	c.connected.Store(true)
+	c.connectedSince.CompareAndSwap(0, time.Now().UnixMilli())
 	if c.Primary && w.Config != nil && c.OnConfig != nil {
 		c.OnConfig(*w.Config)
 	}
@@ -395,7 +408,12 @@ func (c *Client) SendPageQ(addr, msg string, when time.Time, fn, baud int, q *rx
 		BitRate:  baud,
 		Quality:  q,
 	}
-	c.enqueue(rxproto.Frame{Type: rxproto.FramePage, ID: uuid.NewString(), Data: mustJSON(p)})
+	if c.enqueue(rxproto.Frame{Type: rxproto.FramePage, ID: uuid.NewString(), Data: mustJSON(p)}) {
+		c.pagesSent.Add(1)
+		c.lastPageAt.Store(time.Now().UnixMilli())
+	} else {
+		c.pagesDropped.Add(1)
+	}
 }
 
 // SendLog ships a single log line over the WS for persistence + live fan-out
@@ -454,6 +472,40 @@ func (c *Client) LinkStats() rxproto.LinkStats {
 	}
 }
 
+type linkError struct {
+	msg string
+	at  int64
+}
+
+// Status is the endpoint's state for the local UI. Times are unix ms, 0
+// when never.
+type Status struct {
+	Connected      bool
+	ConnectedSince int64
+	Link           rxproto.LinkStats
+	PagesSent      int64
+	PagesDropped   int64
+	LastPageAt     int64
+	LastError      string
+	LastErrorAt    int64
+}
+
+// Status reports the connection state and page counters.
+func (c *Client) Status() Status {
+	st := Status{
+		Connected:      c.connected.Load(),
+		ConnectedSince: c.connectedSince.Load(),
+		Link:           c.LinkStats(),
+		PagesSent:      c.pagesSent.Load(),
+		PagesDropped:   c.pagesDropped.Load(),
+		LastPageAt:     c.lastPageAt.Load(),
+	}
+	if e := c.lastErr.Load(); e != nil {
+		st.LastError, st.LastErrorAt = e.msg, e.at
+	}
+	return st
+}
+
 // Drain waits until every queued frame has been written or ctx expires.
 // Used before a deliberate exit so the last result frame gets out.
 func (c *Client) Drain(ctx context.Context) {
@@ -488,10 +540,12 @@ func (c *Client) Welcomed(ctx context.Context) (rxproto.Welcome, error) {
 
 // enqueue queues a frame and logs when the buffer is full. The warning is
 // shipped like any other log line, so the log path itself must never log.
-func (c *Client) enqueue(f rxproto.Frame) {
+func (c *Client) enqueue(f rxproto.Frame) bool {
 	if !c.offer(f) {
 		slog.Warn("ws send buffer full, dropping", "type", f.Type)
+		return false
 	}
+	return true
 }
 
 // offer queues a frame if there is room and reports whether it did. It

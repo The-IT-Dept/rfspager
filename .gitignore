@@ -159,3 +159,13 @@ strix_runs/
 /scripts/rfspager-revenue-report.py
 /scripts/out/
 /scripts/__pycache__/
+
+# Receiver local UI: Vite build output embedded into the receiver binary
+# (apps/receiver-ui `npm run build`). Only the placeholder is tracked so
+# go:embed has something to embed in a checkout that never built the UI.
+# (re-included first: the generic `dist/` rule above would hide it entirely)
+!internal/receiver/localui/dist/
+internal/receiver/localui/dist/*
+!internal/receiver/localui/dist/.gitkeep
+apps/receiver-ui/node_modules/
+.superpowers/

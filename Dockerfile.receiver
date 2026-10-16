@@ -7,6 +7,17 @@
 # Debian 12's librtlsdr-dev for headers/lib, then ship on the matching
 # Debian 12 runtime to keep glibc and librtlsdr ABI versions compatible.
 
+# ─── ui stage ───────────────────────────────────────────────────────────────
+# The receiver's local web UI (apps/receiver-ui), embedded into the binary
+# with go:embed. Plain static files, so it builds once on the build host's
+# own platform rather than under QEMU for every target.
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS ui
+WORKDIR /src/apps/receiver-ui
+COPY apps/receiver-ui/package.json apps/receiver-ui/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+COPY apps/receiver-ui/ ./
+RUN npm run build
+
 # ─── build stage ────────────────────────────────────────────────────────────
 FROM golang:1.27.2-bookworm AS build
 WORKDIR /src
@@ -25,6 +36,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 COPY . .
+COPY --from=ui /src/internal/receiver/localui/dist/ internal/receiver/localui/dist/
 
 ARG VERSION=dev
 ARG COMMIT=unknown

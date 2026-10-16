@@ -15,6 +15,7 @@ the receiver and what to do when operating one.
 | `/etc/rfspager/endpoints.json` | optional fan-out; the first `ws` endpoint is the primary |
 | `/var/lib/rfspager/config.json` | cached server config: `{"version", "config", "saved_at"}` |
 | `/var/lib/rfspager/update.json` | self-update marker: `{"command_id", "from", "to", "started_at", "boots"}` |
+| `/var/lib/rfspager/pages.jsonl`, `webhooks.json` | the local UI's page history and the host's webhooks, see `docs/receiver-local-ui.md` |
 
 The state dir is `/var/lib/rfspager` (override with `RECEIVER_STATE_DIR`; tests
 and dev checkouts use a temp dir). The receiver creates it (0750) on start and

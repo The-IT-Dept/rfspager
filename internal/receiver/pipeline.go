@@ -433,10 +433,27 @@ func pageQuality(q pocsag.Quality) *rxproto.PageQuality {
 	return out
 }
 
+// DecodedPage is one decode as the forwarder saw it, for local observers
+// (the receiver's own UI and the host's webhooks).
+type DecodedPage struct {
+	Channel  string
+	FreqHz   uint32
+	Time     time.Time
+	Address  string
+	Function int
+	Baud     int
+	Message  string // alpha, or numeric when alpha is empty
+	Posted   bool   // passed the content filter (or post_all) and went upstream
+	Quality  *rxproto.PageQuality
+}
+
 // Forwarder pumps pages from a Channel onto whatever upstream transport
 // the receiver was configured with.
 type Forwarder struct {
 	Sender PageSender
+	// Observe, when set, sees every decode (posted or filtered) before it
+	// is sent. It must not block: it runs on the channel's page loop.
+	Observe func(DecodedPage)
 	// postAll bypasses shouldPost. Every decoded page gets sent up
 	// (with the message we'd otherwise log). Used for pipeline tests.
 	postAll atomic.Bool
@@ -485,20 +502,24 @@ func (f *Forwarder) Run(ctx context.Context, ch *Channel) {
 				"uncorrectable", page.Quality.Uncorrectable,
 				"truncated", page.Quality.Truncated,
 			)
-			if !post {
-				continue
+			now := time.Now()
+			if post {
+				// In PostAll mode, fall back to numeric when alpha is empty so
+				// purely-numeric beacons (e.g. clock-tick 0180111) make it up
+				// the wire for end-to-end testing. (logMsg is exactly that.)
+				if qs, ok := f.Sender.(QualitySender); ok {
+					qs.SendPageQ(page.Address, logMsg, now, page.Function, page.BitRate, pageQuality(page.Quality))
+				} else {
+					f.Sender.SendPage(page.Address, logMsg, now, page.Function, page.BitRate)
+				}
 			}
-			// In PostAll mode, fall back to numeric when alpha is empty so
-			// purely-numeric beacons (e.g. clock-tick 0180111) make it up
-			// the wire for end-to-end testing.
-			sendMsg := page.Alpha
-			if sendMsg == "" {
-				sendMsg = page.Numeric
-			}
-			if qs, ok := f.Sender.(QualitySender); ok {
-				qs.SendPageQ(page.Address, sendMsg, time.Now(), page.Function, page.BitRate, pageQuality(page.Quality))
-			} else {
-				f.Sender.SendPage(page.Address, sendMsg, time.Now(), page.Function, page.BitRate)
+			// After the upstream send, so local observers never delay it.
+			if f.Observe != nil {
+				f.Observe(DecodedPage{
+					Channel: ch.Label, FreqHz: ch.FreqHz, Time: now,
+					Address: page.Address, Function: page.Function, Baud: page.BitRate,
+					Message: logMsg, Posted: post, Quality: pageQuality(page.Quality),
+				})
 			}
 		}
 	}

@@ -96,6 +96,31 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
 
   # ---------------------------------------------------------------------------
+  # Receiver local UI: typecheck + build (embedded into the receiver binary)
+  # ---------------------------------------------------------------------------
+  receiver-ui:
+    name: receiver-ui (vite)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/receiver-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/receiver-ui/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+  # ---------------------------------------------------------------------------
   # Mobile: install + typecheck only (full builds run on tag, see mobile-release.yml)
   # ---------------------------------------------------------------------------
   mobile:

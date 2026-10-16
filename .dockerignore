@@ -12,6 +12,9 @@
 
 # Heavy sibling projects — not needed for the server build.
 apps/
+# ...except the receiver's local UI, which Dockerfile.receiver builds and embeds.
+!apps/receiver-ui/
+apps/receiver-ui/node_modules/
 laravel-old/
 app-old/
 

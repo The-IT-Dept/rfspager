@@ -1,4 +1,4 @@
-.PHONY: receiver run-receiver
+.PHONY: receiver run-receiver receiver-ui
 
 # Build the RTL-SDR receiver agent. Requires librtlsdr installed (brew install librtlsdr).
 # We pull -I / -L from pkg-config so gortlsdr's cgo can find rtl-sdr.h.
@@ -13,7 +13,13 @@ GIT_DIRTY     := $(shell git diff --quiet 2>/dev/null || echo -dirty)
 RECEIVER_VERSION := $(GIT_SHA)$(GIT_DIRTY)
 RECEIVER_LDFLAGS := -X github.com/the-it-dept/rfspager/internal/receiver/buildinfo.InjectedVersion=$(RECEIVER_VERSION)
 
-receiver:
+# The receiver's local web UI, embedded into the binary from
+# internal/receiver/localui/dist. Without it the receiver still builds and
+# serves the API, with a "built without its web UI" page at /.
+receiver-ui:
+	cd apps/receiver-ui && npm ci && npm run build
+
+receiver: receiver-ui
 	CGO_CFLAGS="$(RECEIVER_CGO_CFLAGS)" \
 	CGO_LDFLAGS="$(RECEIVER_CGO_LDFLAGS)" \
 	go build -tags rtlsdr -ldflags "$(RECEIVER_LDFLAGS)" -o bin/receiver ./cmd/receiver
