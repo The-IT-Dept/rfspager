@@ -1,5 +1,29 @@
 # Changelog
 
+## [5.8.0](https://github.com/The-IT-Dept/rfspager/compare/v5.7.0...v5.8.0) (2026-10-16)
+
+
+### Features
+
+* **admin:** coverage map of receivers, paging transmitters and incidents heard ([#35](https://github.com/The-IT-Dept/rfspager/issues/35)) ([b6eb881](https://github.com/The-IT-Dept/rfspager/commit/b6eb881a6a988a4218d4f305c1625d8b9056bbc6))
+* **admin:** Give free time — Apple extension, Google deferral or gift, with history ([#48](https://github.com/The-IT-Dept/rfspager/issues/48)) ([6d8e4aa](https://github.com/The-IT-Dept/rfspager/commit/6d8e4aa7b6eb56b13eea053d60e0f0dd7d3a4475))
+* friendlier hosting terms, apply without hardware ([#39](https://github.com/The-IT-Dept/rfspager/issues/39)) ([af49dfa](https://github.com/The-IT-Dept/rfspager/commit/af49dfa7baa8521e37f4be895577ca2c797e4cff))
+* **iap:** Apple notification history and replay in apple-notify-test ([#44](https://github.com/The-IT-Dept/rfspager/issues/44)) ([511f07e](https://github.com/The-IT-Dept/rfspager/commit/511f07e05f25e0119b639c8db564b0c7e8699058))
+* **iap:** google-sub-check, a read-only comparison of Google subscriptions with the Play API ([#47](https://github.com/The-IT-Dept/rfspager/issues/47)) ([8ad2f27](https://github.com/The-IT-Dept/rfspager/commit/8ad2f2738c430bbf5891f7114ef52d496b71b9c9))
+* public coverage map, host applications on the web, free Pro for hosts ([#37](https://github.com/The-IT-Dept/rfspager/issues/37)) ([da1259c](https://github.com/The-IT-Dept/rfspager/commit/da1259c2f13f9d9024452e0974b3ba192b834535))
+* **server:** answer the retired Laravel GraphQL API with an update notice for the old app ([#40](https://github.com/The-IT-Dept/rfspager/issues/40)) ([573512a](https://github.com/The-IT-Dept/rfspager/commit/573512ad4c3ab73f670234549303e733e28b77c2))
+
+
+### Bug Fixes
+
+* **admin:** coverage last-heard probe uses the capcode index ([#36](https://github.com/The-IT-Dept/rfspager/issues/36)) ([18dd2e4](https://github.com/The-IT-Dept/rfspager/commit/18dd2e40f5d0c67da8a5cd6286b1b1a728b23820))
+* **apple-notify-test:** print the original transaction id and expiry in history lines ([#45](https://github.com/The-IT-Dept/rfspager/issues/45)) ([a475f7a](https://github.com/The-IT-Dept/rfspager/commit/a475f7a0b985e381a8e5d79ce0bf691149e67552))
+* **iap:** acknowledge Apple TEST notifications, add apple-notify-test ([#43](https://github.com/The-IT-Dept/rfspager/issues/43)) ([6264225](https://github.com/The-IT-Dept/rfspager/commit/62642258a32a3be84abc230af4370f8ce6abf017))
+* **receiver:** rx-compare.sh default one-hour window ([#34](https://github.com/The-IT-Dept/rfspager/issues/34)) ([999d08b](https://github.com/The-IT-Dept/rfspager/commit/999d08b7cc108cafce2e71930f06743d6f2434ac))
+* **release:** publish a linux-armv7 receiver binary ([#31](https://github.com/The-IT-Dept/rfspager/issues/31)) ([334bbf4](https://github.com/The-IT-Dept/rfspager/commit/334bbf40334d68811c841fee004b161a504d6c06))
+* **scripts:** deploy-server.sh builds for the target's architecture and waits longer for health ([#41](https://github.com/The-IT-Dept/rfspager/issues/41)) ([aa24763](https://github.com/The-IT-Dept/rfspager/commit/aa2476362dbde79dcad412b0fada5571a67a118a))
+* **web:** pager and capcodes pages fill the screen like map and coverage ([#49](https://github.com/The-IT-Dept/rfspager/issues/49)) ([8557cc6](https://github.com/The-IT-Dept/rfspager/commit/8557cc6cf758da66fe5a24eec39212bbc1d1774f))
+
 ## [5.7.0](https://github.com/The-IT-Dept/rfspager/compare/v5.6.1...v5.7.0) (2026-10-13)
 
 
