@@ -156,8 +156,8 @@ export default function Pager({ loaderData }: Route.ComponentProps) {
   const isEmpty = feed.messages.length === 0;
 
   return (
-    <div className="flex-1 bg-gray-50">
-      <div className="mx-auto max-w-[1400px] md:flex md:items-start">
+    <div className="flex-1 bg-white">
+      <div className="md:flex md:items-start">
         {/* Rail: title, search, agencies. Sticks under the site header and
             scrolls its own agency list, so the document scroll belongs to
             the feed alone. */}
@@ -180,8 +180,8 @@ export default function Pager({ loaderData }: Route.ComponentProps) {
           />
         </aside>
 
-        {/* The feed. A white column on the grey canvas; the document scrolls. */}
-        <section className="min-w-0 flex-1 bg-white md:max-w-4xl md:border-r md:border-gray-200">
+        {/* The feed fills the rest of the width, like /map and /coverage; the document scrolls. */}
+        <section className="min-w-0 flex-1 bg-white">
           {/* Phone toolbar: search plus the agency sheet. Sticky under the header. */}
           <div className="sticky top-16 z-20 flex h-14 items-center gap-2 border-b border-gray-200 bg-white/95 px-4 backdrop-blur md:hidden">
             <SearchField
