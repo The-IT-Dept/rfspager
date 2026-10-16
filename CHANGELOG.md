@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.9.0](https://github.com/The-IT-Dept/rfspager/compare/v5.8.0...v5.9.0) (2026-10-16)
+
+
+### Features
+
+* **receiver:** local web UI and webhooks for receiver hosts ([#50](https://github.com/The-IT-Dept/rfspager/issues/50)) ([28c5bfa](https://github.com/The-IT-Dept/rfspager/commit/28c5bfa79495f96d91dc01d821dfb8f96b2adba4))
+
 ## [5.8.0](https://github.com/The-IT-Dept/rfspager/compare/v5.7.0...v5.8.0) (2026-10-16)
 
 
