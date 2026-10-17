@@ -23,9 +23,18 @@ function isOnline(lastMessageAt: string | null): boolean {
   return moment().diff(moment(lastMessageAt), "minutes") <= ONLINE_THRESHOLD_MINUTES
 }
 
-function formatLastMessage(lastMessageAt: string | null): string {
-  if (!lastMessageAt) return "No messages yet"
-  return moment(lastMessageAt).fromNow()
+// Online receivers show when they last decoded a page; offline ones show when
+// they were last heard from (last_message_at is the later of the last page and
+// the last ping). Servers that don't send `online` only have last_message_at.
+function formatTimestamp(item: System, online: boolean, pending: boolean): string {
+  if (pending) return "Not set up yet"
+  if (item.online === undefined) {
+    return item.last_message_at ? moment(item.last_message_at).fromNow() : "No messages yet"
+  }
+  if (online) {
+    return item.last_page_at ? `Last page ${moment(item.last_page_at).fromNow()}` : "No pages yet"
+  }
+  return item.last_message_at ? `Last seen ${moment(item.last_message_at).fromNow()}` : "Never connected"
 }
 
 export const SystemsScreen: FC = function SystemsScreen() {
@@ -78,7 +87,7 @@ export const SystemsScreen: FC = function SystemsScreen() {
           </View>
           <View style={styles.rowRight}>
             <Text style={[styles.status, { color: statusColor }]}>{statusLabel}</Text>
-            <Text style={styles.timestamp}>{formatLastMessage(item.last_message_at)}</Text>
+            <Text style={styles.timestamp}>{formatTimestamp(item, online, pending)}</Text>
           </View>
           <AppIcon
             sf="chevron.right" ion="chevron-forward"

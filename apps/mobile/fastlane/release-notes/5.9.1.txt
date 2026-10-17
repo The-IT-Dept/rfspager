@@ -1,0 +1,1 @@
+Systems now show Online whenever a receiver is connected, not only after a recent page, along with when it last decoded a page or, if offline, when it was last heard from. Hosting a receiver is easier: the hosting terms are rewritten in plain language, you can apply even if you don't have the gear yet, and hosts get Pro free while their receiver is running.

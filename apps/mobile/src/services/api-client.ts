@@ -449,7 +449,7 @@ export interface System {
   suburb: string | null
   is_owner?: boolean
   is_pending?: boolean
-  // Receiver websocket is up and pinging. Missing from servers before 5.9.1.
+  // Receiver websocket is up and pinging. Older servers leave it out.
   online?: boolean
   // Later of the last decoded message and the last receiver ping.
   last_message_at: string | null
