@@ -223,6 +223,10 @@ func TestApplicationApprovedRepliesInExistingConversation(t *testing.T) {
 		c.body["private"] != false || c.body["sender_type"] != "agent" {
 		t.Fatalf("reply call = %+v", c)
 	}
+	// Libredesk rejects an email reply without recipients (HTTP 500 "`to` empty").
+	if to, _ := c.body["to"].([]any); len(to) != 1 || to[0] != "member@example.invalid" {
+		t.Fatalf("reply to = %#v, want the applicant", c.body["to"])
+	}
 	if msg, _ := c.body["message"].(string); !strings.Contains(msg, cmd+"</pre>") || !strings.Contains(msg, `"Budgewoi" is approved`) {
 		t.Fatalf("message = %q", msg)
 	}
