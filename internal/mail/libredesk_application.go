@@ -136,10 +136,13 @@ func (m *LibredeskApplicationMailer) replyOrStart(ctx context.Context, conversat
 	if conversationUUID == "" {
 		return m.startConversation(ctx, to, name, subject, body)
 	}
+	// Libredesk doesn't default an email reply's recipients to the contact:
+	// without "to" it fails with HTTP 500 "`to` empty".
 	if err := m.do(ctx, http.MethodPost, conversationPath(conversationUUID)+"/messages", map[string]any{
 		"message":     body,
 		"private":     false,
 		"sender_type": "agent",
+		"to":          []string{to},
 	}, nil); err != nil {
 		return "", fmt.Errorf("replying in Libredesk conversation: %w", err)
 	}
