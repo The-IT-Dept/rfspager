@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.9.1](https://github.com/The-IT-Dept/rfspager/compare/v5.9.0...v5.9.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **mobile:** systems list shows connected receivers as online ([#53](https://github.com/The-IT-Dept/rfspager/issues/53)) ([54bc10d](https://github.com/The-IT-Dept/rfspager/commit/54bc10db24967bd30205e33ec5bf3a8944d3addd))
+* **mobile:** systems list timestamp says what it measures ([#55](https://github.com/The-IT-Dept/rfspager/issues/55)) ([d146d9c](https://github.com/The-IT-Dept/rfspager/commit/d146d9c8ad25af2b2ee2fe4cc42ef5425b9e700f))
+
 ## [5.9.0](https://github.com/The-IT-Dept/rfspager/compare/v5.8.0...v5.9.0) (2026-10-16)
 
 
