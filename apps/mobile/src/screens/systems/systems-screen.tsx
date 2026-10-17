@@ -17,6 +17,7 @@ import { AppTheme, useAppTheme } from "../../theme"
 
 const ONLINE_THRESHOLD_MINUTES = 30
 
+// Fallback for servers that don't send `online`.
 function isOnline(lastMessageAt: string | null): boolean {
   if (!lastMessageAt) return false
   return moment().diff(moment(lastMessageAt), "minutes") <= ONLINE_THRESHOLD_MINUTES
@@ -37,7 +38,7 @@ export const SystemsScreen: FC = function SystemsScreen() {
 
   const renderItem = useCallback(
     ({ item, index }: { item: System; index: number }) => {
-      const online = isOnline(item.last_message_at)
+      const online = item.online ?? isOnline(item.last_message_at)
       const pending = !!item.is_pending
       const owner = !!item.is_owner
       const isLast = index === items.length - 1
