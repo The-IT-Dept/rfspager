@@ -557,6 +557,13 @@ func (h *Handlers) ListMyCapcodeSuggestions(w http.ResponseWriter, r *http.Reque
 // `is_owner` marker (true if the system belongs to the current user) and
 // `is_pending` (true while awaiting admin approval). Sorted: owned first,
 // then pending, then approved by name.
+//
+// `online` is the receiver's websocket state, same rule as GetSystem.
+// `last_message_at` is really "last heard": the later of the last decoded
+// message and the last receiver ping. App builds up to 5.9 colour the dot
+// green when last_message_at is under 30 minutes old and ignore `online`,
+// so a connected receiver on a quiet night only shows Online if the ping
+// counts. `last_page_at` keeps the plain last-message time.
 func (h *Handlers) ListSystems(w http.ResponseWriter, r *http.Request) {
 	user := GetUser(r.Context())
 
@@ -564,20 +571,27 @@ func (h *Handlers) ListSystems(w http.ResponseWriter, r *http.Request) {
 	// (system_id, created_at DESC) index for an O(log n) probe per system,
 	// instead of joining the full 2M+ row messages table and aggregating.
 	rows, err := h.db.QueryxContext(r.Context(),
-		`SELECT s.system_id AS uuid,
-		        s.name,
-		        s.suburb,
-		        (s.user_id = $1)        AS is_owner,
-		        (s.approved_at IS NULL) AS is_pending,
-		        (SELECT MAX(m.created_at)
-		           FROM messages m
-		          WHERE m.system_id = s.id
-		            AND m.deleted_at IS NULL) AS last_message_at
-		 FROM systems s
-		 WHERE s.deleted_at IS NULL
-		 ORDER BY (s.user_id = $1) DESC,
-		          (s.approved_at IS NULL) DESC,
-		          s.name`, user.ID)
+		`SELECT uuid, name, suburb, is_owner, is_pending,
+		        (last_ping_at IS NOT NULL AND last_ping_at > NOW() - INTERVAL '90 seconds') AS online,
+		        last_ping_at,
+		        last_page_at,
+		        GREATEST(last_page_at, last_ping_at) AS last_message_at
+		 FROM (
+		     SELECT s.system_id AS uuid,
+		            s.name,
+		            s.suburb,
+		            (s.user_id = $1)        AS is_owner,
+		            (s.approved_at IS NULL) AS is_pending,
+		            sc.last_ping_at,
+		            (SELECT MAX(m.created_at)
+		               FROM messages m
+		              WHERE m.system_id = s.id
+		                AND m.deleted_at IS NULL) AS last_page_at
+		     FROM systems s
+		     LEFT JOIN system_connections sc ON sc.system_id = s.id
+		     WHERE s.deleted_at IS NULL
+		 ) t
+		 ORDER BY is_owner DESC, is_pending DESC, name`, user.ID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
