@@ -11,6 +11,7 @@ export default [
     // Replaced by /coverage; redirects there so old links keep working.
     route("systems", "routes/public/systems.tsx"),
     route("capcodes", "routes/public/capcodes.tsx"),
+    route("docs", "routes/public/docs.tsx"),
     route("login", "routes/public/login.tsx"),
     route("forgot-password", "routes/public/forgot-password.tsx"),
     route("reset-password", "routes/public/reset-password.tsx"),
