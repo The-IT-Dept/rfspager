@@ -14,6 +14,7 @@ import { Stack, useRouter } from "expo-router"
 import { useAppTheme, AppTheme } from "../../theme"
 import { useCapcodesData } from "../profile-capcodes/use-capcodes-data"
 import { useUnknownCapcodes } from "../../hooks"
+import { suggestCapcodeHref } from "./suggest-href"
 
 type Tab = "agencies" | "unknown"
 
@@ -55,12 +56,13 @@ export const CapcodesScreen: FC = function CapcodesScreen() {
 
   const handleUnknownPress = useCallback(
     (u: (typeof unknowns)[0]) => {
-      const qs = new URLSearchParams({
-        address: u.address,
-        ...(u.capcode_id ? { capcode_id: String(u.capcode_id) } : {}),
-        ...(u.agency_name ? { agency: u.agency_name } : {}),
-      })
-      router.push(`/capcodes/suggest?${qs.toString()}`)
+      router.push(
+        suggestCapcodeHref({
+          capcode_id: u.capcode_id,
+          address: u.address,
+          agency: u.agency_name,
+        }),
+      )
     },
     [router],
   )

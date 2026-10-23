@@ -1,0 +1,1 @@
+You can now suggest corrections to capcodes that already have a name, not just unknown ones. Open a message and tap "Suggest a correction", or tap any capcode in Settings > Capcodes. An admin checks every suggestion before it goes live. Capcode lists also show each capcode's address again instead of "Unknown".

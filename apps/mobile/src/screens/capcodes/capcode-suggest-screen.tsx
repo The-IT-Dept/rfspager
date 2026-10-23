@@ -72,6 +72,15 @@ export const CapcodeSuggestScreen: FC = function CapcodeSuggestScreen() {
       Alert.alert("Nothing to submit", "Provide an alias, an agency, or a note.")
       return
     }
+    if (
+      isAmendment &&
+      alias.trim() === (params.alias ?? "").trim() &&
+      agency.trim() === (params.agency ?? "").trim() &&
+      !note.trim()
+    ) {
+      Alert.alert("Nothing changed", "Change the name or agency, or add a note for the reviewer.")
+      return
+    }
     setSubmitting(true)
     try {
       await mutation.mutateAsync({
