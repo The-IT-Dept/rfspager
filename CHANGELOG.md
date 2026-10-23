@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.10.0](https://github.com/The-IT-Dept/rfspager/compare/v5.9.1...v5.10.0) (2026-10-23)
+
+
+### Features
+
+* **mobile:** suggest corrections to known capcodes ([#60](https://github.com/The-IT-Dept/rfspager/issues/60)) ([7f4a27a](https://github.com/The-IT-Dept/rfspager/commit/7f4a27a9913d11ea5a46c8faeac1cbbbde91b0a5))
+* **web:** public API docs at /docs ([#59](https://github.com/The-IT-Dept/rfspager/issues/59)) ([59862e2](https://github.com/The-IT-Dept/rfspager/commit/59862e2d010e9928bc39268eaafad7e1e60b615d))
+
+
+### Bug Fixes
+
+* **mail:** address Libredesk thread replies to the host ([#57](https://github.com/The-IT-Dept/rfspager/issues/57)) ([f9b8dc9](https://github.com/The-IT-Dept/rfspager/commit/f9b8dc9d076cfadadc249ed221145d8b74a886ea))
+
 ## [5.9.1](https://github.com/The-IT-Dept/rfspager/compare/v5.9.0...v5.9.1) (2026-10-17)
 
 
