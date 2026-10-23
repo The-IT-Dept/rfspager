@@ -1,11 +1,13 @@
 import * as React from "react"
 import { View, StyleSheet, TouchableOpacity } from "react-native"
 import { Text, ActivityIndicator } from "react-native"
+import { useRouter } from "expo-router"
 
 import { useValidSubscription, useSubscriptionsStore } from "../../stores"
 import { AppTheme, useAppTheme } from "../../theme"
 import { SubscriptionModal } from "../subscription-modal"
 import { capcodeActionLabel } from "./capcode-action-label"
+import { suggestCapcodeHref } from "../../screens/capcodes/suggest-href"
 
 export interface CapcodeProps {
   capcode: any
@@ -17,6 +19,7 @@ export function Capcode(props: CapcodeProps) {
   const { capcode, isLastItem = false } = props
   const theme = useAppTheme()
   const styles = makeStyles(theme)
+  const router = useRouter()
   const [subscriptionModalVisible, setSubscriptionModalVisible] = React.useState(false)
 
   const validSubscription = useValidSubscription()
@@ -41,7 +44,6 @@ export function Capcode(props: CapcodeProps) {
   const isSubscribe = subscriptions.includes(capcodeId)
 
   const alias = capcode?.alias || "Unknown"
-  const agency = capcode?.agency || "Unknown"
 
   // Always show all capcodes - no filtering based on subscription status
 
@@ -96,10 +98,26 @@ export function Capcode(props: CapcodeProps) {
   return (
     <View>
       <View style={[styles.dataContainer, isLastItem && styles.lastCapcodeItem]}>
-        <View style={styles.detailsContainer}>
+        {/* Tapping the label opens the suggestion form to correct it. */}
+        <TouchableOpacity
+          style={styles.detailsContainer}
+          activeOpacity={0.6}
+          accessibilityRole="button"
+          accessibilityHint="Suggest a correction to this capcode's name"
+          onPress={() =>
+            router.push(
+              suggestCapcodeHref({
+                capcode_id: capcode.id,
+                address: capcode.address,
+                alias: capcode.alias,
+                agency: capcode.agency_name,
+              }),
+            )
+          }
+        >
           <Text style={styles.detailHeading}>{alias}</Text>
-          <Text style={styles.detailSubheading}>{agency}</Text>
-        </View>
+          <Text style={styles.detailSubheading}>{capcode.address}</Text>
+        </TouchableOpacity>
         {renderAction()}
       </View>
       <SubscriptionModal

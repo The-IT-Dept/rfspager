@@ -87,6 +87,11 @@ export const CapcodesDetailScreen: FC =
               </View>
             )}
           </View>
+          {agencyCapcodes.length > 0 && (
+            <Text style={styles.sectionFooter}>
+              Wrong or outdated name? Tap it to suggest a correction.
+            </Text>
+          )}
         </ScrollView>
 
         {/* Banner Ad - conditionally rendered at bottom */}
@@ -148,7 +153,13 @@ const makeStyles = (theme: AppTheme) =>
       marginHorizontal: 16,
       borderRadius: 0,
       overflow: "hidden",
-      marginBottom: 20,
+      marginBottom: 8,
+    },
+    sectionFooter: {
+      paddingHorizontal: 32,
+      paddingBottom: 20,
+      fontSize: 13,
+      color: theme.colors.textSecondary,
     },
     scrollView: {
       flex: 1,

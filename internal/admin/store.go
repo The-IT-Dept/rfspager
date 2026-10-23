@@ -719,10 +719,15 @@ func (s *Store) DeleteResponder(ctx context.Context, id int64) error {
 
 // --- Capcode Suggestions ---
 
+// ListCapcodeSuggestions includes the target capcode's current alias and
+// agency so the reviewer can compare an amendment with what it replaces.
 func (s *Store) ListCapcodeSuggestions(ctx context.Context, p ListParams) (*PaginatedResult, error) {
 	return s.paginatedQuery(ctx,
-		"capcode_suggestions cs LEFT JOIN users u ON u.id = cs.user_id",
-		`cs.*, u.name as user_name`,
+		`capcode_suggestions cs
+		 LEFT JOIN users u ON u.id = cs.user_id
+		 LEFT JOIN capcodes c ON c.id = cs.capcode_id
+		 LEFT JOIN agencies a ON a.id = c.agency_id`,
+		`cs.*, u.name as user_name, c.alias as current_alias, a.agency as current_agency`,
 		"1=1", nil, p, []string{"cs.address", "cs.agency", "cs.alias", "u.name"})
 }
 

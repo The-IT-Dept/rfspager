@@ -23,6 +23,7 @@ import { useAuthStore, useValidSubscription } from "../../stores"
 import { api } from "../../services/api-client"
 import { useQueryClient } from "@tanstack/react-query"
 import { BannerAd } from "../../utils/admob"
+import { suggestCapcodeHref } from "../capcodes/suggest-href"
 
 import { AppTheme, useAppTheme } from "../../theme"
 
@@ -129,6 +130,30 @@ export function PagerMessageScreen() {
               {moment.utc(messageAdapted.created_at).local().format("HH:mm")}
             </Text>
           </View>
+          {messageAdapted.address ? (
+            <TouchableOpacity
+              style={styles.suggestRow}
+              activeOpacity={0.6}
+              accessibilityRole="button"
+              onPress={() =>
+                router.push(
+                  suggestCapcodeHref({
+                    capcode_id: messageAdapted.capcode_id,
+                    address: messageAdapted.address,
+                    alias: messageAdapted.capcode_alias,
+                    agency: messageAdapted.agency_name,
+                  }),
+                )
+              }
+            >
+              <Text style={styles.suggestText}>
+                {messageAdapted.capcode_id
+                  ? "Name wrong or outdated? Suggest a correction"
+                  : "Know this capcode? Help identify it"}
+              </Text>
+              <FontAwesome5 name="chevron-right" size={12} color={theme.colors.textTertiary} />
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {/* Basic Information Section */}
@@ -347,6 +372,19 @@ const makeStyles = (theme: AppTheme) =>
     aliasName: {
       fontSize: 14,
       color: theme.colors.textTertiary,
+    },
+    suggestRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+    },
+    suggestText: {
+      fontSize: 14,
+      color: theme.colors.interactive,
+      flex: 1,
+      marginRight: 8,
     },
     timestamp: {
       fontSize: 13,
