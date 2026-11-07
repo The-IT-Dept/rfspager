@@ -45,6 +45,13 @@ function compBadge(s: Supporter) {
   if (s.host_comp_since && s.host_comp_until && new Date(s.host_comp_until) > new Date()) {
     return <Badge title={`Since ${fmtDay(s.host_comp_since)}, runs to ${fmtDay(s.host_comp_until)} unless renewed`}>Free Pro</Badge>;
   }
+  if (s.host_comp_until) {
+    return (
+      <Badge variant="outline" title={`Ended ${fmtDay(s.host_comp_until)}`}>
+        Paused
+      </Badge>
+    );
+  }
   return <Badge variant="outline">Not yet</Badge>;
 }
 
@@ -57,12 +64,16 @@ function storeText(s: Supporter): string {
 export function SupportersCard({ systemId }: { systemId: string }) {
   const [rows, setRows] = useState<Supporter[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
 
   const load = () =>
     api
       .get<{ data: Supporter[] }>(`/systems/${systemId}/supporters`)
-      .then((r) => setRows(r.data))
+      .then((r) => {
+        setRows(r.data);
+        setError(null);
+      })
       .catch((e) => setError(e.message));
 
   useEffect(() => {
@@ -72,7 +83,12 @@ export function SupportersCard({ systemId }: { systemId: string }) {
   const remove = async (s: Supporter) => {
     if (!confirm(`Remove ${s.name || s.email} as a supporter? Their free Pro ends now unless they host or support another receiver.`)) return;
     try {
-      await api.delete(`/systems/${systemId}/supporters/${s.user_id}`);
+      const r = await api.delete<{ comp_ended: boolean }>(`/systems/${systemId}/supporters/${s.user_id}`);
+      setNotice(
+        r.comp_ended
+          ? `Removed ${s.name || s.email}. Their free Pro has ended.`
+          : `Removed ${s.name || s.email}. They host or support another receiver, so their free Pro now depends on that.`,
+      );
       load();
     } catch (e: any) {
       setError(e.message);
@@ -83,7 +99,14 @@ export function SupportersCard({ systemId }: { systemId: string }) {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>Supporters</CardTitle>
-        <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            setNotice(null);
+            setOpen(true);
+          }}
+        >
           <UserPlus className="size-4" /> Add supporter
         </Button>
       </CardHeader>
@@ -91,9 +114,11 @@ export function SupportersCard({ systemId }: { systemId: string }) {
         <Separator className="mb-4" />
         <p className="mb-3 text-sm text-muted-foreground">
           People besides the owner who get free Pro while this receiver qualifies (online 90% of three days and
-          decoding). It starts within 15 minutes of them being added, and they get their own email about it.
+          decoding). While it qualifies, it starts within 15 minutes of someone being added, and they get their own
+          email about it.
         </p>
         {error && <p className="text-sm text-destructive">{error}</p>}
+        {notice && <p className="mb-3 text-sm text-muted-foreground">{notice}</p>}
         {!rows ? null : rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">No supporters.</p>
         ) : (
@@ -158,6 +183,10 @@ function AddSupporterDialog({
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setError(null);
+  }, [open]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

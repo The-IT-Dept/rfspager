@@ -417,6 +417,60 @@ func TestJobSupporters(t *testing.T) {
 	}
 }
 
+// A supporter's lapse is always about a receiver they support, in their own
+// thread or none: never the owner's thread, even with no thread of their
+// own; still a supporter lapse when the owner deleted their account (which
+// revokes the receiver's approval); and about an approved receiver over one
+// they support that was never approved.
+func TestJobSupporterLapse(t *testing.T) {
+	conn := hostCompTestDB(t)
+	f := fixture{t, conn}
+	ctx := context.Background()
+	t0 := time.Now().UTC().Truncate(time.Second)
+	job := hostcomp.NewJob(conn, nil, nil).WithClock(func() time.Time { return t0 })
+	ranOut := func(u int64) {
+		f.exec(`UPDATE users SET host_comp_since = $2, host_comp_until = $3 WHERE id = $1`, u, t0.Add(-20*24*time.Hour), t0.Add(-time.Minute))
+	}
+
+	owner := f.user("owner@example.invalid")
+	hilltop := f.system(owner, "Hilltop", true, false, "conv-owner")
+	noThread := f.user("nothread@example.invalid")
+	f.supporter(hilltop, noThread, "")
+	ranOut(noThread)
+
+	revokedOwner := f.user("revoked@example.invalid")
+	revoked := f.system(revokedOwner, "Revoked", true, false, "conv-revoked")
+	f.exec(`UPDATE systems SET approved_at = NULL WHERE id = $1`, revoked)
+	orphaned := f.user("orphaned@example.invalid")
+	f.supporter(revoked, orphaned, "conv-orphaned")
+	ranOut(orphaned)
+
+	pendingOwner := f.user("pendingowner@example.invalid")
+	pending := f.system(pendingOwner, "Pending", false, false, "")
+	two := f.user("two@example.invalid")
+	f.supporter(pending, two, "")
+	f.supporter(hilltop, two, "")
+	ranOut(two)
+
+	ts, err := job.Apply(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byUser := map[int64]hostcomp.Transition{}
+	for _, tr := range ts {
+		byUser[tr.UserID] = tr
+	}
+	if tr := byUser[noThread]; tr.Kind != hostcomp.Lapsed || !tr.Supporter || tr.SystemID != hilltop || tr.Conversation != "" {
+		t.Errorf("supporter with no thread = %+v, want a supporter lapse about Hilltop with no thread", tr)
+	}
+	if tr := byUser[orphaned]; tr.Kind != hostcomp.Lapsed || !tr.Supporter || tr.SystemID != revoked || tr.SystemName != "Revoked" || tr.Conversation != "conv-orphaned" {
+		t.Errorf("supporter of a revoked receiver = %+v, want a supporter lapse in their own thread", tr)
+	}
+	if tr := byUser[two]; tr.Kind != hostcomp.Lapsed || !tr.Supporter || tr.SystemID != hilltop || tr.Conversation != "" {
+		t.Errorf("supporter of an approved and a pending receiver = %+v, want the approved one", tr)
+	}
+}
+
 // A second runner while one holds the lock does nothing.
 func TestJobSkipsWhileAnotherRunHoldsTheLock(t *testing.T) {
 	conn := hostCompTestDB(t)

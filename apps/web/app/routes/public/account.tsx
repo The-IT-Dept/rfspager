@@ -367,8 +367,8 @@ function SubscriptionSection({ user }: { user: CustomerUser }) {
           <Row label="Status" value={user.subscription_valid ? "Active" : "Inactive"} />
           {hostComp && (
             <Row
-              label="Hosting"
-              value="Pro is free while your receiver stays online. It lapses a week after the receiver stops."
+              label="Free Pro"
+              value="Pro is free while a receiver you host or support stays online. It lapses a week after the receiver stops."
             />
           )}
           {user.subscription_valid && !hostOnly && (

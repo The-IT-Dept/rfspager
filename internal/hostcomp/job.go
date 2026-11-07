@@ -57,6 +57,41 @@ type Mailer interface {
 	SendHostCompSupporterLapsed(ctx context.Context, conversationUUID, to, name, systemName string) (string, error)
 }
 
+// lockKey is the transaction advisory lock the job holds while it runs, and
+// that anything changing who it comps takes first (Lock).
+const lockKey = `hashtextextended('host_comp', 0)`
+
+// Lock waits in tx for the job's lock, so a change to who it comps can't
+// interleave with a run: a run that read the old state could otherwise
+// extend a comp the change has just ended. A run that starts meanwhile
+// skips (it uses a try-lock) and the next one picks the change up.
+func Lock(ctx context.Context, tx sqlx.ExecerContext) error {
+	_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(`+lockKey+`)`)
+	return err
+}
+
+// EndIfNoReceiver ends userID's comp now, without a lapse transition (so no
+// lapse email about a receiver they no longer support), when they neither
+// own nor support an approved, non-deleted receiver. It reports whether it
+// ended one. Call it after Lock, in the transaction that removed a source.
+func EndIfNoReceiver(ctx context.Context, tx sqlx.ExecerContext, userID int64) (bool, error) {
+	res, err := tx.ExecContext(ctx, `
+		UPDATE users u
+		   SET host_comp_since = NULL,
+		       host_comp_until = LEAST(COALESCE(u.host_comp_until, NOW()), NOW())
+		 WHERE u.id = $1
+		   AND u.host_comp_since IS NOT NULL
+		   AND NOT EXISTS (SELECT 1 FROM systems s
+		                    WHERE s.user_id = u.id AND s.approved_at IS NOT NULL AND s.deleted_at IS NULL)
+		   AND NOT EXISTS (SELECT 1 FROM system_supporters sp JOIN systems s ON s.id = sp.system_id
+		                    WHERE sp.user_id = u.id AND s.approved_at IS NOT NULL AND s.deleted_at IS NULL)`, userID)
+	if err != nil {
+		return false, fmt.Errorf("ending host comp: %w", err)
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 const (
 	// applyTimeout bounds one evaluation + update transaction.
 	applyTimeout = 5 * time.Minute
@@ -148,7 +183,7 @@ func (j *Job) Apply(ctx context.Context) ([]Transition, error) {
 	// One runner across servers: a second one would only repeat the
 	// extension, but it could also announce the same transition twice.
 	var got bool
-	if err := tx.GetContext(ctx, &got, `SELECT pg_try_advisory_xact_lock(hashtextextended('host_comp', 0))`); err != nil {
+	if err := tx.GetContext(ctx, &got, `SELECT pg_try_advisory_xact_lock(`+lockKey+`)`); err != nil {
 		return nil, fmt.Errorf("locking host comp: %w", err)
 	}
 	if !got {
@@ -228,12 +263,15 @@ func (j *Job) Apply(ctx context.Context) ([]Transition, error) {
 				  FROM systems
 				 WHERE user_id = l.id AND approved_at IS NOT NULL
 				UNION ALL
+				-- Any receiver they support, approved or not: deleting the
+				-- owner's account revokes its approval, and the supporter
+				-- still gets their own lapse email, not a host's.
 				SELECT s.id, s.name, COALESCE(sp.conversation_uuid, '') AS conversation, true AS supporter, s.approved_at
 				  FROM system_supporters sp
 				  JOIN systems s ON s.id = sp.system_id
-				 WHERE sp.user_id = l.id AND s.approved_at IS NOT NULL AND s.user_id IS DISTINCT FROM l.id
+				 WHERE sp.user_id = l.id AND s.user_id IS DISTINCT FROM l.id
 			  ) c
-			 ORDER BY supporter, (conversation <> '') DESC, approved_at DESC, id DESC
+			 ORDER BY supporter, (conversation <> '') DESC, approved_at DESC NULLS LAST, id DESC
 			 LIMIT 1
 		  ) s ON true
 		 ORDER BY l.id`, now); err != nil {

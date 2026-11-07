@@ -10,9 +10,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jmoiron/sqlx"
+	"github.com/the-it-dept/rfspager/internal/hostcomp"
 )
 
 // Supporters on the admin system page: people besides the owner who get the
@@ -114,7 +116,7 @@ func (h *supporterHandlers) Add(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email is required"})
 		return
 	}
-	if note == "" || len(note) > maxNoteLength {
+	if note == "" || utf8.RuneCountInString(note) > maxNoteLength {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("a note of 1-%d characters is required", maxNoteLength)})
 		return
 	}
@@ -128,6 +130,11 @@ func (h *supporterHandlers) Add(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if !owner.Valid {
+		// The job only comps receivers with an owner.
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "this receiver has no owner, so it can't give anyone free Pro"})
 		return
 	}
 	// Some accounts' addresses differ only in case. The exact address wins,
@@ -153,7 +160,7 @@ func (h *supporterHandlers) Add(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := matches[0].ID
-	if owner.Valid && owner.Int64 == userID {
+	if owner.Int64 == userID {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "that's the receiver's owner, who already gets free Pro from it"})
 		return
 	}
@@ -209,7 +216,7 @@ func (h *supporterHandlers) Remove(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	// Wait out a running host comp job, so it can't re-extend the comp from
 	// the row being removed after this ends it.
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('host_comp', 0))`); err != nil {
+	if err := hostcomp.Lock(ctx, tx); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -222,21 +229,11 @@ func (h *supporterHandlers) Remove(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not a supporter of this receiver"})
 		return
 	}
-	res, err = tx.ExecContext(ctx, `
-		UPDATE users u
-		   SET host_comp_since = NULL,
-		       host_comp_until = LEAST(COALESCE(u.host_comp_until, NOW()), NOW())
-		 WHERE u.id = $1
-		   AND u.host_comp_since IS NOT NULL
-		   AND NOT EXISTS (SELECT 1 FROM systems s
-		                    WHERE s.user_id = u.id AND s.approved_at IS NOT NULL AND s.deleted_at IS NULL)
-		   AND NOT EXISTS (SELECT 1 FROM system_supporters sp JOIN systems s ON s.id = sp.system_id
-		                    WHERE sp.user_id = u.id AND s.approved_at IS NOT NULL AND s.deleted_at IS NULL)`, userID)
+	ended, err := hostcomp.EndIfNoReceiver(ctx, tx, userID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	ended, _ := res.RowsAffected()
 	if err := tx.Commit(); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -245,6 +242,6 @@ func (h *supporterHandlers) Remove(w http.ResponseWriter, r *http.Request) {
 	if admin := GetAdminUser(ctx); admin != nil {
 		adminEmail = admin.Email
 	}
-	slog.Info("receiver supporter removed", "system_id", systemID, "user_id", userID, "comp_ended", ended > 0, "admin", adminEmail)
-	writeJSON(w, http.StatusOK, map[string]any{"status": "removed", "comp_ended": ended > 0})
+	slog.Info("receiver supporter removed", "system_id", systemID, "user_id", userID, "comp_ended", ended, "admin", adminEmail)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "removed", "comp_ended": ended})
 }

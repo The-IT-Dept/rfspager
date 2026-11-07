@@ -237,7 +237,9 @@ stays that way. Agreed policy (2026-10-14):
   store and host columns (`u.*` already includes them); system list/detail
   add `owner_host_comp_until`; billing adds `active_host_comp`. Dashboard
   paid/free counts, billing active_* counts and MRR stay on the store slot
-  (they are revenue numbers). The host columns are not admin-writable.
+  (they are revenue numbers). The host columns are not admin-editable. The
+  only admin path that writes them is removing a receiver's supporter, which
+  ends a comp through `hostcomp.EndIfNoReceiver` (see Supporters below).
 - Email copy also mentions paying "by card on our website" (Stripe) next to
   the App Store and Google Play.
 
@@ -248,9 +250,11 @@ paid for half the gear. They are its **supporters**, listed in
 `system_supporters` (migration 039) and managed from the *Supporters* card on
 the admin system page (`GET/POST /api/v1/admin/systems/{id}/supporters`,
 `DELETE …/supporters/{userId}`, superadmin only). Adding takes an account
-email and a note. The exact address wins over accounts whose address differs
-only in case, as does the only match; otherwise the add is refused as
-ambiguous. The owner can't be added.
+email and a note (up to 1000 characters). The exact address wins over
+accounts whose address differs only in case, as does the only match;
+otherwise the add is refused as ambiguous. The owner can't be added, and
+neither can anyone to a receiver with no owner, since the job only measures
+receivers that have one.
 
 - **Same rule as the owner.** The job measures the receiver once and treats
   each supporter like the owner for it: same 90%/72 h + decoding test, same
@@ -261,6 +265,11 @@ ambiguous. The owner can't be added.
   and it holds the install command and API key. The first email starts a new
   conversation, and its uuid is stored in
   `system_supporters.conversation_uuid`.
+- **Lapse is always a supporter lapse.** The email is about a receiver they
+  support, in their own thread or a new one, even if it is no longer
+  approved. Deleting the owner's account revokes approval, and the supporter
+  should not get a host's "check your Pi" email. An approved receiver is
+  preferred over one that never was.
 - **Copy:** start thanks them for supporting the receiver; Pro is on them
   too while it stays online, and store payers can cancel and keep it. Lapse:
   the receiver hasn't been online enough, so free Pro has paused and comes
@@ -268,5 +277,6 @@ ambiguous. The owner can't be added.
   push is the owner's (it names the receiver either way).
 - **Removing** someone ends their comp at once and without a lapse email,
   unless they still own or support an approved receiver. In that case the job
-  keeps deciding it. Removal takes the job's advisory lock, so a running job
-  can't re-extend the comp from the row being deleted.
+  keeps deciding it. Removal takes the job's advisory lock (`hostcomp.Lock`),
+  so a running job can't re-extend the comp from the row being deleted. The
+  row is deleted outright; only a log line records the removal.

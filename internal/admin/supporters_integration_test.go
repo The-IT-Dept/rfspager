@@ -57,6 +57,13 @@ func listSupporters(t *testing.T, h *supporterHandlers, systemID int64) []Suppor
 	return out.Data
 }
 
+// gone2 adds another approved receiver owned by owner.
+func gone2(t *testing.T, conn *sqlx.DB, owner int64) int64 {
+	t.Helper()
+	return insertID(t, conn, `INSERT INTO systems (system_id, user_id, name, approved_at, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, 'Second', NOW() - INTERVAL '10 days', NOW(), NOW()) RETURNING id`, owner)
+}
+
 type hostComp struct {
 	Since *time.Time `db:"host_comp_since"`
 	Until *time.Time `db:"host_comp_until"`
@@ -88,6 +95,8 @@ func TestSystemSupporters(t *testing.T) {
 	owner := user("Alex", "alex@example.invalid")
 	hilltop := system(owner, "Hilltop Brigade", false)
 	gone := system(owner, "Old", true)
+	ownerless := insertID(t, conn, `INSERT INTO systems (system_id, user_id, name, approved_at, created_at, updated_at)
+		VALUES (gen_random_uuid(), NULL, 'Ownerless', NOW(), NOW(), NOW()) RETURNING id`)
 	sam := user("Sam", "sam@example.invalid")
 	// Same address in another case: the exact address wins.
 	user("Sam (old)", "SAM@example.invalid")
@@ -105,6 +114,10 @@ func TestSystemSupporters(t *testing.T) {
 		"the owner":      {hilltop, map[string]any{"email": "alex@example.invalid", "note": "x"}, http.StatusConflict},
 		"deleted system": {gone, map[string]any{"email": "sam@example.invalid", "note": "x"}, http.StatusNotFound},
 		"no such system": {999999, map[string]any{"email": "sam@example.invalid", "note": "x"}, http.StatusNotFound},
+		// The job only comps receivers with an owner, so this would do nothing.
+		"no owner": {ownerless, map[string]any{"email": "sam@example.invalid", "note": "x"}, http.StatusConflict},
+		// The limit is characters, as the form counts them, not bytes.
+		"1001-character note": {hilltop, map[string]any{"email": "sam@example.invalid", "note": strings.Repeat("é", 1001)}, http.StatusBadRequest},
 	} {
 		if code, out := supporterRequest(t, h.Add, admin, http.MethodPost, tc.system, 0, tc.body); code != tc.want {
 			t.Errorf("%s: %d %v, want %d", name, code, out, tc.want)
@@ -112,6 +125,12 @@ func TestSystemSupporters(t *testing.T) {
 	}
 	if got := listSupporters(t, h, hilltop); len(got) != 0 {
 		t.Fatalf("rejected adds left rows: %+v", got)
+	}
+
+	// A 1000-character note fits however many bytes it takes.
+	jules := user("Jules", "jules@example.invalid")
+	if code, out := supporterRequest(t, h.Add, admin, http.MethodPost, gone2(t, conn, owner), 0, map[string]any{"email": "jules@example.invalid", "note": strings.Repeat("é", 1000)}); code != http.StatusCreated {
+		t.Fatalf("1000-character note: %d %v", code, out)
 	}
 
 	// Add, case-insensitively, and the exact address is the account added.
@@ -167,6 +186,20 @@ func TestSystemSupporters(t *testing.T) {
 	}
 	if c := hostCompOf(t, conn, host); c.Since == nil || c.Until == nil || !c.Until.After(time.Now()) {
 		t.Fatalf("host's own comp was ended: %+v", c)
+	}
+
+	// Jules still supports another approved receiver: removing them from
+	// Hilltop leaves the comp to the job.
+	if code, out := supporterRequest(t, h.Add, admin, http.MethodPost, hilltop, 0, map[string]any{"email": "jules@example.invalid", "note": "x"}); code != http.StatusCreated {
+		t.Fatalf("add jules: %d %v", code, out)
+	}
+	mustExec(t, conn, `UPDATE users SET host_comp_since = NOW() - INTERVAL '1 day', host_comp_until = NOW() + INTERVAL '6 days' WHERE id = $1`, jules)
+	code, out = supporterRequest(t, h.Remove, admin, http.MethodDelete, hilltop, jules, nil)
+	if code != http.StatusOK || out["comp_ended"] != false {
+		t.Fatalf("remove jules: %d %v", code, out)
+	}
+	if c := hostCompOf(t, conn, jules); c.Since == nil || !c.Until.After(time.Now()) {
+		t.Fatalf("comp from the other receiver was ended: %+v", c)
 	}
 }
 
