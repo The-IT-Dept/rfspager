@@ -207,6 +207,14 @@ func (n *Notifier) NotifyHostCompStarted(ctx context.Context, userID int64, syst
 	n.pushToUser(ctx, userID, title, body, "host comp started")
 }
 
+// NotifyHostCompSupporterStarted tells one of a receiver's supporters they
+// have Pro free while it stays online. Best-effort. (A supporter's lapse
+// push is NotifyHostCompLapsed: it names the receiver either way.)
+func (n *Notifier) NotifyHostCompSupporterStarted(ctx context.Context, userID int64, systemName string) {
+	title, body := HostCompSupporterStartedPush(systemName)
+	n.pushToUser(ctx, userID, title, body, "host comp supporter started")
+}
+
 // NotifyHostCompLapsed tells a receiver host their free Pro has paused
 // because the receiver has not been online enough. Best-effort.
 func (n *Notifier) NotifyHostCompLapsed(ctx context.Context, userID int64, systemName string) {
@@ -217,6 +225,15 @@ func (n *Notifier) NotifyHostCompLapsed(ctx context.Context, userID int64, syste
 // HostCompStartedPush is the start push copy.
 func HostCompStartedPush(systemName string) (title, body string) {
 	return "Pro is on us", fmt.Sprintf("Thanks for hosting %s. You've got RFSPager Pro free while it stays online.", receiverLabel(systemName))
+}
+
+// HostCompSupporterStartedPush is the start push copy for a supporter.
+func HostCompSupporterStartedPush(systemName string) (title, body string) {
+	label := "the receiver"
+	if systemName != "" {
+		label = `"` + systemName + `"`
+	}
+	return "Pro is on us", fmt.Sprintf("Thanks for supporting %s. You've got RFSPager Pro free while it stays online.", label)
 }
 
 // HostCompLapsedPush is the lapse push copy.

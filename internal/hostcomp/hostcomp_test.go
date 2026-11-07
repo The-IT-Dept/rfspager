@@ -147,6 +147,31 @@ func TestQualifyingReceivers(t *testing.T) {
 	}
 }
 
+// A receiver's supporters get the comp too. Someone who owns a qualifying
+// receiver and supports another is emailed about their own, even when the
+// one they support has a thread and was approved more recently.
+func TestQualifyingReceiversWithSupporters(t *testing.T) {
+	approved := testNow.Add(-30 * 24 * time.Hour)
+	mk := func(systemID, userID int64, supporter bool, conversation string, approvedAt time.Time) *receiver {
+		r := measured(10*24*time.Hour, 1, true)
+		r.SystemID, r.UserID, r.Supporter, r.Conversation, r.ApprovedAt = systemID, userID, supporter, conversation, approvedAt
+		return r
+	}
+	got := qualifyingReceivers([]*receiver{
+		// user 5 owns 50 and supports 51
+		mk(51, 5, true, "conv-supporter", approved.Add(time.Hour)),
+		mk(50, 5, false, "", approved),
+		// user 6 only supports 60
+		mk(60, 6, true, "", approved),
+	})
+	if r := got[5]; r == nil || r.SystemID != 50 || r.Supporter {
+		t.Errorf("user 5: receiver %+v, want their own system 50", r)
+	}
+	if r := got[6]; r == nil || r.SystemID != 60 || !r.Supporter {
+		t.Errorf("user 6: receiver %+v, want system 60 as a supporter", r)
+	}
+}
+
 func TestAccessSQL(t *testing.T) {
 	if got := Access("u"); got != "(COALESCE(u.subscription_valid, false) OR COALESCE(u.host_comp_until > NOW(), false))" {
 		t.Fatalf("Access(u) = %s", got)

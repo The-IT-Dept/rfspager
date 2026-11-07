@@ -31,6 +31,7 @@ import { LogPanel } from "~/components/receiver/log-panel";
 import { ToneBadge, configStatusTone } from "~/components/receiver/status-badge";
 import { UpdateTab } from "~/components/receiver/update-tab";
 import { HardwareBadge } from "~/components/receiver/hardware-badge";
+import { SupportersCard } from "~/components/supporters";
 
 interface SystemDetail {
   id: number;
@@ -357,6 +358,8 @@ export default function SystemDetailPage() {
               <Field label="Ingress API Key"><CopyValue value={system.api_key} /></Field>
             </CardContent>
           </Card>
+
+          <SupportersCard systemId={id} />
 
           <Card>
             <CardHeader><CardTitle>Install on a Pi</CardTitle></CardHeader>

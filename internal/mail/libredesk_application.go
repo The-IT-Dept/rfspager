@@ -14,10 +14,11 @@ const (
 	// names are silently ignored there rather than created.
 	ReceiverApplicationTag = "receiver-application"
 
-	applicationReceivedSubject = "Thanks for offering to host an RFSPager receiver"
-	applicationApprovedSubject = "Your RFSPager receiver is approved"
-	hostCompStartedSubject     = "Thanks for hosting: RFSPager Pro is on us"
-	hostCompLapsedSubject      = "Your free RFSPager Pro has paused"
+	applicationReceivedSubject      = "Thanks for offering to host an RFSPager receiver"
+	applicationApprovedSubject      = "Your RFSPager receiver is approved"
+	hostCompStartedSubject          = "Thanks for hosting: RFSPager Pro is on us"
+	hostCompSupporterStartedSubject = "Thanks for your support: RFSPager Pro is on us"
+	hostCompLapsedSubject           = "Your free RFSPager Pro has paused"
 
 	hostURL     = "https://rfspager.app/host"
 	coverageURL = "https://rfspager.app/coverage"
@@ -127,6 +128,34 @@ func (m *LibredeskApplicationMailer) SendHostCompLapsed(ctx context.Context, con
 		return "", err
 	}
 	return m.replyOrStart(ctx, conversationUUID, to, name, hostCompLapsedSubject, hostCompLapsedHTML(name, systemName))
+}
+
+// SendHostCompSupporterStarted tells one of a receiver's supporters (someone
+// other than its owner who gets the comp with it) that they have Pro free
+// while it stays online. conversationUUID is the supporter's own thread,
+// never the owner's application thread; same threading otherwise.
+func (m *LibredeskApplicationMailer) SendHostCompSupporterStarted(ctx context.Context, conversationUUID, to, name, systemName string) (string, error) {
+	if m == nil {
+		return "", errors.New("application mailer is not configured")
+	}
+	to, err := safeEmailAddress(to)
+	if err != nil {
+		return "", err
+	}
+	return m.replyOrStart(ctx, conversationUUID, to, name, hostCompSupporterStartedSubject, hostCompSupporterStartedHTML(name, systemName))
+}
+
+// SendHostCompSupporterLapsed tells a supporter their free Pro has paused
+// because the receiver hasn't been online enough.
+func (m *LibredeskApplicationMailer) SendHostCompSupporterLapsed(ctx context.Context, conversationUUID, to, name, systemName string) (string, error) {
+	if m == nil {
+		return "", errors.New("application mailer is not configured")
+	}
+	to, err := safeEmailAddress(to)
+	if err != nil {
+		return "", err
+	}
+	return m.replyOrStart(ctx, conversationUUID, to, name, hostCompLapsedSubject, hostCompSupporterLapsedHTML(name, systemName))
 }
 
 // replyOrStart replies in conversationUUID and returns it, or, when it is
@@ -246,6 +275,35 @@ func hostCompLapsedHTML(name, systemName string) string {
 		`<p>` + upperFirst(receiverName(systemName)) + ` hasn't been online enough lately, so your free RFSPager Pro has paused. To keep it, a receiver needs to be online about 90% of the time over three days.</p>` +
 		`<p>It comes back automatically once the receiver has been steadily online for about three days, so there's nothing else to do once it's back up. It's worth checking that the Raspberry Pi has power and internet and the RTL-SDR is plugged in. You can see its status at <a href="` + hostURL + `">rfspager.app/host</a>.</p>` +
 		`<p>If you need a hand, just reply to this email and we'll help.</p>` +
+		`<p>Thanks,<br>The RFSPager team</p>`
+}
+
+// theReceiver is `the receiver "Name"`, or `the receiver` without a name.
+func theReceiver(systemName string) string {
+	if systemName = strings.TrimSpace(systemName); systemName != "" {
+		return `the receiver "` + templateSafe(systemName) + `"`
+	}
+	return "the receiver"
+}
+
+// hostCompSupporterStartedHTML is the email when free Pro starts for a
+// supporter. They didn't set the receiver up, so it doesn't send them to
+// the host page or the Pi.
+func hostCompSupporterStartedHTML(name, systemName string) string {
+	return greeting(name) +
+		`<p>Thanks for supporting ` + theReceiver(systemName) + `. It's online and picking up pages, so RFSPager Pro is on us for you too, for as long as it stays that way. It's already switched on for your account; there's nothing you need to do.</p>` +
+		`<p>If you already pay for Pro through the App Store, Google Play or by card on our website, you can cancel that subscription and you'll keep Pro while the receiver is running. We can't cancel it for you: do it in your App Store or Google Play subscription settings, or from your account at rfspager.app.</p>` +
+		`<p>If the receiver goes offline for a while, free Pro pauses about a week later, and comes back by itself once it's steadily online again.</p>` +
+		`<p>If you have any questions, just reply to this email.</p>` +
+		`<p>Thanks for helping us cover more of NSW,<br>The RFSPager team</p>`
+}
+
+// hostCompSupporterLapsedHTML is the email when a supporter's free Pro
+// pauses.
+func hostCompSupporterLapsedHTML(name, systemName string) string {
+	return greeting(name) +
+		`<p>` + upperFirst(theReceiver(systemName)) + ` hasn't been online enough lately, so your free RFSPager Pro has paused. It comes back automatically once the receiver has been steadily online for about three days, so there's nothing you need to do.</p>` +
+		`<p>If you have any questions, just reply to this email.</p>` +
 		`<p>Thanks,<br>The RFSPager team</p>`
 }
 

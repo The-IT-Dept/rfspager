@@ -73,6 +73,14 @@ path once both of these are done.
   because the store still charges on the original date. Store grants then
   arrive as `RENEWAL_EXTENDED` / `SUBSCRIPTION_DEFERRED` webhooks, which move
   the expiry. Every grant, failed ones included, is in `account_extensions`.
+- **Supporters**: the admin system page has a *Supporters* card (superadmin).
+  It lists people besides the owner who get free Pro while that receiver
+  qualifies, on the same host comp rules. Add one by account email with a
+  note; the host comp job starts their comp within 15 minutes and emails them
+  in a thread of their own. If they pay through a store, they can cancel it
+  and keep Pro while the receiver runs. Removing someone ends their comp
+  straight away unless they own or support another receiver. Details are in
+  `docs/plans/2026-10-14-public-coverage-and-hosting.md` (Supporters).
 - **Google**: `scripts/google-rtdn-subscription.sh <topic>` adds a Pub/Sub push
   subscription on the RTDN topic named in Play Console, authenticated with an
   OIDC token the server checks (`GOOGLE_PUBSUB_AUDIENCE`,
