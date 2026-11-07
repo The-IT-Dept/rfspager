@@ -1,6 +1,8 @@
 // Package hostcomp gives free Pro to people hosting a receiver that is online
-// and decoding (the "host comp"). Design and policy in
-// docs/plans/2026-10-14-public-coverage-and-hosting.md, section 4.
+// and decoding (the "host comp"), and to the receiver's supporters
+// (system_supporters: others it comps, e.g. whoever paid for the gear).
+// Design and policy in docs/plans/2026-10-14-public-coverage-and-hosting.md,
+// section 4.
 //
 // The comp lives in users.host_comp_until / host_comp_since, apart from the
 // store entitlement (subscription_valid, _expiry, _product_id, _platform).
@@ -116,6 +118,9 @@ type receiver struct {
 	Conversation string     `db:"conversation"`
 	ApprovedAt   time.Time  `db:"approved_at"`
 	FirstStatsAt *time.Time `db:"first_stats_at"`
+	// Supporter: UserID is one of the receiver's supporters, not its owner,
+	// and Conversation is that supporter's own thread.
+	Supporter bool `db:"-"`
 
 	window    window
 	connected int64
@@ -129,8 +134,9 @@ func (r *receiver) qualifies() bool {
 }
 
 // qualifyingReceivers picks, for each user with at least one qualifying
-// receiver, the receiver their start email is about: one that already has a
-// support conversation if any, else the most recently approved.
+// receiver, the receiver their start email is about: their own over one they
+// support, then one that already has a support conversation, else the most
+// recently approved.
 func qualifyingReceivers(receivers []*receiver) map[int64]*receiver {
 	out := map[int64]*receiver{}
 	for _, r := range receivers {
@@ -145,6 +151,9 @@ func qualifyingReceivers(receivers []*receiver) map[int64]*receiver {
 }
 
 func better(a, b *receiver) bool {
+	if a.Supporter != b.Supporter {
+		return !a.Supporter
+	}
 	if (a.Conversation != "") != (b.Conversation != "") {
 		return a.Conversation != ""
 	}

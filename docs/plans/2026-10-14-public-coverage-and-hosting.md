@@ -240,3 +240,33 @@ stays that way. Agreed policy (2026-10-14):
   (they are revenue numbers). The host columns are not admin-writable.
 - Email copy also mentions paying "by card on our website" (Stripe) next to
   the App Store and Google Play.
+
+### Supporters (added 2026-11-07)
+
+A receiver can also comp people besides its owner, e.g. a brigade member who
+paid for half the gear. They are its **supporters**, listed in
+`system_supporters` (migration 039) and managed from the *Supporters* card on
+the admin system page (`GET/POST /api/v1/admin/systems/{id}/supporters`,
+`DELETE …/supporters/{userId}`, superadmin only). Adding takes an account
+email and a note. The exact address wins over accounts whose address differs
+only in case, as does the only match; otherwise the add is refused as
+ambiguous. The owner can't be added.
+
+- **Same rule as the owner.** The job measures the receiver once and treats
+  each supporter like the owner for it: same 90%/72 h + decoding test, same
+  7-day grace, same start/lapse transitions. Someone who owns a qualifying
+  receiver and supports another is emailed about their own.
+- **Their own thread.** A supporter's emails never go into the receiver's
+  `support_conversation_uuid` thread. That thread is the owner's application,
+  and it holds the install command and API key. The first email starts a new
+  conversation, and its uuid is stored in
+  `system_supporters.conversation_uuid`.
+- **Copy:** start thanks them for supporting the receiver; Pro is on them
+  too while it stays online, and store payers can cancel and keep it. Lapse:
+  the receiver hasn't been online enough, so free Pro has paused and comes
+  back by itself. Neither sends them to the host page or the Pi. The lapse
+  push is the owner's (it names the receiver either way).
+- **Removing** someone ends their comp at once and without a lapse email,
+  unless they still own or support an approved receiver. In that case the job
+  keeps deciding it. Removal takes the job's advisory lock, so a running job
+  can't re-extend the comp from the row being deleted.

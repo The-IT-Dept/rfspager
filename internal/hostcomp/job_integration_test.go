@@ -104,6 +104,16 @@ func (f fixture) page(systemID int64, at time.Time) {
 	f.exec(`INSERT INTO page_receptions (system_id, heard_at, address) VALUES ($1, $2, '1234567')`, systemID, at)
 }
 
+// supporter lists userID as a supporter of systemID, with their own comp
+// email thread when conversation is set.
+func (f fixture) supporter(systemID, userID int64, conversation string) {
+	var conv any
+	if conversation != "" {
+		conv = conversation
+	}
+	f.exec(`INSERT INTO system_supporters (system_id, user_id, note, conversation_uuid) VALUES ($1, $2, 'test', $3)`, systemID, userID, conv)
+}
+
 type comp struct {
 	Until *time.Time `db:"host_comp_until"`
 	Since *time.Time `db:"host_comp_since"`
@@ -308,6 +318,105 @@ func TestJobLifecycle(t *testing.T) {
 	}
 }
 
+// A receiver's supporters get the comp while it qualifies, start and lapse
+// with it, and are emailed in their own thread rather than the owner's.
+func TestJobSupporters(t *testing.T) {
+	conn := hostCompTestDB(t)
+	f := fixture{t, conn}
+	ctx := context.Background()
+	t0 := time.Now().UTC().Truncate(time.Second)
+	clock := t0
+	job := hostcomp.NewJob(conn, nil, nil).WithClock(func() time.Time { return clock })
+	since := t0.Add(-5 * 24 * time.Hour)
+	full := func(sys int64) { f.stats(sys, since, t0); f.page(sys, t0.Add(-time.Hour)) }
+
+	owner := f.user("owner@example.invalid")
+	hilltop := f.system(owner, "Hilltop", true, false, "conv-owner")
+	full(hilltop)
+	// The owner listed as their own supporter changes nothing.
+	f.supporter(hilltop, owner, "")
+	funder := f.user("funder@example.invalid")
+	f.supporter(hilltop, funder, "")
+
+	// Supporting a receiver that doesn't qualify, or isn't approved, gets nothing.
+	quietOwner := f.user("quiet@example.invalid")
+	quiet := f.system(quietOwner, "Quiet", true, false, "")
+	f.stats(quiet, since, t0) // online, never decoded a page
+	quietFan := f.user("quietfan@example.invalid")
+	f.supporter(quiet, quietFan, "")
+	pendingOwner := f.user("pending@example.invalid")
+	pending := f.system(pendingOwner, "Pending", false, false, "")
+	full(pending)
+	pendingFan := f.user("pendingfan@example.invalid")
+	f.supporter(pending, pendingFan, "")
+
+	// Owns a qualifying receiver and supports Hilltop: emailed as an owner.
+	both := f.user("both@example.invalid")
+	own := f.system(both, "Own", true, false, "")
+	full(own)
+	f.supporter(hilltop, both, "")
+
+	ts, err := job.Apply(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byUser := map[int64]hostcomp.Transition{}
+	for _, tr := range ts {
+		byUser[tr.UserID] = tr
+	}
+	if len(ts) != 3 || len(byUser) != 3 {
+		t.Fatalf("start transitions = %+v", ts)
+	}
+	if tr := byUser[owner]; tr.Kind != hostcomp.Started || tr.Supporter || tr.SystemID != hilltop || tr.Conversation != "conv-owner" {
+		t.Errorf("owner = %+v", tr)
+	}
+	if tr := byUser[funder]; tr.Kind != hostcomp.Started || !tr.Supporter || tr.SystemID != hilltop || tr.SystemName != "Hilltop" ||
+		tr.Conversation != "" || tr.Email != "funder@example.invalid" {
+		t.Errorf("supporter = %+v, want a supporter start about Hilltop in a thread of their own", tr)
+	}
+	if tr := byUser[both]; tr.Kind != hostcomp.Started || tr.Supporter || tr.SystemID != own {
+		t.Errorf("owner who also supports = %+v, want their own receiver", tr)
+	}
+	for name, u := range map[string]int64{"quiet": quietFan, "pending": pendingFan} {
+		if c := f.comp(u); c.Until != nil || c.Since != nil {
+			t.Errorf("supporter of the %s receiver was comped: %+v", name, c)
+		}
+	}
+	if c := f.comp(funder); !sameTime(c.Until, t0.Add(hostcomp.Grace)) || !sameTime(c.Since, t0) {
+		t.Errorf("supporter comp = %+v", c)
+	}
+
+	// Their start email opened a thread of their own; later runs extend quietly.
+	f.exec(`UPDATE system_supporters SET conversation_uuid = 'conv-funder' WHERE system_id = $1 AND user_id = $2`, hilltop, funder)
+	clock = t0.Add(15 * time.Minute)
+	if ts, err := job.Apply(ctx); err != nil || len(ts) != 0 {
+		t.Fatalf("second run: %+v, %v", ts, err)
+	}
+	if c := f.comp(funder); !sameTime(c.Until, clock.Add(hostcomp.Grace)) {
+		t.Errorf("supporter not extended: %+v", c)
+	}
+
+	// Hilltop goes quiet: the supporter lapses with it, in their own thread.
+	clock = t0.Add(8 * 24 * time.Hour)
+	ts, err = job.Apply(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byUser = map[int64]hostcomp.Transition{}
+	for _, tr := range ts {
+		byUser[tr.UserID] = tr
+	}
+	if tr := byUser[funder]; tr.Kind != hostcomp.Lapsed || !tr.Supporter || tr.SystemID != hilltop || tr.SystemName != "Hilltop" || tr.Conversation != "conv-funder" {
+		t.Errorf("supporter lapse = %+v", tr)
+	}
+	if tr := byUser[owner]; tr.Kind != hostcomp.Lapsed || tr.Supporter || tr.Conversation != "conv-owner" {
+		t.Errorf("owner lapse = %+v", tr)
+	}
+	if tr := byUser[both]; tr.Kind != hostcomp.Lapsed || tr.Supporter || tr.SystemID != own {
+		t.Errorf("owner-and-supporter lapse = %+v, want their own receiver", tr)
+	}
+}
+
 // A second runner while one holds the lock does nothing.
 func TestJobSkipsWhileAnotherRunHoldsTheLock(t *testing.T) {
 	conn := hostCompTestDB(t)
@@ -378,6 +487,62 @@ func (r *recorder) SendHostCompStarted(_ context.Context, conversation, to, _, s
 
 func (r *recorder) SendHostCompLapsed(_ context.Context, conversation, to, _, systemName string) (string, error) {
 	return r.send("lapsed", conversation, to, systemName)
+}
+
+func (r *recorder) NotifyHostCompSupporterStarted(_ context.Context, userID int64, systemName string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pushes = append(r.pushes, "supporter-started:"+systemName)
+}
+
+func (r *recorder) SendHostCompSupporterStarted(_ context.Context, conversation, to, _, systemName string) (string, error) {
+	return r.send("supporter-started", conversation, to, systemName)
+}
+
+func (r *recorder) SendHostCompSupporterLapsed(_ context.Context, conversation, to, _, systemName string) (string, error) {
+	return r.send("supporter-lapsed", conversation, to, systemName)
+}
+
+func supporterConversationOf(t *testing.T, conn *sqlx.DB, systemID, userID int64) string {
+	t.Helper()
+	var c *string
+	if err := conn.Get(&c, `SELECT conversation_uuid FROM system_supporters WHERE system_id = $1 AND user_id = $2`, systemID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if c == nil {
+		return ""
+	}
+	return *c
+}
+
+// A supporter gets the supporter wording, and their new thread is kept on
+// their supporter row; the receiver's own thread is the owner's and is left
+// alone.
+func TestJobNotifySupporter(t *testing.T) {
+	conn := hostCompTestDB(t)
+	f := fixture{t, conn}
+	ctx := context.Background()
+	owner := f.user("owner@example.invalid")
+	sys := f.system(owner, "Hilltop", true, false, "")
+	funder := f.user("funder@example.invalid")
+	f.supporter(sys, funder, "")
+
+	rec := &recorder{reply: "conv-funder"}
+	job := hostcomp.NewJob(conn, rec, rec)
+	job.Notify(ctx, hostcomp.Transition{Kind: hostcomp.Started, UserID: funder, Email: "funder@example.invalid", SystemID: sys, SystemName: "Hilltop", Supporter: true})
+	if got := supporterConversationOf(t, conn, sys, funder); got != "conv-funder" {
+		t.Errorf("supporter thread = %q, want conv-funder", got)
+	}
+	if got := conversationOf(t, conn, sys); got != "" {
+		t.Errorf("supporter's thread was stored on the receiver: %q", got)
+	}
+	job.Notify(ctx, hostcomp.Transition{Kind: hostcomp.Lapsed, UserID: funder, Email: "funder@example.invalid", SystemID: sys, SystemName: "Hilltop", Conversation: "conv-funder", Supporter: true})
+
+	wantPushes := []string{"supporter-started:Hilltop", "lapsed:Hilltop"}
+	wantMails := []string{"supporter-started::funder@example.invalid:Hilltop", "supporter-lapsed:conv-funder:funder@example.invalid:Hilltop"}
+	if strings.Join(rec.pushes, "|") != strings.Join(wantPushes, "|") || strings.Join(rec.mails, "|") != strings.Join(wantMails, "|") {
+		t.Fatalf("pushes %v, mails %v", rec.pushes, rec.mails)
+	}
 }
 
 func conversationOf(t *testing.T, conn *sqlx.DB, systemID int64) string {

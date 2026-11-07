@@ -20,6 +20,7 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, receivers 
 	h := NewHandlers(store, notifier)
 	h.applications = applications
 	ext := newExtensionHandlers(db, extenders)
+	sup := newSupporterHandlers(db)
 	var rx *receiverHandlers
 	if receivers != nil && receivers.Store != nil {
 		rx = newReceiverHandlers(db, *receivers)
@@ -93,6 +94,7 @@ func Router(db *sqlx.DB, jwtSecret string, notifier *notify.Notifier, receivers 
 			r.Put("/{id}", h.UpdateSystem)
 			r.Delete("/{id}", h.DeleteSystem)
 			r.With(auth.RequireSuperadmin).Post("/{id}/approve", h.ApproveSystem)
+			mountSupporterRoutes(r, sup, auth.RequireSuperadmin)
 			if rx != nil {
 				// Receiver remote management: config, stats, events, logs,
 				// commands, captures (receivers.go).
