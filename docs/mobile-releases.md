@@ -129,6 +129,29 @@ Migrations run on start-up. To roll back, put `server.prev` back and restart.
 Check `journalctl -u rfspager-go` for `level":"ERROR` after the restart. A
 FRNSW GeoRSS 403 is a known, unrelated error.
 
+## Store screenshots
+
+The App Store / Play cards and the README strip (`docs/images/app-screenshots.png`)
+come from the real app on an iPhone 17 Pro Max simulator (1320x2868, the
+6.9" App Store size) pointed at production:
+
+1. `xcrun simctl create "RFSPager Shots" com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max <iOS runtime>`,
+   boot it, and `xcrun simctl status_bar <udid> override --time HH:MM ...`
+   so the clock matches the newest page.
+2. In `apps/mobile`: `EXPO_PUBLIC_API_URL=https://rfspager.app npx expo prebuild --platform ios --clean`
+   then `npx expo run:ios --configuration Release --device <udid> --no-bundler`
+   (Release: no dev menu, JS bundled). Needs ~10 GB free for DerivedData.
+3. Go through onboarding, log in anonymously, and give that account a short
+   gift from the admin user page so the shots show Pro screens and no ads
+   (a simulator must not request live AdMob impressions). Delete the account
+   afterwards.
+4. Capture with `xcrun simctl io <udid> screenshot <name>.png` into one
+   directory; Maestro or `idb ui tap` drive the app. The current set is listed
+   in `apps/mobile/store/screenshots.json` (file name, headline, subhead).
+5. `python3 apps/mobile/scripts/compose-store-screenshots.py --manifest apps/mobile/store/screenshots.json --raw <dir> --out <cards-dir> --strip docs/images/app-screenshots.png`
+   writes one 1320x2868 card per shot (upload these to App Store Connect and
+   Play Console) and the README strip.
+
 ## Troubleshooting
 
 Problems already hit, and what fixed them:

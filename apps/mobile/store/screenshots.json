@@ -1,0 +1,9 @@
+[
+  {"file": "feed.png", "headline": "Every page, as it's sent", "subhead": "Live NSW RFS, Fire and Rescue and SES pager messages, decoded by our own receivers."},
+  {"file": "feed-expanded.png", "headline": "Act on a page in one tap", "subhead": "Respond, open the details or share it with your crew."},
+  {"file": "map.png", "headline": "All of NSW on one map", "subhead": "Every live incident, right where it is."},
+  {"file": "incidents.png", "headline": "Major incidents, minutes old", "subhead": "Straight from the RFS feed, with type, size and agency."},
+  {"file": "incident-detail.png", "headline": "Know exactly where", "subhead": "A location map and directions for every incident."},
+  {"file": "capcode-detail.png", "headline": "Your brigade, your alerts", "subhead": "Follow the capcodes you care about and filter out the rest."},
+  {"file": "alertzone-create.png", "headline": "Alerts for your area", "subhead": "Draw a zone and get notified when something happens inside it."}
+]
