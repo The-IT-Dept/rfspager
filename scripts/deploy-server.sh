@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # Build the Go server from a git ref and deploy it to apps01 (or the dev box:
-# pass root@100.69.53.78 as the target; the build matches its architecture).
+# pass the dev box (e.g. root@dev) as the target; the build matches its architecture).
 #
 #   scripts/deploy-server.sh [ref] [ssh-target]
 #
-# Defaults to origin/main and root@100.64.244.122 (Tailscale). The build is
+# Defaults to origin/main and $RFSPAGER_PROD_HOST (default
+# root@apps01-syd-theitdept-au, its Tailscale name). The build is
 # taken from `git archive` of the ref, never from the working tree, so what
 # ships is exactly what is on the branch. The previous binary is kept as
 # /opt/rfspager-go/server.prev for a rollback by hand.
 set -euo pipefail
 
 REF="${1:-origin/main}"
-TARGET="${2:-root@100.64.244.122}"
+TARGET="${2:-${RFSPAGER_PROD_HOST:-root@apps01-syd-theitdept-au}}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 

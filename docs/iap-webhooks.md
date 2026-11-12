@@ -328,12 +328,6 @@ the truth and reconciles. This means even if a webhook is lost (Apple
 or Pub/Sub retention expires, our handler 500s, etc.) the user state
 heals within one app session.
 
-> Migrating off Adapty? Run [`./cmd/adapty-backfill`](./adapty-backfill.md)
-> once so the existing paid users have `apple_original_transaction_id` /
-> `google_purchase_token` populated *before* the webhooks start firing —
-> otherwise renewal events will land with `rows=0` until each user opens
-> the app.
-
 ---
 
 ## 4. Quick sanity check

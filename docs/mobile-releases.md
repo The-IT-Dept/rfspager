@@ -112,15 +112,15 @@ automatically on approval. Review usually takes under a day.
 ## 5. Deploy the server
 
 Production runs the Go server as systemd unit `rfspager-go` on apps01
-(`root@100.64.244.122`, arm64), not from the CI image. Build from the tagged
+(`$RFSPAGER_PROD_HOST`, arm64), not from the CI image. Build from the tagged
 `main`:
 
 ```sh
 V=$(git describe --tags --always) C=$(git rev-parse --short HEAD)
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath \
   -ldflags="-s -w -X main.version=$V -X main.commit=$C" -o /tmp/server ./cmd/server
-scp /tmp/server root@100.64.244.122:/tmp/server.new
-ssh root@100.64.244.122 'cp -p /opt/rfspager-go/server /opt/rfspager-go/server.prev &&
+scp /tmp/server "$RFSPAGER_PROD_HOST":/tmp/server.new
+ssh "$RFSPAGER_PROD_HOST" 'cp -p /opt/rfspager-go/server /opt/rfspager-go/server.prev &&
   install -m 755 /tmp/server.new /opt/rfspager-go/server && systemctl restart rfspager-go &&
   sleep 3 && curl -s http://127.0.0.1:8080/health'
 ```

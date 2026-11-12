@@ -3,7 +3,8 @@
 #
 #   scripts/deploy-web.sh [ref] [ssh-target]
 #
-# Defaults to origin/main and root@100.64.244.122 (Tailscale). apps01 has no
+# Defaults to origin/main and $RFSPAGER_PROD_HOST (default
+# root@apps01-syd-theitdept-au, its Tailscale name). apps01 has no
 # Node and GHCR packages are private, so the arm64 image is built here and
 # sent with `docker save | docker load`. The image is tagged
 # rfspager-web:<ref>-<sha>; the previous image stays loaded for a rollback by
@@ -11,7 +12,7 @@
 set -euo pipefail
 
 REF="${1:-origin/main}"
-TARGET="${2:-root@100.64.244.122}"
+TARGET="${2:-${RFSPAGER_PROD_HOST:-root@apps01-syd-theitdept-au}}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 

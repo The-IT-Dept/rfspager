@@ -15,7 +15,7 @@ set -euo pipefail
 A="${1:?usage: $0 <system_a> <system_b> [since]}"
 B="${2:?usage: $0 <system_a> <system_b> [since]}"
 SINCE="${3:-}"
-HOST="${RX_COMPARE_HOST:-root@100.64.244.122}"
+HOST="${RX_COMPARE_HOST:-${RFSPAGER_PROD_HOST:-root@apps01-syd-theitdept-au}}"
 
 [[ "$A" =~ ^[0-9]+$ && "$B" =~ ^[0-9]+$ ]] || { echo "system ids must be numeric" >&2; exit 2; }
 

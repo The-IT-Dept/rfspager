@@ -1,6 +1,6 @@
 # Deploying to production
 
-Production is the single box `apps01` (`root@100.64.244.122` over Tailscale):
+Production is the single box `apps01` (`root@apps01-syd-theitdept-au` over Tailscale; override with `RFSPAGER_PROD_HOST`):
 the Go server as the `rfspager-go` systemd unit and the web UI as the
 `rfspager-web` Docker container behind Caddy. Receivers update themselves
 from GitHub releases; see `docs/receiver-management.md` for those.
@@ -46,10 +46,9 @@ It never returns a GraphQL error (the old app cannot display one) and never
 touches the database. Remove the route once no 4.x installation has been seen
 for a while (`installations.app_version`).
 
-## Store notifications (after Adapty)
+## Store notifications
 
-Subscription state comes straight from the stores; Adapty is no longer in the
-path once both of these are done.
+Subscription state comes straight from the stores.
 
 - **Apple**: App Store Connect → RFSPager → App Information → App Store Server
   Notifications. There is no API for this field. Production Server URL and
@@ -61,7 +60,8 @@ path once both of these are done.
   answers 200). `-history 48h` lists what Apple actually sent and runs every
   signed payload through the webhook's verification; add `-replay <url>` to
   POST them to a webhook (the dev server's, to exercise the database path on
-  the prod-data copy). Verified this way on 2026-10-15 before Adapty was cut.
+  the prod-data copy). `-print TEST` prints raw TEST payloads (no customer data),
+  e.g. to refresh `internal/iap/testdata/apple_test_notification.jws`.
 - **Free time**: the admin user page has a *Free time* card (superadmin). *Give
   free time* follows the account: an active Apple subscription gets its
   renewal date extended through the App Store Server API (at most 90 days per
@@ -90,6 +90,3 @@ path once both of these are done.
   writes. To re-apply Google's state for one user, publish a RENEWED
   notification for their token to the RTDN topic (see the RTDN script's test
   command) and the webhook does the rest.
-- Adapty is out of the path since 2026-10-15: its Pub/Sub subscription and
-  the server's `/api/adapty-webhook` route are gone and the plan cancellation
-  was requested the same day. `cmd/adapty-backfill` remains only as history.

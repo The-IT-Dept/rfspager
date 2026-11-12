@@ -290,8 +290,12 @@ export function PublicLayout() {
               </div>
             </div>
             <div className="border-t border-white/10 mt-12 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
-              <p className="text-xs text-gray-500">&copy; {new Date().getFullYear()} The IT Dept Pty Ltd. All rights reserved.</p>
-              <p className="text-xs text-gray-600">Not affiliated with NSW Rural Fire Service.</p>
+              <p className="text-xs text-gray-500">
+                &copy; {new Date().getFullYear()} The IT Dept Pty Ltd.{" "}
+                <a href={SOURCE_URL} className="hover:text-white transition-colors">Source code</a>{" "}
+                under AGPL-3.0.
+              </p>
+              <p className="text-xs text-gray-600">Not affiliated with NSW RFS, Fire and Rescue NSW or NSW SES.</p>
             </div>
           </div>
         </footer>

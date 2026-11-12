@@ -22,7 +22,7 @@ VERSION="${1:?usage: submit-to-stores.sh <version> [ios|android|both] [revision]
 PLATFORM="${2:-both}"
 REVISION="${3:-0}"
 REPO="The-IT-Dept/rfspager"
-PROD_HOST="${PROD_HOST:-root@100.64.244.122}"
+PROD_HOST="${PROD_HOST:-${RFSPAGER_PROD_HOST:-root@apps01-syd-theitdept-au}}"
 
 [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || { echo "version must be MAJOR.MINOR.PATCH" >&2; exit 1; }
 case "$PLATFORM" in ios|android|both) ;; *) echo "platform must be ios, android or both" >&2; exit 1 ;; esac

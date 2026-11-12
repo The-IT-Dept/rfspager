@@ -13,7 +13,7 @@ on 2026-10-16; the scripts below repeat it.
 scripts/capcode-audit.py                    # export from apps01 (~20 s) and report
 scripts/capcode-audit.py --cached           # re-analyse scripts/out/capcode-audit/ without re-exporting
 scripts/capcode-audit.py --co-receivers     # + which named capcodes get the same pages as each Unknown??
-scripts/capcode-audit.py --target root@100.69.53.78   # the dev box instead
+scripts/capcode-audit.py --target root@dev   # the dev box instead
 ```
 
 Run it after any bulk capcode import, after RFS district restructures, and

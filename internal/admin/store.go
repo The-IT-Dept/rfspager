@@ -1104,7 +1104,7 @@ func (s *Store) GetBillingStats(ctx context.Context) (*BillingStats, error) {
 // yearly plan as $83.33/month and inflated MRR roughly tenfold.
 //
 // The estimate keys off subscription_valid alone, deliberately. That flag is
-// reconciled against the store (see cmd/adapty-backfill), and it stays true
+// reconciled against the store (webhooks and /iap/restore), and it stays true
 // for users in a billing grace period whose expiry has already passed — they
 // are still paying customers, so filtering on expiry here would undercount.
 const (

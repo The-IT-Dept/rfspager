@@ -4,7 +4,7 @@
 # uses, copy it to a Raspberry Pi and restart the service there.
 #
 #   scripts/deploy-receiver.sh rfspager@192.168.15.52
-#   scripts/deploy-receiver.sh root@100.79.78.79 --version v5.5.0-rc1
+#   scripts/deploy-receiver.sh root@<receiver-host> --version v5.5.0-rc1
 #
 # The version baked into the binary (what the hello frame reports) defaults
 # to `git describe --always --dirty`. The previous binary is kept on the Pi
