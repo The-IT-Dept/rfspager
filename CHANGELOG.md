@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.11.0](https://github.com/The-IT-Dept/rfspager/compare/v5.10.0...v5.11.0) (2026-11-12)
+
+
+### Features
+
+* **server:** let a receiver comp its supporters as well as its owner ([#61](https://github.com/The-IT-Dept/rfspager/issues/61)) ([0d2a2fa](https://github.com/The-IT-Dept/rfspager/commit/0d2a2fa41d3d7ff2ffe9723fb449d3a749b6c7f1))
+
+
+### Bug Fixes
+
+* incident detail route, incident times 11 hours early, private pending receivers ([#64](https://github.com/The-IT-Dept/rfspager/issues/64)) ([a862ac1](https://github.com/The-IT-Dept/rfspager/commit/a862ac1875aec5524ea282da039b701231495b6b))
+* prepare the repository for open-sourcing ([#63](https://github.com/The-IT-Dept/rfspager/issues/63)) ([f70cbed](https://github.com/The-IT-Dept/rfspager/commit/f70cbedef974d037f7fafde52db728cc609a66d6))
+
 ## [5.10.0](https://github.com/The-IT-Dept/rfspager/compare/v5.9.1...v5.10.0) (2026-10-23)
 
 
