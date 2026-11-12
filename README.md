@@ -1,8 +1,47 @@
-# RFSPager
+<p align="center">
+  <a href="https://rfspager.app"><img src="apps/web/public/logo.svg" width="96" alt="RFSPager logo"></a>
+</p>
 
-Pager decoding, live incident feeds, and notifications for the NSW emergency services community. This repository contains the Go API and receiver, the React web application, and the Expo mobile application that run [rfspager.app](https://rfspager.app).
+<h1 align="center">RFSPager</h1>
 
-RFSPager is an independent community project. It is not affiliated with, endorsed by, or operated by NSW Rural Fire Service, Fire and Rescue NSW, NSW State Emergency Service, or any other agency; their names are used only to describe the traffic the receivers hear. It is an information tool, not an official dispatch or life-safety system: never rely on it to respond to an emergency.
+<p align="center">
+  <strong>Live NSW emergency pager messages, incidents and alerts, decoded from the airwaves by a community network of radio receivers.</strong>
+</p>
+
+<p align="center">
+  <a href="https://rfspager.app"><b>rfspager.app</b></a> ·
+  <a href="https://rfspager.app/pager">Live feed</a> ·
+  <a href="https://rfspager.app/map">Map</a> ·
+  <a href="https://rfspager.app/coverage">Coverage</a> ·
+  <a href="https://rfspager.app/host">Host a receiver</a> ·
+  <a href="https://rfspager.app/docs">Public API</a>
+</p>
+
+<p align="center">
+  <a href="https://apps.apple.com/au/app/rfspager/id1568913265"><img src="apps/web/public/images/app_store.svg" height="48" alt="Download on the App Store"></a>
+  &nbsp;
+  <a href="https://play.google.com/store/apps/details?id=io.devlan.rfspager"><img src="apps/web/public/images/play_store.svg" height="48" alt="Get it on Google Play"></a>
+</p>
+
+<p align="center">
+  <img src="docs/images/app-screenshots.png" alt="RFSPager on iPhone: live pager feed, NSW incident map, major incidents, incident detail, capcode alerts and alert zones">
+</p>
+
+## What it does
+
+- **Every page, as it's sent.** RFS, Fire and Rescue NSW and SES pager traffic appears in the app and on [the website](https://rfspager.app/pager) seconds after it goes out, with the brigade or station it was sent to.
+- **All of NSW on one map.** Live pages with locations, major incidents from the RFS feed, and hazard reduction burns.
+- **Alerts for what matters to you.** Follow your brigade's capcodes, filter out the rest, and draw alert zones to get a push notification when something happens in your area.
+- **We listen to the radio, we don't scrape websites.** Messages come from RTL-SDR receivers run by volunteers across NSW. See [where we have coverage](https://rfspager.app/coverage), and if your area is quiet, [host a receiver](https://rfspager.app/host): hosts get Pro free while their receiver runs.
+- **Free to use.** The feed, map and incidents are free. Pro adds push notifications, alert zones, capcode filtering and no ads.
+
+RFSPager is an independent community project. It is not affiliated with, endorsed by, or operated by NSW Rural Fire Service, Fire and Rescue NSW, NSW State Emergency Service, or any other agency; their names are used only to describe the traffic the receivers hear. It is an information tool, not an official dispatch or life-safety system: never rely on it to respond to an emergency. In an emergency, call **000**.
+
+---
+
+## For developers
+
+This repository contains everything that runs [rfspager.app](https://rfspager.app): the Go API and receiver, the React web application, and the Expo mobile application.
 
 Licensed under **[GNU AGPLv3](LICENSE.md)** (`AGPL-3.0-only`). Preserve copyright and license notices. Covered derivatives distributed to others remain under AGPLv3; modified versions served over a network must offer their corresponding source to remote users. Commercial use is permitted subject to the license. Third-party components retain their own licenses; see [NOTICE](NOTICE) and [third-party notices](THIRD_PARTY_NOTICES.md).
 
