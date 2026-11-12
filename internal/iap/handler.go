@@ -67,7 +67,7 @@ func (h *Handler) ValidateApple(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		slog.Error("apple validation failed", "error", err, "user_id", userID)
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "validation failed: " + err.Error()})
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "validation failed"})
 		return
 	}
 
@@ -115,10 +115,15 @@ func (h *Handler) validateAppleJWS(jwsTransaction string) (*ValidationResult, er
 	// renewal. With API credentials, ask Apple for the subscription's current
 	// state (auto-renew, grace, billing retry); fall back to the transaction
 	// alone if the API is unavailable.
+	// Apple knowing nothing about the transaction is a rejection, not an
+	// outage: only transport and server errors fall back to the JWS alone.
 	if h.apple != nil {
 		status, err := h.apple.GetSubscriptionStatus(txn.OriginalTransactionID, txn.Environment)
 		if err == nil && status.OriginalTransactionID == txn.OriginalTransactionID {
 			return status, nil
+		}
+		if IsAppleNotFound(err) {
+			return nil, fmt.Errorf("Apple has no record of transaction %s", txn.OriginalTransactionID)
 		}
 		slog.Warn("apple: subscription status unavailable, using the signed transaction alone",
 			"original_transaction_id", txn.OriginalTransactionID, "error", err)
@@ -167,7 +172,7 @@ func (h *Handler) ValidateGoogle(w http.ResponseWriter, r *http.Request) {
 	result, err := h.google.ValidatePurchase(r.Context(), req.PurchaseToken, req.ProductID)
 	if err != nil {
 		slog.Error("google validation failed", "error", err, "user_id", userID)
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "validation failed: " + err.Error()})
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "validation failed"})
 		return
 	}
 

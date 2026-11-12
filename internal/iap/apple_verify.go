@@ -1,12 +1,15 @@
 package iap
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"crypto/x509"
 	_ "embed"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"math/big"
@@ -19,23 +22,53 @@ import (
 var appleRootCAPEM []byte
 
 var (
-	appleRootPool *x509.CertPool
+	appleRootCert *x509.Certificate
 	appleRootOnce sync.Once
 )
 
-func appleRoots() *x509.CertPool {
+// appleRoot is the bundled Apple Root CA - G3, the only root an App Store
+// signed payload may chain to.
+func appleRoot() *x509.Certificate {
 	appleRootOnce.Do(func() {
-		appleRootPool = x509.NewCertPool()
-		appleRootPool.AppendCertsFromPEM(appleRootCAPEM)
+		block, _ := pem.Decode(appleRootCAPEM)
+		if block == nil {
+			panic("iap: embedded Apple root CA is not PEM")
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			panic("iap: embedded Apple root CA: " + err.Error())
+		}
+		appleRootCert = cert
 	})
-	return appleRootPool
+	return appleRootCert
 }
 
-// verifyAppleJWS validates a JWS signed by Apple's App Store Server.
-// It walks the x5c cert chain to the embedded Apple Root CA G3, then verifies
-// the ES256 signature with the leaf certificate's public key.
-// Returns the raw decoded JSON payload on success.
+// Marker extensions Apple puts on the App Store signing chain. Chaining to the
+// Apple root is not enough on its own: Apple issues many other certificates
+// under the same root (Apple Pay, Wallet, developer certificates), some with
+// keys a third party holds. Apple's own server library requires both of these.
+var (
+	// Apple Worldwide Developer Relations intermediate.
+	oidAppleWWDRIntermediate = asn1.ObjectIdentifier{1, 2, 840, 113635, 100, 6, 2, 1}
+	// App Store receipt / StoreKit signing leaf.
+	oidAppleStoreSigningLeaf = asn1.ObjectIdentifier{1, 2, 840, 113635, 100, 6, 11, 1}
+)
+
+// verifyAppleJWS validates a JWS signed by Apple's App Store Server and
+// returns the raw decoded JSON payload on success.
 func verifyAppleJWS(jwsToken string) ([]byte, error) {
+	return verifyAppleJWSWith(jwsToken, trustedAppleRoot(), time.Now())
+}
+
+// trustedAppleRoot is swapped only by tests, which cannot obtain certificates
+// under the real Apple root.
+var trustedAppleRoot = appleRoot
+
+// verifyAppleJWSWith checks that the x5c header is exactly [leaf, intermediate,
+// root] with root byte-identical to the given trusted root, each certificate
+// signed by the next and valid at the given time, both Apple marker extensions
+// present, and the ES256 signature made by the leaf's key.
+func verifyAppleJWSWith(jwsToken string, root *x509.Certificate, at time.Time) ([]byte, error) {
 	parts := strings.Split(jwsToken, ".")
 	if len(parts) != 3 {
 		return nil, errors.New("invalid JWS format")
@@ -57,8 +90,8 @@ func verifyAppleJWS(jwsToken string) ([]byte, error) {
 	if header.Alg != "ES256" {
 		return nil, fmt.Errorf("unexpected JWS algorithm: %s", header.Alg)
 	}
-	if len(header.X5C) < 1 {
-		return nil, errors.New("missing x5c cert chain")
+	if len(header.X5C) != 3 {
+		return nil, fmt.Errorf("x5c chain verification: want 3 certificates, got %d", len(header.X5C))
 	}
 
 	certs := make([]*x509.Certificate, len(header.X5C))
@@ -73,19 +106,33 @@ func verifyAppleJWS(jwsToken string) ([]byte, error) {
 		}
 		certs[i] = cert
 	}
+	leaf, intermediate := certs[0], certs[1]
 
-	intermediates := x509.NewCertPool()
-	for _, c := range certs[1:] {
-		intermediates.AddCert(c)
+	if !bytes.Equal(certs[2].Raw, root.Raw) {
+		return nil, errors.New("x5c chain verification: root is not the Apple root CA")
+	}
+	if !hasExtension(intermediate, oidAppleWWDRIntermediate) {
+		return nil, errors.New("x5c chain verification: intermediate is not Apple's WWDR CA")
+	}
+	if !hasExtension(leaf, oidAppleStoreSigningLeaf) {
+		return nil, errors.New("x5c chain verification: leaf is not an App Store signing certificate")
 	}
 
-	if _, err := certs[0].Verify(x509.VerifyOptions{
-		Roots:         appleRoots(),
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	intermediates := x509.NewCertPool()
+	intermediates.AddCert(intermediate)
+	if _, err := leaf.Verify(x509.VerifyOptions{
+		Roots:         roots,
 		Intermediates: intermediates,
-		CurrentTime:   time.Now(),
+		CurrentTime:   at,
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	}); err != nil {
 		return nil, fmt.Errorf("x5c chain verification: %w", err)
+	}
+	// Verify may build a shorter path; insist on the one in the header.
+	if err := leaf.CheckSignatureFrom(intermediate); err != nil {
+		return nil, fmt.Errorf("x5c chain verification: leaf not issued by intermediate: %w", err)
 	}
 
 	pubKey, ok := certs[0].PublicKey.(*ecdsa.PublicKey)
@@ -116,4 +163,13 @@ func verifyAppleJWS(jwsToken string) ([]byte, error) {
 		return nil, fmt.Errorf("decoding JWS payload: %w", err)
 	}
 	return payload, nil
+}
+
+func hasExtension(cert *x509.Certificate, oid asn1.ObjectIdentifier) bool {
+	for _, ext := range cert.Extensions {
+		if ext.Id.Equal(oid) {
+			return true
+		}
+	}
+	return false
 }

@@ -86,6 +86,9 @@ func (c *AppleClient) generateAuthToken() (string, error) {
 // "Sandbox"); when it is unknown, production is tried first and sandbox on a
 // not-found, as Apple recommends.
 func (c *AppleClient) GetSubscriptionStatus(transactionID, environment string) (*ValidationResult, error) {
+	if c.apiBase != "" {
+		return c.subscriptionStatus(c.apiBase, transactionID)
+	}
 	switch environment {
 	case "Sandbox":
 		return c.subscriptionStatus(appleSandboxURL, transactionID)
@@ -121,6 +124,13 @@ const (
 type errAppleNotFound struct{ body string }
 
 func (e errAppleNotFound) Error() string { return "Apple API returned 404: " + e.body }
+
+// IsAppleNotFound reports whether err means Apple has no subscription for the
+// transaction ID (as opposed to the API being unreachable or failing).
+func IsAppleNotFound(err error) bool {
+	var nf errAppleNotFound
+	return errors.As(err, &nf)
+}
 
 type appleStatusResponse struct {
 	Data []struct {
@@ -192,7 +202,7 @@ func (c *AppleClient) subscriptionStatus(base, transactionID string) (*Validatio
 		return matched, nil
 	}
 	if best == nil {
-		return nil, fmt.Errorf("Apple returned no subscriptions for this transaction")
+		return nil, errAppleNotFound{body: "no subscriptions for this transaction"}
 	}
 	return best, nil
 }
