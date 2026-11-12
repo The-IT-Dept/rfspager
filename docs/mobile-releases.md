@@ -181,5 +181,13 @@ Problems already hit, and what fixed them:
   - `gradle.properties` missing a trailing newline: an echo goes first.
   - All of these live in `mobile-release.yml`, so read the failing step there
     before re-running.
+- **iOS submit fails with "Build number: … does not exist".** CI finished the
+  TestFlight upload (it doesn't wait for processing) but App Store Connect
+  hasn't listed the build yet; for 5.9.1 that took about 15 minutes after the
+  ios job went green. Wait until the build is `VALID`, then re-run the iOS
+  half. The failed run has already created the version, which is fine. To
+  check a build (spaceship's default `get_builds` include is rejected by
+  Apple, so pass `includes`):
+  `Spaceship::ConnectAPI.get_builds(filter: { app: app.id, version: "550901000" }, includes: "preReleaseVersion").to_models.map(&:processing_state)`
 - **Re-running a release.** Bump `build_revision` and pass the same revision as
   the script's third argument, e.g. `submit-to-stores.sh 5.4.0 both 1`.
