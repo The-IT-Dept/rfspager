@@ -92,6 +92,11 @@ func (h *SystemHandlers) GetSystem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isOwner := row.UserID == user.ID
+	if row.IsPending && !isOwner {
+		// Pending applications are private to the applicant (and admins).
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "system not found"})
+		return
+	}
 	resp := map[string]any{
 		"id":         row.ID,
 		"system_id":  row.SystemID,

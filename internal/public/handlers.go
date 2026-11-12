@@ -223,8 +223,10 @@ func (h *Handlers) MapMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, data)
 }
 
-// ListSystems returns the public-safe list of paging systems. Only exposes
-// uuid, name, suburb, is_pending (waiting on admin approval), the timestamp
+// ListSystems returns the public-safe list of approved paging systems
+// (pending applications are private to the applicant). Only exposes
+// uuid, name, suburb, is_pending (always false here; kept for API
+// compatibility), the timestamp
 // of the most recent message, and the live receiver WebSocket ping. Owner,
 // base url, api keys and other operational fields are deliberately not
 // surfaced.
@@ -250,7 +252,8 @@ func (h *Handlers) ListSystems(w http.ResponseWriter, r *http.Request) {
 		 FROM systems s
 		 LEFT JOIN system_connections sc ON sc.system_id = s.id
 		 WHERE s.deleted_at IS NULL
-		 ORDER BY (s.approved_at IS NULL) DESC, s.name`)
+		   AND s.approved_at IS NOT NULL -- pending applications are private
+		 ORDER BY s.name`)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

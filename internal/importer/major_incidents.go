@@ -53,7 +53,6 @@ func importMajorIncidents(ctx context.Context, db *sqlx.DB) error {
 		return fmt.Errorf("decoding major incidents: %w", err)
 	}
 
-	loc, _ := time.LoadLocation("Australia/Sydney")
 	count := 0
 
 	for _, f := range data.Features {
@@ -61,7 +60,7 @@ func importMajorIncidents(ctx context.Context, db *sqlx.DB) error {
 		dataJSON, _ := json.Marshal(parsedData)
 		geometryJSON, _ := json.Marshal(f.Geometry)
 
-		createdAt := parsePubDate(f.Properties.PubDate, loc)
+		createdAt := parsePubDate(f.Properties.PubDate)
 
 		_, err := db.ExecContext(ctx, `
 			INSERT INTO majorincidents (upstream_id, title, category, geometry, data, created_at, updated_at)
@@ -123,14 +122,17 @@ func toCamelCase(s string) string {
 	return result
 }
 
-func parsePubDate(s string, loc *time.Location) *time.Time {
+// parsePubDate reads the feed's pubDate, "d/m/Y h:i:s A" (e.g.
+// "12/11/2026 1:03:00 AM"). It is UTC, not Sydney time: the same incident's
+// description says "UPDATED: 12 Nov 2026 12:03" (AEDT). Reading it as Sydney
+// time put every incident 10-11 hours in the past (fixed by migration 040).
+func parsePubDate(s string) *time.Time {
 	if s == "" {
 		return nil
 	}
-	// Format: "d/m/Y h:i:s A" e.g. "22/03/2026 2:30:00 PM"
-	t, err := time.ParseInLocation("2/01/2006 3:04:05 PM", s, loc)
+	t, err := time.ParseInLocation("2/01/2006 3:04:05 PM", s, time.UTC)
 	if err != nil {
-		t, err = time.ParseInLocation("02/01/2006 3:04:05 PM", s, loc)
+		t, err = time.ParseInLocation("02/01/2006 3:04:05 PM", s, time.UTC)
 		if err != nil {
 			return nil
 		}
