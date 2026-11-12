@@ -29,13 +29,13 @@ app/
 └── root.tsx       app shell
 ```
 
-Admin login lives at `/admin/login`; the Go server's admin JWT is set in
-an HTTP-only cookie on success.
+Admin login lives at `/admin/login`; the Go server's admin JWT is kept in
+`localStorage` and sent as a bearer token.
 
 ## Docker
 
 A multi-stage `Dockerfile` is included. CI builds and pushes
-`ghcr.io/the-it-dept/rfspager-web:<tag>` on `web-vX.Y.Z` tags.
+`ghcr.io/the-it-dept/rfspager-web:<tag>` on `vX.Y.Z` release tags.
 
 ```bash
 docker build -t rfspager-web .

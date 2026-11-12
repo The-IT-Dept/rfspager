@@ -140,11 +140,10 @@ apps/web/.vite/
 /pager.log
 .claude/
 
-# Pre-FSL Expo mobile reference (kept locally, do not check in — 1+ GB)
+# Legacy Expo mobile reference (kept locally, do not check in — 1+ GB)
 /app-old/
 
 # local build artifacts
-adapty-backfill
 migrate-spike
 .env.bak-*
 
@@ -154,7 +153,7 @@ migrate-spike
 # Strix security-scan output
 strix_runs/
 
-# local one-off reporting scripts (store/Adapty credentials, buyer reports);
+# local one-off reporting scripts (store credentials, buyer reports);
 # the rest of scripts/ is committed
 /scripts/rfspager-revenue-report.py
 /scripts/out/

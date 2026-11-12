@@ -27,6 +27,12 @@ jobs:
         with:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+          # The org app can administer every repository; this token gets only
+          # what release-please needs, on this repository only.
+          repositories: rfspager
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
 
       - id: release
         uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4

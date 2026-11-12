@@ -5,8 +5,11 @@
 //	./apple-notify-test                      request a TEST notification, report Apple's delivery attempts
 //	./apple-notify-test -history 48h         list what Apple sent in that window and run every signed
 //	                                         payload through the webhook's own verification (no DB)
-//	./apple-notify-test -history 48h -replay https://go.dev.blah.au/api/webhooks/apple
+//	./apple-notify-test -history 48h -replay https://dev.example/api/webhooks/apple
 //	                                         additionally POST each payload to that webhook, as Apple would
+//	./apple-notify-test -history 720h -print TEST
+//	                                         print the raw signed payload of each TEST notification (they
+//	                                         carry no customer data), e.g. for a verification test fixture
 //
 // -env selects Production (default) or Sandbox.
 package main
@@ -30,6 +33,7 @@ func main() {
 	env := flag.String("env", "Production", "Production or Sandbox")
 	history := flag.Duration("history", 0, "list and verify notifications Apple produced in this window (e.g. 48h)")
 	replay := flag.String("replay", "", "with -history: POST every signed payload to this webhook URL")
+	printType := flag.String("print", "", "with -history: print the raw signed payload of notifications of this type (e.g. TEST)")
 	flag.Parse()
 	_ = godotenv.Load()
 	bundle := os.Getenv("APPLE_BUNDLE_ID")
@@ -46,7 +50,7 @@ func main() {
 		os.Exit(1)
 	}
 	if *history > 0 {
-		os.Exit(runHistory(client, *env, *history, *replay))
+		os.Exit(runHistory(client, *env, *history, *replay, *printType))
 	}
 	os.Exit(runTest(client, *env))
 }
@@ -98,7 +102,7 @@ func unverifiedClaims(jws string) map[string]any {
 	return m
 }
 
-func runHistory(client *iap.AppleClient, env string, window time.Duration, replayURL string) int {
+func runHistory(client *iap.AppleClient, env string, window time.Duration, replayURL, printType string) int {
 	end := time.Now()
 	items, err := client.NotificationHistory(env, end.Add(-window), end)
 	if err != nil {
@@ -113,6 +117,9 @@ func runHistory(client *iap.AppleClient, env string, window time.Duration, repla
 			verifyFailures++
 			fmt.Printf("  VERIFY FAILED (envelope): %v\n", err)
 			continue
+		}
+		if printType != "" && notif.NotificationType == printType {
+			fmt.Printf("SIGNED %s %s\n", notif.NotificationType, it.SignedPayload)
 		}
 		line := fmt.Sprintf("  %-28s %-22s", notif.NotificationType, notif.Subtype)
 		if claims := unverifiedClaims(it.SignedPayload); claims != nil {

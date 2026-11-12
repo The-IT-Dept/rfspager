@@ -172,7 +172,7 @@ the DSP, run it again, compare counters.
 
 ```sh
 scripts/deploy-receiver.sh rfspager@192.168.15.52            # Budgewoi
-scripts/deploy-receiver.sh root@100.79.78.79 --version v5.5.0-rc1
+scripts/deploy-receiver.sh root@<receiver-host> --version v5.5.0-rc1
 ```
 
 Builds linux/arm64 with `Dockerfile.receiver` (same toolchain and Debian 12

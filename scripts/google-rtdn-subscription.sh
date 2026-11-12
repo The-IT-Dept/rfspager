@@ -59,5 +59,5 @@ Done. To exercise the path, publish Play's test-notification shape:
     --message='{"version":"1.0","packageName":"io.devlan.rfspager","eventTimeMillis":"0","testNotification":{"version":"1.0"}}'
 then on apps01:
   journalctl -u rfspager-go --since '5 min ago' -o cat | grep 'google webhook'
-Any other subscription on the topic (Adapty's) can be deleted once this one is receiving.
+Any other push subscription on the topic can be deleted once this one is receiving.
 MSG

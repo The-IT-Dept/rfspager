@@ -15,7 +15,7 @@
 # the before/after first. Find duplicates with scripts/capcode-audit.py.
 set -euo pipefail
 
-TARGET="root@100.64.244.122"
+TARGET="${RFSPAGER_PROD_HOST:-root@apps01-syd-theitdept-au}"
 APPLY=false
 ALIAS=""
 ARGS=()

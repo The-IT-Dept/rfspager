@@ -5,7 +5,7 @@ Read-only audit of the prod capcode table against the pages each capcode receive
     scripts/capcode-audit.py                       # export from apps01, print report
     scripts/capcode-audit.py --cached              # re-analyse the last export
     scripts/capcode-audit.py --co-receivers        # + who else gets the unknowns' pages (slow)
-    scripts/capcode-audit.py --target root@100.69.53.78 --days 180
+    scripts/capcode-audit.py --target root@dev --days 180
 
 Exports go to scripts/out/capcode-audit/ (git-ignored). Nothing is written to the
 database; fixes are applied by hand, see docs/capcode-audit.md.
@@ -19,6 +19,7 @@ prefix names the group, not the pager, which is what makes these checks work.
 import argparse
 import collections
 import csv
+import os
 import difflib
 import re
 import subprocess
@@ -152,7 +153,7 @@ def section(title, lines):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--target", default="root@100.64.244.122")
+    ap.add_argument("--target", default=os.environ.get("RFSPAGER_PROD_HOST", "root@apps01-syd-theitdept-au"))
     ap.add_argument("--days", type=int, default=90, help="window for unregistered addresses")
     ap.add_argument("--cached", action="store_true", help="reuse the last export")
     ap.add_argument("--co-receivers", action="store_true", help="also export co-receivers of Unknown?? capcodes")

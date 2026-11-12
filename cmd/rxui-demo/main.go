@@ -79,7 +79,7 @@ func main() {
 			return []localui.Endpoint{
 				{Name: "prod", Mode: "ws", URL: "https://rfspager.app", Primary: true, Connected: true,
 					ConnectedSince: &since, RTTMs: 30 + rand.IntN(15), PagesSent: 412, LastPageAt: &last},
-				{Name: "dev", Mode: "ws", URL: "https://go.dev.blah.au", Connected: false,
+				{Name: "dev", Mode: "ws", URL: "https://dev.example", Connected: false,
 					ReconnectsTotal: 7, PagesSent: 98, PagesFailed: 3, LastError: "ws dial: connection refused", LastErrorAt: &errAt},
 			}
 		},
@@ -90,7 +90,7 @@ func main() {
 				Dongles: []rxproto.DongleInfo{{Index: 0, Name: "Generic RTL2832U OEM", Manufacturer: "Realtek", Product: "RTL2838UHIDIR", Serial: "00000001", Tuner: "R828D"}},
 				Endpoints: []localui.EndpointInfo{
 					{Name: "prod", Mode: "ws", URL: "https://rfspager.app", Primary: true},
-					{Name: "dev", Mode: "ws", URL: "https://go.dev.blah.au"},
+					{Name: "dev", Mode: "ws", URL: "https://dev.example"},
 				},
 				StateDir: "/var/lib/rfspager",
 			}

@@ -1,6 +1,7 @@
 # RFSPager — Mobile
 
-The iOS + Android pager app for the NSW Rural Fire Service. Part of the
+The iOS + Android RFSPager app: a community pager feed for NSW emergency
+services (not affiliated with any agency). Part of the
 [RFSPager monorepo](../../README.md).
 
 - **Framework:** Expo SDK 57 / React Native 0.86 / React 19.2
@@ -11,7 +12,7 @@ The iOS + Android pager app for the NSW Rural Fire Service. Part of the
 - **IAP:** `expo-iap` with server-side Apple JWS validation
 - **Bundle ID:** `io.devlan.rfspager` (iOS + Android)
 
-For deeper architecture notes see [`CLAUDE.md`](./CLAUDE.md).
+For architecture notes and conventions see [`CLAUDE.md`](./CLAUDE.md).
 
 ---
 
@@ -75,10 +76,11 @@ src/
 
 ## Builds & releases
 
-The mobile app is shipped via GitHub Actions on `mobile-vX.Y.Z` tags. The
-workflow runs `eas build --local` on a macOS runner and then `eas submit`.
-See [`docs/ci-secrets.md`](../../docs/ci-secrets.md) for the credentials CI
-needs.
+Releases are built by the `mobile-release.yml` workflow (manual dispatch with
+a `vX.Y.Z` tag) on a GitHub-hosted macOS runner, uploaded to TestFlight and the
+Play internal track, then submitted with `scripts/submit-to-stores.sh`. The
+full procedure is [`docs/mobile-releases.md`](../../docs/mobile-releases.md);
+the credentials CI needs are in [`docs/ci-secrets.md`](../../docs/ci-secrets.md).
 
 For ad-hoc local builds:
 
