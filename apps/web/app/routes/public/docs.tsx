@@ -434,7 +434,8 @@ data: ${JSON.stringify(MESSAGE)}
             quiet.
           </>,
           <>
-            <C>is_pending</C> is true while a receiver waits for approval. <C>suburb</C> can be null.
+            Only approved receivers are listed; applications waiting for approval are private, so{" "}
+            <C>is_pending</C> is always false here. <C>suburb</C> can be null.
           </>,
         ],
         requests: [{ cmd: `curl ${BASE}/systems` }],

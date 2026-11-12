@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -553,10 +554,11 @@ func (h *Handlers) ListMyCapcodeSuggestions(w http.ResponseWriter, r *http.Reque
 
 // --- Systems ---
 
-// ListSystems returns paging systems with public-safe fields plus an
-// `is_owner` marker (true if the system belongs to the current user) and
-// `is_pending` (true while awaiting admin approval). Sorted: owned first,
-// then pending, then approved by name.
+// ListSystems returns approved paging systems, plus the caller's own pending
+// applications, with public-safe fields plus an `is_owner` marker (true if
+// the system belongs to the current user) and `is_pending` (true while
+// awaiting admin approval). Sorted: owned first, then pending, then approved
+// by name.
 //
 // `online` is the receiver's websocket state, same rule as GetSystem.
 // `last_message_at` is really "last heard": the later of the last decoded
@@ -590,6 +592,9 @@ func (h *Handlers) ListSystems(w http.ResponseWriter, r *http.Request) {
 		     FROM systems s
 		     LEFT JOIN system_connections sc ON sc.system_id = s.id
 		     WHERE s.deleted_at IS NULL
+		       -- Someone else's pending application is private: applicants
+		       -- often name it after themselves and give their suburb.
+		       AND (s.approved_at IS NOT NULL OR s.user_id = $1)
 		 ) t
 		 ORDER BY is_owner DESC, is_pending DESC, name`, user.ID)
 	if err != nil {
@@ -893,6 +898,31 @@ func (h *Handlers) MarkNotificationsRead(w http.ResponseWriter, r *http.Request)
 }
 
 // --- Major Incidents ---
+
+// GetMajorIncident handles GET /major-incidents/{id}: one incident in the
+// same shape as a ListMajorIncidents row. The app's incident screen has
+// called this since 5.0; it was missing from the Go API until now.
+func (h *Handlers) GetMajorIncident(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id < 1 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "incident not found"})
+		return
+	}
+	row := make(map[string]any)
+	err = h.db.QueryRowxContext(r.Context(),
+		`SELECT id, title, category, geometry, data, created_at, updated_at
+		 FROM majorincidents WHERE id = $1`, id).MapScan(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "incident not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "loading incident failed"})
+		return
+	}
+	cleanMapScan(row)
+	writeJSON(w, http.StatusOK, row)
+}
 
 func (h *Handlers) ListMajorIncidents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()

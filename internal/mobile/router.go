@@ -77,6 +77,7 @@ func Router(db *sqlx.DB, jwtSecret, appleBundleID string, sseBroker *SSEBroker, 
 
 		// Incidents
 		r.Get("/major-incidents", h.ListMajorIncidents)
+		r.Get("/major-incidents/{id}", h.GetMajorIncident)
 		r.Get("/hazard-reductions", h.ListHazardReductions)
 
 		// Systems
