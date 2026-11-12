@@ -15,8 +15,23 @@ it. Once a secret is in GitHub Actions, the workflows in
 > base64 -w 0 my-file.p8 | xclip       # linux
 > ```
 
-GitHub UI: **Repo → Settings → Secrets and variables → Actions → New
-repository secret**.
+**Where secrets live.** Every secret below is an *environment* secret in the
+`release` environment (Repo → Settings → Environments → release), not a
+repository secret. That environment can only be used by workflows running on
+`main` or a `v*` tag, and only `mobile-release.yml` asks for it, so code on any
+other branch, and pull requests from forks, cannot read the signing keys. Set
+or rotate one with:
+
+```bash
+base64 -i dist.p12 | gh secret set IOS_DIST_CERT_P12 --env release
+```
+
+Never add these as repository secrets again; a repository secret is readable
+by a workflow on any branch. Variables (`vars.*`) are not secret and stay at
+repository level. The org's `BOT_APP_ID` / `BOT_APP_PRIVATE_KEY` are org
+secrets managed in The-IT-Dept/infra (Terraform); `release-please.yml` mints a
+token from them limited to this repository and to contents, pull requests and
+issues.
 
 > Looking for **runtime** secrets (the ones the server reads at boot,
 > e.g. APNs, Firebase, IAP, Stripe)? Those live in `./.env` on the
@@ -38,14 +53,14 @@ and no `EXPO_TOKEN` is involved.
 | variable | `EXPO_PUBLIC_API_URL` | Backend origin baked into the app (`https://rfspager.app`) |
 | variable | `APPLE_TEAM_ID` | Apple Developer team (`W62CSN3S5H`) |
 | variable | `EXPO_PUBLIC_FACEBOOK_APP_ID`, `EXPO_PUBLIC_SOURCE_URL` | Client identifiers |
-| secret | `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY`, `EXPO_PUBLIC_FACEBOOK_CLIENT_TOKEN` | Client keys (bundled into the app; restrict them provider-side) |
-| secret | `IOS_GOOGLE_SERVICE_INFO_PLIST` | base64 of the Firebase iOS config |
-| secret | `ANDROID_GOOGLE_SERVICES_JSON` | base64 of the Firebase Android config |
-| secret | `IOS_DIST_CERT_P12`, `IOS_DIST_CERT_PASSWORD` | base64 of the Apple Distribution certificate + its password |
-| secret | `IOS_PROVISIONING_PROFILE` | base64 of the App Store provisioning profile for `io.devlan.rfspager` |
-| secret | `APPLE_ASC_KEY_P8`, `APPLE_ASC_KEY_ID`, `APPLE_ASC_ISSUER_ID` | App Store Connect API key used to upload to TestFlight |
-| secret | `ANDROID_UPLOAD_KEYSTORE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Play upload key |
-| secret | `ANDROID_PLAY_SERVICE_ACCOUNT_JSON` | base64 of a service-account key with release rights in Play Console |
+| secret (`release` env) | `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY`, `EXPO_PUBLIC_FACEBOOK_CLIENT_TOKEN` | Client keys (bundled into the app; restrict them provider-side) |
+| secret (`release` env) | `IOS_GOOGLE_SERVICE_INFO_PLIST` | base64 of the Firebase iOS config |
+| secret (`release` env) | `ANDROID_GOOGLE_SERVICES_JSON` | base64 of the Firebase Android config |
+| secret (`release` env) | `IOS_DIST_CERT_P12`, `IOS_DIST_CERT_PASSWORD` | base64 of the Apple Distribution certificate + its password |
+| secret (`release` env) | `IOS_PROVISIONING_PROFILE` | base64 of the App Store provisioning profile for `io.devlan.rfspager` |
+| secret (`release` env) | `APPLE_ASC_KEY_P8`, `APPLE_ASC_KEY_ID`, `APPLE_ASC_ISSUER_ID` | App Store Connect API key used to upload to TestFlight |
+| secret (`release` env) | `ANDROID_UPLOAD_KEYSTORE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Play upload key |
+| secret (`release` env) | `ANDROID_PLAY_SERVICE_ACCOUNT_JSON` | base64 of a service-account key with release rights in Play Console |
 
 Server, web and receiver images need nothing beyond `GITHUB_TOKEN`.
 
@@ -75,8 +90,9 @@ Create once with the API key, then store in GitHub:
 2. Create an **App Store** provisioning profile for `io.devlan.rfspager` using
    that certificate. The App ID needs Push Notifications, Sign in with Apple
    and Associated Domains, which the app's entitlements use.
-3. `base64 -i dist.p12 | gh secret set IOS_DIST_CERT_P12`, likewise
-   `IOS_PROVISIONING_PROFILE`, and set `IOS_DIST_CERT_PASSWORD`.
+3. `base64 -i dist.p12 | gh secret set IOS_DIST_CERT_P12 --env release`,
+   likewise `IOS_PROVISIONING_PROFILE`, and set `IOS_DIST_CERT_PASSWORD`
+   (all with `--env release`).
 
 Distribution certificates last a year: renew both before expiry. Apple allows
 only a few per team, so revoke the old one once the new one is in.
@@ -203,5 +219,9 @@ All of these are listed in the root `.gitignore`. **Never commit them.**
   Developer API is not enabled in its Google Cloud project.
 - **Play rejects the version code**: a build with that number exists; re-run
   with a higher `build_revision`.
-- **Docker push fails with 403**: Settings -> Actions -> General ->
-  Workflow permissions must be Read and write.
+- **Docker push fails with 403**: the job needs `packages: write` in its own
+  `permissions:` block. The repository default for `GITHUB_TOKEN` is
+  read-only on purpose; grant write per job, never repository-wide.
+- **Mobile build signs with a throwaway key / archives unsigned although the
+  secrets exist**: the job is not running in the `release` environment, or it
+  was started from a ref other than `main` or a `v*` tag.

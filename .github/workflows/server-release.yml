@@ -29,9 +29,14 @@ jobs:
 
       - name: Extract version
         id: meta
+        env:
+          REF: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          # strip leading "server-v"
-          REF="${{ github.event.inputs.tag || github.ref_name }}"
+          case "$REF" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::not a release tag: $REF"; exit 1 ;;
+          esac
+          case "$REF" in *[!0-9A-Za-z.+-]*) echo "::error::unexpected characters in tag: $REF"; exit 1 ;; esac
           VERSION="${REF#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"

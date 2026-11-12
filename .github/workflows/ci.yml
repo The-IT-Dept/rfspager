@@ -159,8 +159,9 @@ jobs:
       - name: dependency audit
         run: pnpm audit --audit-level=high
 
-  # Scan only the checked-out working tree. The repository's historical
-  # commits are intentionally excluded until its planned sanitized import.
+  # Scan the checked-out tree. History is not scanned: it holds long-retired
+  # PagerMon receiver keys and old client keys, all dead, kept deliberately.
+  # .gitleaks.toml allowlists public fixtures.
   secrets:
     name: secrets (current snapshot)
     runs-on: ubuntu-latest
@@ -172,5 +173,5 @@ jobs:
       - name: Scan current tree
         run: >-
           docker run --rm --volume "$GITHUB_WORKSPACE:/repo:ro"
-          zricethezav/gitleaks:v8.30.0
+          zricethezav/gitleaks:v8.30.0@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
           detect --source=/repo --no-git --redact

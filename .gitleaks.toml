@@ -1,0 +1,12 @@
+# Default gitleaks rules plus allowlists for public fixtures that look like
+# credentials but are not.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public test fixtures"
+paths = [
+  # Apple-signed App Store TEST notification (public certificate chain,
+  # bundle and app IDs only), used by internal/iap/apple_chain_test.go.
+  '''internal/iap/testdata/apple_test_notification\.jws$''',
+]
