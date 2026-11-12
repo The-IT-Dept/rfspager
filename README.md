@@ -25,7 +25,7 @@ The Go server has run production since October 2026 and replaced the earlier Lar
 
 ## Local development
 
-Use Go **1.27.3**, Node **22**, pnpm **10** for mobile, and npm for web. PostgreSQL **16** with PostGIS is required. Docker Compose provides a disposable loopback-only development database with no persistent volume:
+Use Go **1.27.4**, Node **22**, pnpm **10** for mobile, and npm for web. PostgreSQL **16** with PostGIS is required. Docker Compose provides a disposable loopback-only development database with no persistent volume:
 
 ```sh
 docker compose up -d postgres
