@@ -103,7 +103,20 @@ rather than a CTE):
    `correction: true`, `correction_body`, `first_pushed_at`, `pushed_at = NULL`.
    `message`/`body` keep what was actually pushed (the admin page compares them).
 
-`rfs_dispatch` is notified whenever any row was touched. If the new copy is undamaged
+"Undamaged" alone wasn't enough on prod: the first live correction (19 Nov 04:40 UTC,
+97 pushes) swapped `… 15:40:30 CCKARIO` for `… 15:40:30 CCKARIOP`, two pages of one
+dispatch to sibling units that the 30-char prefix rule has always folded into one row.
+So a replacement is a **repair** (`repairs`) only when the new copy is undamaged, the
+stored copy needed repairs (damage score > 0), the new copy didn't lose words the stored
+one decoded cleanly (`lostWords`: ends early with a clean dropped tail), and the two are
+not **sibling pages** (`siblingPages`: equal word counts after dropping an on-air
+`***UNREGISTERED*** RSSI: NN` trailer; differences only in one early unit-code token
+with the same stem, an FRNSW `TURNOUT:` station number, clock times within 5 s, or a
+prefix-only last word). Over the week to 19 Nov: 60 sibling swaps and 6 lost-word
+replacements no longer correct anything; 125 differences remain repairs when the
+pushed copy needed them. `fixes` below means `repairs`.
+
+`rfs_dispatch` is notified whenever any row was touched. If the new copy repairs the page
 and the message was fanned out within 10 min, `fanned_out_at` is cleared and
 `rfs_refanout` notified: fan-out decides again on the clean copy (alertzones from
 corrected coordinates, a damaged re-send that was suppressed, a replay decision); the

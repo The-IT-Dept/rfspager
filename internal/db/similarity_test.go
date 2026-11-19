@@ -1,6 +1,7 @@
 package db
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -119,6 +120,71 @@ func TestDifferentPages(t *testing.T) {
 }
 
 var differentPagesApart = differentPages
+
+// The shapes RFS districts page sibling units in (prod, 13-19 Nov 2026),
+// with synthetic places; and decodes of one page that must still count as
+// repairs.
+func TestSiblingPages(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"appliance suffix", "19 November 2026 15:40:30 CCEXAMP - 26-100070 - MVA - OLD EXAMPLE HWY", "19 November 2026 15:40:30 CCEXAMPP - 26-100070 - MVA - OLD EXAMPLE HWY", true},
+		{"appliance number", "18 November 2026 09:54:42 LHEXAMP1 - 26-100071 - MVA - EXAMPLE RD", "18 November 2026 09:54:42 LHEXAMP7 - 26-100071 - MVA - EXAMPLE RD", true},
+		{"stop message", "13 November 2026 13:14:38 26-100072 CCEXAMP Stop Message // 1 EXAMPLE RD", "13 November 2026 13:14:38 26-100072 CCEXAMP1 Stop Message // 1 EXAMPLE RD", true},
+		{"time-only header", "08:54:52 SNEXAMP - 26-100073 - AFA - INCIDENT CALL", "08:54:52 SNEXAMPP - 26-100073 - AFA - INCIDENT CALL", true},
+		{"time-only, two seconds apart", "17:26:35 WSEXAMP - 26-100074 - Grass - FIRECALL", "17:26:37 WSEXAMPP - 26-100074 - Grass - FIRECALL", true},
+		{"capital month", "18 NOVEMBER 2026 15:40:10 SHEXAMP - 26-100075 - MVA", "18 NOVEMBER 2026 15:40:10 SHEXAMP1 - 26-100075 - MVA", true},
+		{"no header", "NBEXAMP - 26-100076 - MVA - EXAMPLE DR", "NBEXAMP1 - 26-100076 - MVA - EXAMPLE DR", true},
+		{"a repaired letter in the address", "LHOPS18 - 26-100077 - CFR CALL - 2639 EXAMPLE RD,kXAMPLE TOWN", "LHOPS18 - 26-100077 - CFR CALL - 2639 EXAMPLE RD,EXAMPLE TOWN", false},
+		{"a dropped letter", "FRINC TYPE: ASSIST AMBULANE TURNOUT: 78 INC: 100078-15112026", "FRINC TYPE: ASSIST AMBULANCE TURNOUT: 78 INC: 100078-15112026", false},
+		{"a dropped digit", "13 November 2026 04:03:45 HKDO - 26-10079 - AFA", "13 November 2026 04:03:45 HKDO - 26-100079 - AFA", false},
+		{"sibling and a repair", "08:54:52 SNEXAMP - 26-100073 - AFA - INCIDENT CALL - p1 EXAMPLE ST", "08:54:52 SNEXAMPP - 26-100073 - AFA - INCIDENT CALL - 09 EXAMPLE ST", false},
+		{"an alarm number late in the page", "18 November 2026 09:54:42 LHDO - 26-100071 - AFA - AFA0350154,EXAMPLE", "18 November 2026 09:54:42 LHDO - 26-100071 - AFA - AFA0350155,EXAMPLE", false},
+		{"identical", "08:54:52 SNEXAMP - x", "08:54:52 SNEXAMP - x", false},
+		{"FRNSW: another station for the same incident", "FRINC TYPE: AFA TURNOUT: 84 INC: 100082-14112026", "FRINC TYPE: AFA TURNOUT: 79 INC: 100082-14112026", true},
+		{"FRNSW: a different incident", "FRINC TYPE: AFA TURNOUT: 84 INC: 100082-14112026", "FRINC TYPE: AFA TURNOUT: 84 INC: 100083-14112026", false},
+		{"on-air trailer differs", "18 NOVEMBER 2026 15:40:10 SHEXAMP - 26-100075 - MVA - [150.6,-34.1]  ***UNREGISTERED*** RSSI: 92 ", "18 NOVEMBER 2026 15:40:10 SHEXAMP1 - 26-100075 - MVA - [150.6,-34.1]  ***UNREGISTERED*** RSSI: 93 ", true},
+		{"sibling cut a character shorter", "19 November 2026 10:00:00 CCEXAMP - 26-100081 - MVA - [151.370742797852,-33.1589", "19 November 2026 10:00:00 CCEXAMP1 - 26-100081 - MVA - [151.370742797852,-33.158", true},
+		{"only the end differs", "19 November 2026 10:00:00 CCEXAMP - 26-100081 - MVA - [151.3707,-33.1589", "19 November 2026 10:00:00 CCEXAMP - 26-100081 - MVA - [151.3707,-33.15", false},
+	}
+	for _, c := range cases {
+		if got := siblingPages(c.a, c.b); got != c.want {
+			t.Errorf("%s: siblingPages = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestRepairs(t *testing.T) {
+	clean := &rxproto.PageQuality{Codewords: 40}
+	lightly := &rxproto.PageQuality{Codewords: 40, Corrected: 2}
+	full := "18 November 2026 14:41:11 HKEXAMP1 - 26-100080 - Car fire - VEHICLE FIRE - EXAMPLE RD,EXAMPLEVILLE (NSW),2076 - [151.1,-33.7]"
+	if !repairs(strings.Replace(full, "EXAMPLE RD", "EXAMPLE R`", 1), lightly, full, clean) {
+		t.Error("a clean copy of a page pushed with a wrong character repairs it")
+	}
+	if repairs(full, clean, strings.Replace(full, "Car", "Cxr", 1), clean) {
+		t.Error("a clean copy replacing a clean one repairs nothing")
+	}
+	if repairs(full, lightly, full[:len(full)-20], clean) {
+		t.Error("a copy that lost the end of the page repairs nothing")
+	}
+	if !repairs(full+" x%&q", lightly, full, clean) {
+		t.Error("dropping garbage the pushed copy ended with is a repair")
+	}
+	if !repairs(full+" ZQXW", &rxproto.PageQuality{Codewords: 42, Corrected: 2, Uncorrectable: 1, Damaged: [][2]int{{len(full) + 1, len(full) + 5}}}, full, clean) {
+		t.Error("dropping an unrepairable tail is a repair")
+	}
+	if !repairs(strings.Replace(full, "HKEXAMP1", "HKEXAMPW1", 1), lightly, full, clean) {
+		t.Error("a repaired unit code that came out shorter is a repair")
+	}
+	if !repairs(full[:60], &rxproto.PageQuality{Codewords: 20, Truncated: true}, full, clean) {
+		t.Error("a complete copy repairs one that was cut short")
+	}
+	if repairs(full, lightly, strings.Replace(full, "HKEXAMP1", "HKEXAMP7", 1), clean) {
+		t.Error("a sibling unit's page repairs nothing")
+	}
+}
 
 func TestSuspectCopy(t *testing.T) {
 	cases := []struct {

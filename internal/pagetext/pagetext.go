@@ -6,6 +6,7 @@ package pagetext
 import (
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 	_ "time/tzdata" // the static server binary must not depend on the host's zoneinfo
@@ -25,7 +26,8 @@ var sydney = func() *time.Location {
 var (
 	// "19 November 2026 08:48:11 HVDO - ..." (RFS) and
 	// "19 November 2026 11:14:22  NO PERSONS ..." (SES, two spaces).
-	longHeader = regexp.MustCompile(`^(\d{1,2}) ([A-Z][a-z]+) (\d{4}) (\d{2}):(\d{2}):(\d{2})(?:\s|$)`)
+	// Some districts write the month in capitals ("18 NOVEMBER 2026").
+	longHeader = regexp.MustCompile(`^(\d{1,2}) ([A-Z][A-Za-z]+) (\d{4}) (\d{2}):(\d{2}):(\d{2})(?:\s|$)`)
 	// "2026-11-19 12:42:53 PAGING TEST MESSAGE ..."
 	isoHeader = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\s|$)`)
 )
@@ -45,7 +47,8 @@ var months = map[string]time.Month{
 func DispatchTime(text string, near time.Time) (at time.Time, headerLen int, ok bool) {
 	var y, mo, d, h, mi, s int
 	if m := longHeader.FindStringSubmatchIndex(text); m != nil {
-		month, known := months[text[m[4]:m[5]]]
+		name := text[m[4]:m[5]]
+		month, known := months[name[:1]+strings.ToLower(name[1:])]
 		if !known {
 			return time.Time{}, 0, false
 		}
