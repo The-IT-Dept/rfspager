@@ -337,13 +337,14 @@ func (w *FanoutWorker) processMessage(ctx context.Context, messageID int64) {
 
 	if replay {
 		// A message fan-out reopened (a better copy arrived) may already
-		// have been pushed: then it is not "not pushed", and its earlier
-		// hold stays on record.
+		// have been pushed, from a first copy whose header couldn't be
+		// read: then it is a replay recognised too late, not "not pushed",
+		// and its earlier hold stays on record.
 		if _, err := w.db.ExecContext(ctx,
 			`UPDATE messages m
 			    SET fanned_out_at = NOW(),
 			        push_skip_reason = CASE WHEN EXISTS (SELECT 1 FROM notifications n WHERE n.message_id = m.id)
-			                                THEN NULL ELSE 'replay' END,
+			                                THEN 'replay_after_push' ELSE 'replay' END,
 			        push_lag_s = $2,
 			        push_hold_ms = COALESCE(NULLIF($3, 0), push_hold_ms)
 			  WHERE id = $1 AND fanned_out_at IS NULL`,

@@ -160,13 +160,13 @@ func TestFanoutSuppressesOnlyCorroboratedReplays(t *testing.T) {
 	}
 
 	// Fan-out reopened (a better copy arrived) on a page already pushed: no
-	// new pushes, and not labelled "not pushed".
+	// new pushes, and labelled a replay recognised too late, not "not pushed".
 	if _, err := f.conn.ExecContext(ctx, `UPDATE messages SET fanned_out_at = NULL, push_skip_reason = NULL WHERE id = $1`, lone); err != nil {
 		t.Fatal(err)
 	}
 	f.worker.processMessage(ctx, lone)
 	s = f.state(t, lone)
-	if s.notified != 1 || !s.fanned || s.skip.Valid {
+	if s.notified != 1 || !s.fanned || s.skip.String != "replay_after_push" {
 		t.Fatalf("an already-pushed page re-decided during a burst: %+v", s)
 	}
 }

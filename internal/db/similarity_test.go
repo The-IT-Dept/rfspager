@@ -83,6 +83,9 @@ func TestFragmentOfSameTransmission(t *testing.T) {
 
 func TestDifferentPages(t *testing.T) {
 	near := time.Date(2026, 10, 13, 20, 50, 0, 0, time.UTC)
+	differentPages := func(a string, aQ *rxproto.PageQuality, b string, bQ *rxproto.PageQuality, near time.Time) bool {
+		return differentPages(a, aQ, b, bQ, near, time.Second)
+	}
 	clean := &rxproto.PageQuality{Codewords: 50}
 	if !differentPages(rayteClean, clean, rayteOtherJob, clean, near) {
 		t.Fatal("another job to the same brigade a minute later is a different page")
@@ -100,10 +103,18 @@ func TestDifferentPages(t *testing.T) {
 		t.Fatal("a damaged incident number says nothing")
 	}
 	miscorrected := "14 October 2026 07:46:03 LHRaYE - 26-131549 - Power pole alight - FIRECALL - 158F MASONITE RD,TOMAGO,PORT STEPHENS (NSW),2322 - [151.763336,-32.801304]"
-	if differentPages(miscorrected, &rxproto.PageQuality{Codewords: 54, Corrected: 40}, rayteClean, clean, near) {
-		t.Fatal("an incident number from a heavily corrected copy says nothing")
+	heavy := &rxproto.PageQuality{Codewords: 54, Corrected: 40}
+	if differentPages(miscorrected, heavy, rayteClean, clean, near) {
+		t.Fatal("a heavily corrected copy's incident number is not held against a copy of the same transmission")
+	}
+	heavyTurnout := &rxproto.PageQuality{Codewords: 18, Corrected: 9}
+	if !differentPagesApart("FRINC TYPE: AFA TURNOUT: 101 INC: 100001-17112026", heavyTurnout,
+		"FRINC TYPE: AFA TURNOUT: 101 INC: 100002-17112026", clean, near, time.Minute) {
+		t.Fatal("two turnouts to one station a minute apart are different calls, however the first decoded")
 	}
 }
+
+var differentPagesApart = differentPages
 
 func TestSuspectCopy(t *testing.T) {
 	cases := []struct {

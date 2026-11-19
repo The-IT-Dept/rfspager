@@ -117,7 +117,7 @@ func HeaderTrusted(text string, q *rxproto.PageQuality, headerLen int) bool {
 	if q == nil {
 		return GarbleCount(text) == 0
 	}
-	if q.Codewords > 0 && q.Corrected*2 >= q.Codewords {
+	if HeavilyCorrected(q) {
 		return false
 	}
 	if q.Uncorrectable > 0 && len(q.Damaged) == 0 {
@@ -241,14 +241,13 @@ var (
 )
 
 // IncidentID is the incident number a page names (RFS "26-134814", FRNSW
-// "INC: 228486-17112026"), if one decoded cleanly: none of its characters
-// came from an unrepairable codeword, and the copy was not so heavily
-// corrected that a repair may have landed on the wrong digit. Two copies
-// naming different incidents are different pages however alike they read.
+// "INC: 228486-17112026"), if none of its characters came from an
+// unrepairable codeword. Two copies naming different incidents are different
+// pages however alike they read; for an FRNSW turnout the number is the only
+// thing that tells two calls to one station apart. (A heavily corrected copy
+// may carry a repaired-wrong digit; callers weigh that, see
+// HeavilyCorrected.)
 func IncidentID(text string, q *rxproto.PageQuality) (string, bool) {
-	if q != nil && q.Codewords > 0 && q.Corrected*2 >= q.Codewords {
-		return "", false
-	}
 	if m := frnswIncident.FindStringSubmatchIndex(text); m != nil && intact(q, m[2], m[3]) {
 		return "INC " + text[m[2]:m[3]], true
 	}
@@ -256,6 +255,12 @@ func IncidentID(text string, q *rxproto.PageQuality) (string, bool) {
 		return text[m[0]:m[1]], true
 	}
 	return "", false
+}
+
+// HeavilyCorrected reports whether half or more of a copy's codewords needed
+// repair, enough that some repair may have landed on the wrong character.
+func HeavilyCorrected(q *rxproto.PageQuality) bool {
+	return q != nil && q.Codewords > 0 && q.Corrected*2 >= q.Codewords
 }
 
 // intact reports whether bytes [start, end) of a copy decoded cleanly.

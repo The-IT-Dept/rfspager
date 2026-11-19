@@ -337,6 +337,27 @@ func TestMiscorrectedIncidentNumberStillMerges(t *testing.T) {
 	}
 }
 
+// Two FRNSW turnouts to one station differ only in their incident number.
+// However badly one of them decoded, the second call is its own page: never
+// folded into the first (a quiet "(corrected)" push) nor dropped.
+func TestDistinctTurnoutsToOneStationStayApart(t *testing.T) {
+	d, sys := managedSystemDB(t)
+	capcode := seedCapcode(t, d, "0100072", "72 Example")
+	at := time.Now().UTC().Truncate(time.Second)
+	heavy := &rxproto.PageQuality{Codewords: 18, Corrected: 9}
+	clean := &rxproto.PageQuality{Codewords: 18}
+
+	mustUpsert(t, d, pageAt(sys, capcode, "0100072", "FRINC TYPE: AFA TURNOUT: 72 INC: 203357-13102026", at, heavy), MessageCreated)
+	// 20 s later: same first 30 characters (prefix rule).
+	mustUpsert(t, d, pageAt(sys, capcode, "0100072", "FRINC TYPE: AFA TURNOUT: 72 INC: 203380-13102026", at.Add(20*time.Second), clean), MessageCreated)
+	// 60 s later: the similarity rule (the first copy is suspect).
+	mustUpsert(t, d, pageAt(sys, capcode, "0100072", "FRINC TYPE: AFA TURNOUT: 72 INC: 203412-13102026", at.Add(time.Minute), clean), MessageCreated)
+	// A heavily corrected call after clean ones is not a duplicate of them.
+	mustUpsert(t, d, pageAt(sys, capcode, "0100072", "FRINC TYPE: MVA TURNOUT: 72 INC: 203499-13102026", at.Add(2*time.Minute), heavy), MessageCreated)
+	// The same call heard again is still a duplicate.
+	mustUpsert(t, d, pageAt(sys, capcode, "0100072", "FRINC TYPE: AFA TURNOUT: 72 INC: 203412-13102026", at.Add(61*time.Second), clean), MessageDuplicate)
+}
+
 func itoa(n int64) string {
 	b, _ := json.Marshal(n)
 	return string(b)

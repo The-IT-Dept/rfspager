@@ -3,7 +3,8 @@
 --
 --   push_skip_reason  'replay': stored but nobody woken, because the paging
 --                     network was re-sending old backlog (see
---                     internal/pagetext ReplayWatch).
+--                     internal/pagetext ReplayWatch). 'replay_after_push':
+--                     recognised as a replay only after it was pushed.
 --   push_lag_s        how far behind its own header the page was heard,
 --                     when that decided anything.
 --   push_hold_ms      how long fan-out held a damaged copy (or a stale page

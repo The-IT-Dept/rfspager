@@ -114,8 +114,11 @@ function fmtLag(seconds: number) {
 // it didn't push, a late page it pushed anyway, a damaged copy it held.
 function pushDecision(msg: { push_skip_reason?: string | null; push_lag_s?: number | null; push_hold_ms?: number | null }) {
   const parts: string[] = [];
+  const heard = msg.push_lag_s ? `, heard ${fmtLag(msg.push_lag_s)} after dispatch` : "";
   if (msg.push_skip_reason === "replay") {
-    parts.push(`not pushed: the network re-sending old backlog${msg.push_lag_s ? `, heard ${fmtLag(msg.push_lag_s)} after dispatch` : ""}`);
+    parts.push(`not pushed: the network re-sending old backlog${heard}`);
+  } else if (msg.push_skip_reason === "replay_after_push") {
+    parts.push(`pushed, then recognised as the network re-sending old backlog${heard}`);
   } else if (msg.push_skip_reason) {
     parts.push(`not pushed: ${msg.push_skip_reason}`);
   } else if (msg.push_lag_s) {
