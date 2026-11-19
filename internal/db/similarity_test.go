@@ -143,6 +143,9 @@ func TestSiblingPages(t *testing.T) {
 		{"sibling and a repair", "08:54:52 SNEXAMP - 26-100073 - AFA - INCIDENT CALL - p1 EXAMPLE ST", "08:54:52 SNEXAMPP - 26-100073 - AFA - INCIDENT CALL - 09 EXAMPLE ST", false},
 		{"an alarm number late in the page", "18 November 2026 09:54:42 LHDO - 26-100071 - AFA - AFA0350154,EXAMPLE", "18 November 2026 09:54:42 LHDO - 26-100071 - AFA - AFA0350155,EXAMPLE", false},
 		{"identical", "08:54:52 SNEXAMP - x", "08:54:52 SNEXAMP - x", false},
+		{"FRNSW: another station for the same incident", "FRINC TYPE: AFA TURNOUT: 84 INC: 100082-14112026", "FRINC TYPE: AFA TURNOUT: 79 INC: 100082-14112026", true},
+		{"FRNSW: a different incident", "FRINC TYPE: AFA TURNOUT: 84 INC: 100082-14112026", "FRINC TYPE: AFA TURNOUT: 84 INC: 100083-14112026", false},
+		{"on-air trailer differs", "18 NOVEMBER 2026 15:40:10 SHEXAMP - 26-100075 - MVA - [150.6,-34.1]  ***UNREGISTERED*** RSSI: 92 ", "18 NOVEMBER 2026 15:40:10 SHEXAMP1 - 26-100075 - MVA - [150.6,-34.1]  ***UNREGISTERED*** RSSI: 93 ", true},
 		{"sibling cut a character shorter", "19 November 2026 10:00:00 CCEXAMP - 26-100081 - MVA - [151.370742797852,-33.1589", "19 November 2026 10:00:00 CCEXAMP1 - 26-100081 - MVA - [151.370742797852,-33.158", true},
 		{"only the end differs", "19 November 2026 10:00:00 CCEXAMP - 26-100081 - MVA - [151.3707,-33.1589", "19 November 2026 10:00:00 CCEXAMP - 26-100081 - MVA - [151.3707,-33.15", false},
 	}
@@ -165,6 +168,15 @@ func TestRepairs(t *testing.T) {
 	}
 	if repairs(full, lightly, full[:len(full)-20], clean) {
 		t.Error("a copy that lost the end of the page repairs nothing")
+	}
+	if !repairs(full+" x%&q", lightly, full, clean) {
+		t.Error("dropping garbage the pushed copy ended with is a repair")
+	}
+	if !repairs(full+" ZQXW", &rxproto.PageQuality{Codewords: 42, Corrected: 2, Uncorrectable: 1, Damaged: [][2]int{{len(full) + 1, len(full) + 5}}}, full, clean) {
+		t.Error("dropping an unrepairable tail is a repair")
+	}
+	if !repairs(strings.Replace(full, "HKEXAMP1", "HKEXAMPW1", 1), lightly, full, clean) {
+		t.Error("a repaired unit code that came out shorter is a repair")
 	}
 	if !repairs(full[:60], &rxproto.PageQuality{Codewords: 20, Truncated: true}, full, clean) {
 		t.Error("a complete copy repairs one that was cut short")

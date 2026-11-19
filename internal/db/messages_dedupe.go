@@ -224,18 +224,55 @@ func findDuplicate(ctx context.Context, q queryer, address, message string, ts t
 // repairs reports whether a better copy fixes the text already stored (and
 // pushed), rather than just replacing it: the new copy is undamaged, the
 // stored one was not (it needed repairs, lost codewords, was cut short or,
-// with no quality record, shows garble), the new text isn't shorter (unless
-// the stored copy was cut short: a "better" copy that lost words fixes
-// nothing), and they are not sibling pages. Only then is a correction push
-// or a second fan-out warranted.
+// with no quality record, shows garble), the new copy didn't lose words the
+// stored one decoded cleanly, and they are not sibling pages. Only then is a
+// correction push or a second fan-out warranted.
 func repairs(oldText string, oldQ *rxproto.PageQuality, newText string, newQ *rxproto.PageQuality) bool {
 	if pagetext.Damaged(newText, newQ) || damageScore(oldText, oldQ) == 0 {
 		return false
 	}
-	if len(strings.TrimSpace(newText)) < len(strings.TrimSpace(oldText)) && (oldQ == nil || !oldQ.Truncated) {
+	return !lostWords(oldText, oldQ, newText) && !siblingPages(oldText, newText)
+}
+
+// lostWords reports whether the new copy ends early (fewer words, or its
+// last word cut short) where the stored copy went on with text that decoded
+// cleanly: the "better" copy lost part of the page. Extra words in the
+// stored copy that are garbage (garble characters, unrepairable codewords)
+// are not a loss, nor is anything when the stored copy was itself cut short.
+func lostWords(oldText string, oldQ *rxproto.PageQuality, newText string) bool {
+	if oldQ != nil && oldQ.Truncated {
 		return false
 	}
-	return !siblingPages(oldText, newText)
+	of, nf := strings.Fields(oldText), strings.Fields(newText)
+	if len(nf) == 0 || len(nf) > len(of) {
+		return false
+	}
+	last, same := nf[len(nf)-1], of[len(nf)-1]
+	var tail string
+	switch {
+	case len(nf) < len(of) && (last == same || strings.HasPrefix(same, last)):
+		tail = same[len(last):] + " " + strings.Join(of[len(nf):], " ")
+	case len(nf) == len(of) && len(last) < len(same) && strings.HasPrefix(same, last):
+		tail = same[len(last):]
+	default:
+		return false
+	}
+	tail = strings.TrimSpace(tail)
+	if pagetext.GarbleCount(tail) > 0 {
+		return false
+	}
+	if oldQ != nil {
+		if oldQ.Uncorrectable > 0 && len(oldQ.Damaged) == 0 {
+			return false
+		}
+		from := len(strings.TrimRight(oldText, " \t\r\n")) - len(tail)
+		for _, r := range oldQ.Damaged {
+			if r[1] > from {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 var (
@@ -244,6 +281,11 @@ var (
 	unitCode = regexp.MustCompile(`^[A-Z]{2}[A-Z0-9]{3,10}$`)
 	// clockTime is a page's own time of day ("17:26:35").
 	clockTime = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}$`)
+	// station is an FRNSW station number, after "TURNOUT:".
+	station = regexp.MustCompile(`^\d{1,3}$`)
+	// onAirTrailer is what some district transmitters append to every page
+	// and that differs between transmissions ("***UNREGISTERED*** RSSI: 92").
+	onAirTrailer = regexp.MustCompile(`(?:\s*\*{3}UNREGISTERED\*{3})?(?:\s*RSSI:\s*\d+)?\s*$`)
 )
 
 // siblingPages reports whether two copies are different pages of one
@@ -251,10 +293,13 @@ var (
 // brigade in turn on the same capcode, a second or two apart, so the texts
 // differ only in the unit code ("CCKARIO" and "CCKARIOP", "LHMEDOW1" and
 // "LHMEDOW7"), perhaps the page's own clock time, and where the network cut
-// the last word ("-33.1589" and "-33.158"). The dedupe keeps one of them;
+// the last word ("-33.1589" and "-33.158"); FRNSW turns out several stations
+// to one incident ("TURNOUT: 84", "TURNOUT: 79"). An on-air trailer that
+// differs per transmission is ignored. The dedupe keeps one of them;
 // swapping one for the other corrects nothing.
 func siblingPages(a, b string) bool {
-	at, bt := strings.Fields(a), strings.Fields(b)
+	at := strings.Fields(onAirTrailer.ReplaceAllString(a, ""))
+	bt := strings.Fields(onAirTrailer.ReplaceAllString(b, ""))
 	if len(at) != len(bt) {
 		return false
 	}
@@ -270,6 +315,8 @@ func siblingPages(a, b string) bool {
 		case i <= 5 && unitCode.MatchString(x) && unitCode.MatchString(y) && sameUnitStem(x, y):
 			// The unit code comes early: after the clock time, or after the
 			// incident number in a stop message, or first of all.
+			units++
+		case i > 0 && at[i-1] == "TURNOUT:" && station.MatchString(x) && station.MatchString(y):
 			units++
 		default:
 			return false
