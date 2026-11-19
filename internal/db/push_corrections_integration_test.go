@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -372,6 +373,52 @@ func TestSameTransmissionWithWrongDigitIsDuplicate(t *testing.T) {
 	mustUpsert(t, d, pageAt(sys, capcode, "0100073", "FRINC TYPE: AFA TURNOUT: 73 INC: 203351-13102026", at.Add(time.Second),
 		&rxproto.PageQuality{Codewords: 18, Corrected: 3}), MessageDuplicate)
 	mustUpsert(t, d, pageAt(sys, capcode, "0100073", "FRINC TYPE: AFA TURNOUT: 73 INC: 203357-13102026", at.Add(2*time.Second), nil), MessageDuplicate)
+}
+
+// RFS pages each unit of a brigade on the same capcode with the same
+// dispatch time ("... 15:40:30 CCEXAMP", "... 15:40:30 CCEXAMPP"). The dedupe
+// folds them into one row as it always has, but nobody gets a "(corrected)"
+// push for it (prod, 19 Nov 2026, 97 of them), and fan-out isn't reopened.
+// Nor does a clean copy replacing a clean copy correct anything.
+func TestSiblingUnitPageIsNotACorrection(t *testing.T) {
+	d, sys := managedSystemDB(t)
+	ctx := context.Background()
+	capcode := seedCapcode(t, d, "0570176", "Example")
+	at := time.Now().UTC().Truncate(time.Second)
+	for i, firstQ := range []*rxproto.PageQuality{{Codewords: 45, Corrected: 2}, {Codewords: 45}} {
+		suffix := []string{"A", "B"}[i]
+		first := pageAt(sys, capcode, "0570176", "19 November 2026 15:40:3"+itoa(int64(i))+" CCEXAMP - 26-10007"+itoa(int64(i))+" - MVA - OLD EXAMPLE HWY,EXAMPLEVILLE "+suffix,
+			at.Add(time.Duration(i)*10*time.Minute), firstQ)
+		mustUpsert(t, d, first, MessageCreated)
+		if _, err := d.conn.ExecContext(ctx, `UPDATE messages SET fanned_out_at = NOW() WHERE id = $1`, first.ID); err != nil {
+			t.Fatal(err)
+		}
+		var userID int64
+		if err := d.conn.QueryRowContext(ctx, `INSERT INTO users (user_id, email, password) VALUES (gen_random_uuid(), $1, '!') RETURNING id`,
+			"sib"+suffix+"@example.invalid").Scan(&userID); err != nil {
+			t.Fatal(err)
+		}
+		var id string
+		if err := d.conn.QueryRowContext(ctx,
+			`INSERT INTO notifications (id, type, notifiable_type, notifiable_id, data, message_id, push_required, pushed_at, push_attempts, created_at, updated_at)
+			 VALUES (gen_random_uuid(), 'App\Notifications\PagerNotification', 'App\Models\User', $1, $2, $3, true, NOW(), 1, NOW(), NOW())
+			 RETURNING id::text`, userID, `{"id": 1, "message": "m", "body": "m"}`, first.ID).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		sibling := pageAt(sys, capcode, "0570176", strings.Replace(first.Message, "CCEXAMP ", "CCEXAMPP ", 1),
+			first.CreatedAt.Add(6*time.Second), &rxproto.PageQuality{Codewords: 45})
+		mustUpsert(t, d, sibling, MessageReplaced)
+		if s := readNotif(t, d, id); s.data["correction"] != nil || !s.pushedAt.Valid {
+			t.Errorf("case %d: a sibling unit's page is not a correction: %v", i, s.data)
+		}
+		var fanned sql.NullTime
+		if err := d.conn.QueryRowContext(ctx, `SELECT fanned_out_at FROM messages WHERE id = $1`, first.ID).Scan(&fanned); err != nil {
+			t.Fatal(err)
+		}
+		if !fanned.Valid {
+			t.Errorf("case %d: fan-out must not reopen for a sibling page", i)
+		}
+	}
 }
 
 func itoa(n int64) string {

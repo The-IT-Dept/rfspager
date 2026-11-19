@@ -221,6 +221,30 @@ func findDuplicate(ctx context.Context, q queryer, address, message string, ts t
 	return nil, false, nil
 }
 
+// repairs reports whether a better copy fixes the text already stored (and
+// pushed), rather than just replacing it: the new copy is undamaged, the
+// stored one was not (it needed repairs, lost codewords, was cut short or,
+// with no quality record, shows garble), and they are not sibling pages.
+// Only then is a correction push or a second fan-out warranted.
+func repairs(oldText string, oldQ *rxproto.PageQuality, newText string, newQ *rxproto.PageQuality) bool {
+	return !pagetext.Damaged(newText, newQ) &&
+		damageScore(oldText, oldQ) > 0 &&
+		!siblingPages(oldText, oldQ, newText, newQ)
+}
+
+// siblingPages reports whether two copies are different pages of one
+// dispatch. RFS pages each unit of a brigade in turn, on the same capcode and
+// with the same dispatch time, so their headers differ only in the unit code
+// ("19 November 2026 15:40:30 CCKARIO" and "... CCKARIOP"). The dedupe keeps
+// one of them, but swapping one for the other corrects nothing.
+func siblingPages(aText string, aQ *rxproto.PageQuality, bText string, bQ *rxproto.PageQuality) bool {
+	a, b := rfsHeader.FindString(aText), rfsHeader.FindString(bText)
+	if a == "" || b == "" || a == b {
+		return false
+	}
+	return pagetext.HeaderTrusted(aText, aQ, len(a)) && pagetext.HeaderTrusted(bText, bQ, len(b))
+}
+
 // differentPages reports whether two copies name different dispatches in
 // text that decoded cleanly: header times more than two seconds apart, or
 // different incident numbers. Re-sends of one page repeat both exactly;
@@ -592,7 +616,7 @@ func (d *DB) UpsertMessageDeduped(ctx context.Context, msg *models.Message) (str
 			existing.ID, msg.Message, msg.MD5, msg.Lat, msg.Lng, qualityJSON, msg.SystemID, incidentKey, msg.UpdatedAt); err != nil {
 			return "", err
 		}
-		fixes := !pagetext.Damaged(msg.Message, msg.Quality)
+		fixes := repairs(existing.Message, existingQuality, msg.Message, msg.Quality)
 		if err := carryToNotifications(ctx, tx, existing.ID, msg.Message, fixes); err != nil {
 			return "", err
 		}
