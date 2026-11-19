@@ -46,7 +46,7 @@ type duplicateRow struct {
 // spaces after the time; the paging test pages use an ISO date). Two copies
 // with the same header are the same page whenever they are heard: the header
 // carries the dispatch time to the second.
-var rfsHeader = regexp.MustCompile(`^(?:\d{1,2} [A-Z][a-z]+ \d{4}|\d{4}-\d{2}-\d{2}) \d{2}:\d{2}:\d{2} +\S+`)
+var rfsHeader = regexp.MustCompile(`^(?:\d{1,2} [A-Z][A-Za-z]+ \d{4}|\d{4}-\d{2}-\d{2}) \d{2}:\d{2}:\d{2} +\S+`)
 
 // Similarity thresholds for the text-distance rules below, as a fraction of
 // the text that matches after edits.
@@ -224,25 +224,83 @@ func findDuplicate(ctx context.Context, q queryer, address, message string, ts t
 // repairs reports whether a better copy fixes the text already stored (and
 // pushed), rather than just replacing it: the new copy is undamaged, the
 // stored one was not (it needed repairs, lost codewords, was cut short or,
-// with no quality record, shows garble), and they are not sibling pages.
-// Only then is a correction push or a second fan-out warranted.
+// with no quality record, shows garble), the new text isn't shorter (unless
+// the stored copy was cut short: a "better" copy that lost words fixes
+// nothing), and they are not sibling pages. Only then is a correction push
+// or a second fan-out warranted.
 func repairs(oldText string, oldQ *rxproto.PageQuality, newText string, newQ *rxproto.PageQuality) bool {
-	return !pagetext.Damaged(newText, newQ) &&
-		damageScore(oldText, oldQ) > 0 &&
-		!siblingPages(oldText, oldQ, newText, newQ)
-}
-
-// siblingPages reports whether two copies are different pages of one
-// dispatch. RFS pages each unit of a brigade in turn, on the same capcode and
-// with the same dispatch time, so their headers differ only in the unit code
-// ("19 November 2026 15:40:30 CCKARIO" and "... CCKARIOP"). The dedupe keeps
-// one of them, but swapping one for the other corrects nothing.
-func siblingPages(aText string, aQ *rxproto.PageQuality, bText string, bQ *rxproto.PageQuality) bool {
-	a, b := rfsHeader.FindString(aText), rfsHeader.FindString(bText)
-	if a == "" || b == "" || a == b {
+	if pagetext.Damaged(newText, newQ) || damageScore(oldText, oldQ) == 0 {
 		return false
 	}
-	return pagetext.HeaderTrusted(aText, aQ, len(a)) && pagetext.HeaderTrusted(bText, bQ, len(b))
+	if len(strings.TrimSpace(newText)) < len(strings.TrimSpace(oldText)) && (oldQ == nil || !oldQ.Truncated) {
+		return false
+	}
+	return !siblingPages(oldText, newText)
+}
+
+var (
+	// unitCode is an RFS unit or turnout group: district prefix, station
+	// abbreviation, optional appliance suffix ("CCKARIO", "LHMEDOW7").
+	unitCode = regexp.MustCompile(`^[A-Z]{2}[A-Z0-9]{3,10}$`)
+	// clockTime is a page's own time of day ("17:26:35").
+	clockTime = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}$`)
+)
+
+// siblingPages reports whether two copies are different pages of one
+// dispatch rather than two decodes of one page. RFS pages each unit of a
+// brigade in turn on the same capcode, a second or two apart, so the texts
+// differ only in the unit code ("CCKARIO" and "CCKARIOP", "LHMEDOW1" and
+// "LHMEDOW7"), perhaps the page's own clock time, and where the network cut
+// the last word ("-33.1589" and "-33.158"). The dedupe keeps one of them;
+// swapping one for the other corrects nothing.
+func siblingPages(a, b string) bool {
+	at, bt := strings.Fields(a), strings.Fields(b)
+	if len(at) != len(bt) {
+		return false
+	}
+	units := 0
+	for i := range at {
+		x, y := at[i], bt[i]
+		if x == y {
+			continue
+		}
+		switch {
+		case clockTime.MatchString(x) && clockTime.MatchString(y) && secondsApart(x, y) <= 5:
+		case i == len(at)-1 && (strings.HasPrefix(x, y) || strings.HasPrefix(y, x)):
+		case i <= 5 && unitCode.MatchString(x) && unitCode.MatchString(y) && sameUnitStem(x, y):
+			// The unit code comes early: after the clock time, or after the
+			// incident number in a stop message, or first of all.
+			units++
+		default:
+			return false
+		}
+	}
+	return units == 1
+}
+
+// sameUnitStem: one code is the other with up to two more characters, or
+// they differ only in the last one.
+func sameUnitStem(x, y string) bool {
+	if len(x) > len(y) {
+		x, y = y, x
+	}
+	if strings.HasPrefix(y, x) {
+		return len(y)-len(x) <= 2
+	}
+	return len(x) == len(y) && x[:len(x)-1] == y[:len(y)-1]
+}
+
+func secondsApart(x, y string) int {
+	parse := func(s string) int {
+		var h, m, sec int
+		fmt.Sscanf(s, "%d:%d:%d", &h, &m, &sec)
+		return h*3600 + m*60 + sec
+	}
+	d := parse(x) - parse(y)
+	if d < 0 {
+		d = -d
+	}
+	return d
 }
 
 // differentPages reports whether two copies name different dispatches in

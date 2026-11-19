@@ -30,6 +30,7 @@ func TestDispatchTime(t *testing.T) {
 		{"SES page with two spaces", "19 November 2026 11:14:22  NO PERSONS TRAPPED", "2026-11-19T00:15:00Z", "2026-11-19T00:14:22Z", 25},
 		{"header is the whole page", "18 November 2026 08:51:11", "2026-11-17T21:52:00Z", "2026-11-17T21:51:11Z", 25},
 		{"ISO header", "2026-11-19 12:42:53 PAGING TEST MESSAGE ONLY", "2026-11-19T01:43:00Z", "2026-11-19T01:42:53Z", 19},
+		{"capital month", "18 NOVEMBER 2026 15:40:10 SHEXAMP - 26-100075 - MVA", "2026-11-18T04:41:00Z", "2026-11-18T04:40:10Z", 25},
 		{"repeated hour read as daylight time", "5 April 2026 02:30:00 LHDO - x", "2026-04-04T15:31:00Z", "2026-04-04T15:30:00Z", 21},
 		{"repeated hour read as standard time", "5 April 2026 02:30:00 LHDO - x", "2026-04-04T16:31:00Z", "2026-04-04T16:30:00Z", 21},
 		{"skipped hour does not exist", "4 October 2026 02:30:00 LHDO - x", "2026-10-03T16:31:00Z", "", 0},
