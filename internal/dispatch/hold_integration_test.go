@@ -280,6 +280,9 @@ func TestDispatchCorrectionBookkeeping(t *testing.T) {
 	if n := sent(changed, claimed, false); n != 0 || !read(changed).Pushed {
 		t.Fatal("a correction is sent once")
 	}
+	if r := read(changed); r.Data["correction_body"] != "FRINC TYPE: MVA" {
+		t.Fatalf("the row records the correction that went out, got %+v", r.Data)
+	}
 
 	partial := newRow()
 	carry(partial, true)

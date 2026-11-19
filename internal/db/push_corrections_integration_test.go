@@ -358,6 +358,22 @@ func TestDistinctTurnoutsToOneStationStayApart(t *testing.T) {
 	mustUpsert(t, d, pageAt(sys, capcode, "0100072", "FRINC TYPE: AFA TURNOUT: 72 INC: 203412-13102026", at.Add(61*time.Second), clean), MessageDuplicate)
 }
 
+// Receivers' copies of one turnout a second apart, one with a digit of the
+// incident number repaired wrongly (or no quality record), are one page; and
+// a different call to the station earlier doesn't hide the real duplicate.
+func TestSameTransmissionWithWrongDigitIsDuplicate(t *testing.T) {
+	d, sys := managedSystemDB(t)
+	capcode := seedCapcode(t, d, "0100073", "73 Example")
+	at := time.Now().UTC().Truncate(time.Second)
+	clean := &rxproto.PageQuality{Codewords: 18}
+
+	mustUpsert(t, d, pageAt(sys, capcode, "0100073", "FRINC TYPE: AFA TURNOUT: 73 INC: 203300-13102026", at.Add(-20*time.Second), clean), MessageCreated)
+	mustUpsert(t, d, pageAt(sys, capcode, "0100073", "FRINC TYPE: AFA TURNOUT: 73 INC: 203357-13102026", at, clean), MessageCreated)
+	mustUpsert(t, d, pageAt(sys, capcode, "0100073", "FRINC TYPE: AFA TURNOUT: 73 INC: 203351-13102026", at.Add(time.Second),
+		&rxproto.PageQuality{Codewords: 18, Corrected: 3}), MessageDuplicate)
+	mustUpsert(t, d, pageAt(sys, capcode, "0100073", "FRINC TYPE: AFA TURNOUT: 73 INC: 203357-13102026", at.Add(2*time.Second), nil), MessageDuplicate)
+}
+
 func itoa(n int64) string {
 	b, _ := json.Marshal(n)
 	return string(b)

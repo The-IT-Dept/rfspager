@@ -96,8 +96,8 @@ func TestDifferentPages(t *testing.T) {
 	if differentPages(rayte1Garbled, &rxproto.PageQuality{Codewords: 54, Corrected: 34, Uncorrectable: 1}, rayte7Clean, clean, near) {
 		t.Fatal("a re-send whose incident number was damaged is still the same page")
 	}
-	if !differentPages(raymondClean, clean, "FRINC TYPE: AFA TURNOUT: 101 INC: 100009-17112026", clean, near) {
-		t.Fatal("two FRNSW incidents to the same station are different pages")
+	if !differentPagesApart(raymondClean, clean, "FRINC TYPE: AFA TURNOUT: 101 INC: 100009-17112026", clean, near, time.Minute) {
+		t.Fatal("two FRNSW incidents to the same station a minute apart are different pages")
 	}
 	if differentPages("FRINC TYPE: q^C TURNOUT: 101 IC: 100001-17112P26", nil, raymondClean, clean, near) {
 		t.Fatal("a damaged incident number says nothing")
@@ -106,6 +106,10 @@ func TestDifferentPages(t *testing.T) {
 	heavy := &rxproto.PageQuality{Codewords: 54, Corrected: 40}
 	if differentPages(miscorrected, heavy, rayteClean, clean, near) {
 		t.Fatal("a heavily corrected copy's incident number is not held against a copy of the same transmission")
+	}
+	if differentPages("FRINC TYPE: AFA TURNOUT: 101 INC: 100007-17112026", &rxproto.PageQuality{Codewords: 18, Corrected: 1},
+		"FRINC TYPE: AFA TURNOUT: 101 INC: 100001-17112026", clean, near) {
+		t.Fatal("copies of one transmission: a lightly repaired wrong digit doesn't make another page")
 	}
 	heavyTurnout := &rxproto.PageQuality{Codewords: 18, Corrected: 9}
 	if !differentPagesApart("FRINC TYPE: AFA TURNOUT: 101 INC: 100001-17112026", heavyTurnout,

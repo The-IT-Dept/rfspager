@@ -50,8 +50,9 @@ UPDATE notifications
 //   - otherwise (a better copy that is still damaged): delivered, recording
 //     the text that went out; a retry would have used the new one.
 //
-// A correction that was itself in flight is simply delivered: one
-// correction per push. Every SET expression reads the row as it was.
+// A correction that was itself in flight is simply delivered, recording the
+// correction that went out: one correction per push. Every SET expression
+// reads the row as it was.
 // Returns whether the row was queued again.
 //
 // The decision is made from the row itself in every SET expression, not in a
@@ -63,7 +64,8 @@ UPDATE notifications
                              AND COALESCE((data::jsonb->>'carried_fix')::boolean, false)
                         THEN NULL ELSE NOW() END,
        data = CASE
-                WHEN data = $3 OR ($3::jsonb ? 'correction') THEN data
+                WHEN data = $3 THEN data
+                WHEN $3::jsonb ? 'correction' THEN $3
                 WHEN COALESCE((data::jsonb->>'carried_fix')::boolean, false) AND $4 THEN data
                 WHEN COALESCE((data::jsonb->>'carried_fix')::boolean, false)
                   THEN ($3::jsonb || jsonb_build_object(

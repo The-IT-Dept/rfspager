@@ -153,15 +153,21 @@ func findDuplicate(ctx context.Context, q queryer, address, message string, ts t
 		prefixWindow = 5 * time.Minute
 	}
 	// Two FRNSW turnouts to one station share their first 30 characters;
-	// only the incident number tells them apart.
-	if r, err := one(`SELECT `+dupColumns+` FROM messages
+	// only the incident number tells them apart, so a vetoed row must not
+	// hide a later one that is this page.
+	var sameStart []duplicateRow
+	if err := q.SelectContext(ctx, &sameStart, `SELECT `+dupColumns+` FROM messages
 		  WHERE address = $1 AND substr(message, 1, 30) = $2 AND deleted_at IS NULL
 		    AND created_at BETWEEN $3 AND $4
-		  ORDER BY created_at LIMIT 1`,
+		  ORDER BY created_at LIMIT 5`,
 		address, prefix, ts.Add(-prefixWindow), ts.Add(prefixWindow)); err != nil {
 		return nil, false, err
-	} else if r != nil && !differentPages(message, quality, r.Message, decodeQuality(r.Quality), ts, ts.Sub(r.CreatedAt)) {
-		return r, false, nil
+	}
+	for i := range sameStart {
+		r := sameStart[i]
+		if !differentPages(message, quality, r.Message, decodeQuality(r.Quality), ts, ts.Sub(r.CreatedAt)) {
+			return &r, false, nil
+		}
 	}
 
 	// Heavy repair: trust the timing more than the text. Any page on this
@@ -220,13 +226,14 @@ func findDuplicate(ctx context.Context, q queryer, address, message string, ts t
 // different incident numbers. Re-sends of one page repeat both exactly;
 // a follow-up page to the same brigade differs in at least one.
 //
-// A heavily corrected copy's incident number may have a digit repaired
-// wrongly, so it is not held against a copy of the same transmission
-// (heard within simulcastWindow, apart). Outside that window it counts: for
-// an FRNSW turnout the number is all that tells two calls to one station
-// apart, and merging them would silence the second; a re-send that kept a
-// wrong digit becomes its own row, which fanoutSQL's damaged-re-send rule
-// keeps from waking anyone.
+// Incident numbers are not compared between copies of the same
+// transmission (heard within simulcastWindow, apart): a repair, even a light
+// one, can land on the wrong digit, and the receivers' copies of one page
+// arrive a second or two apart far more often than two calls to one station
+// do. Outside that window the number counts: for an FRNSW turnout it is all
+// that tells two calls to one station apart, and merging them would silence
+// the second; a re-send that kept a wrong digit becomes its own row, which
+// fanoutSQL's damaged-re-send rule keeps from waking anyone.
 func differentPages(aText string, aQ *rxproto.PageQuality, bText string, bQ *rxproto.PageQuality, near time.Time, apart time.Duration) bool {
 	if at, an, ok := pagetext.DispatchTime(aText, near); ok && pagetext.HeaderTrusted(aText, aQ, an) {
 		if bt, bn, ok := pagetext.DispatchTime(bText, near); ok && pagetext.HeaderTrusted(bText, bQ, bn) {
@@ -238,7 +245,7 @@ func differentPages(aText string, aQ *rxproto.PageQuality, bText string, bQ *rxp
 	if apart < 0 {
 		apart = -apart
 	}
-	if apart <= simulcastWindow && (pagetext.HeavilyCorrected(aQ) || pagetext.HeavilyCorrected(bQ)) {
+	if apart <= simulcastWindow {
 		return false
 	}
 	if a, ok := pagetext.IncidentID(aText, aQ); ok {
