@@ -1,0 +1,101 @@
+name: mobile-submit
+
+# Submits a release that mobile-release.yml has built and uploaded (iOS on
+# TestFlight, Android on the Play internal track) to the public stores:
+#   iOS      App Store review, automatic release once Apple approves
+#   Android  internal -> production, completed rollout to everyone
+#
+# Called by mobile-release.yml once both builds have uploaded (input
+# `submit`, on by default, so merging the release-please PR goes all the way
+# to the stores), or by hand for a tag whose builds are already uploaded:
+#   gh workflow run mobile-submit.yml --ref main -f tag=v5.11.0
+#
+# It runs apps/mobile/scripts/submit-to-stores.sh, the same script used from a
+# Mac, with the `release` environment's App Store Connect key and Play
+# service account. The store notes must be on main first:
+# apps/mobile/fastlane/release-notes/<version>.txt. See docs/mobile-releases.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag whose builds to submit (e.g. v5.11.0)"
+        required: true
+      platform:
+        description: "Store(s) to submit to"
+        required: true
+        default: "all"
+        type: choice
+        options: [all, ios, android]
+      build_revision:
+        description: "Rebuild counter the builds were uploaded with (0 unless re-run)"
+        required: true
+        default: "0"
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      platform:
+        type: string
+        default: "all"
+      build_revision:
+        type: string
+        default: "0"
+
+permissions:
+  contents: read
+  actions: read # the AAB artifact mobile-release kept
+
+concurrency:
+  group: mobile-submit-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    name: submit ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: release
+    steps:
+      # main, not the tag: the store notes are usually written after the
+      # release PR is merged.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+
+      - uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Install fastlane
+        run: gem install fastlane --no-document
+
+      - name: Write store credentials
+        env:
+          ASC_P8: ${{ secrets.APPLE_ASC_KEY_P8 }}
+          PLAY_JSON: ${{ secrets.ANDROID_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          d="$RUNNER_TEMP/store-keys"; mkdir -p "$d"; chmod 700 "$d"
+          printf '%s' "$ASC_P8" | base64 --decode > "$d/asc.p8"
+          printf '%s' "$PLAY_JSON" | base64 --decode > "$d/play.json"
+          {
+            echo "ASC_KEY_PATH=$d/asc.p8"
+            echo "PLAY_JSON_KEY_PATH=$d/play.json"
+          } >> "$GITHUB_ENV"
+
+      - name: Submit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          PLATFORM: ${{ inputs.platform }}
+          REVISION: ${{ inputs.build_revision }}
+          ASC_KEY_ID: ${{ secrets.APPLE_ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APPLE_ASC_ISSUER_ID }}
+        run: |
+          case "$PLATFORM" in all) PLATFORM=both ;; esac
+          apps/mobile/scripts/submit-to-stores.sh "${TAG#v}" "$PLATFORM" "$REVISION"
+
+      - name: Remove store credentials
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/store-keys"

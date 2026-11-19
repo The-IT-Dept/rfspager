@@ -3,8 +3,9 @@ name: mobile-release
 # Builds the iOS and Android apps on GitHub-hosted runners from the native
 # projects `expo prebuild` generates, signs them with keys held in GitHub
 # secrets, and uploads with fastlane: iOS to TestFlight, Android to a Play
-# testing track (internal by default). Promotion to the public stores is a
-# deliberate manual step in App Store Connect / Play Console.
+# testing track (internal by default). Then, unless `submit` is off, it hands
+# both builds to mobile-submit.yml: App Store review (automatic release) and
+# Play production.
 #
 # No Expo build or submit service is involved.
 #
@@ -44,6 +45,12 @@ on:
         description: "Rebuild counter 0-999 (bump to re-upload the same version)"
         required: true
         default: "0"
+      submit:
+        description: "Submit to App Store review and Play production once both builds are uploaded"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true", "false"]
 
 permissions:
   contents: read
@@ -370,3 +377,20 @@ jobs:
       - name: Remove signing material
         if: always()
         run: rm -rf "$RUNNER_TEMP/android-signing"
+
+  # Both builds uploaded (TestFlight, Play internal track): submit them.
+  # Store notes must already be on main (mobile-submit.yml); if they aren't,
+  # this job fails and the builds wait on TestFlight / internal until
+  # mobile-submit.yml is run by hand.
+  submit:
+    needs: [ios, android]
+    if: inputs.submit == 'true' && inputs.upload == 'true' && inputs.platform == 'all' && inputs.play_track == 'internal'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/mobile-submit.yml
+    with:
+      tag: ${{ inputs.tag }}
+      platform: all
+      build_revision: ${{ inputs.build_revision }}
+    secrets: inherit
