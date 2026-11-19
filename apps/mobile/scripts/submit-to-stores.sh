@@ -9,6 +9,8 @@
 #
 # Needs: fastlane, gh (signed in to The-IT-Dept/rfspager), ssh to apps01,
 # and the release notes at apps/mobile/fastlane/release-notes/<version>.txt.
+# CI runs it too (.github/workflows/mobile-submit.yml), with ASC_KEY_PATH and
+# PLAY_JSON_KEY_PATH from the release environment.
 # Credentials are never stored in the repo:
 #   ASC_KEY_PATH        App Store Connect API key (.p8). Default: the
 #                       4R8T7V2Z9H key in ~/code/boringapps/.secrets
@@ -48,7 +50,7 @@ if [ "$PLATFORM" != "android" ]; then
   export ASC_ISSUER_ID="${ASC_ISSUER_ID:-69a6de73-b975-47e3-e053-5b8c7c11a4d1}"
   export ASC_KEY_PATH="${ASC_KEY_PATH:-$HOME/code/boringapps/.secrets/AuthKey_4R8T7V2Z9H.p8}"
   [ -r "$ASC_KEY_PATH" ] || { echo "App Store Connect key not readable: $ASC_KEY_PATH" >&2; exit 1; }
-  (cd "$MOBILE_DIR" && fastlane ios submit_for_review)
+  (cd "$MOBILE_DIR" && fastlane ios wait_for_build && fastlane ios submit_for_review)
 fi
 
 if [ "$PLATFORM" != "ios" ]; then

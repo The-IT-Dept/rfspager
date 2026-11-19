@@ -9,10 +9,16 @@ commit to main ─► release-please PR ─► merge ─► tag vX.Y.Z
                                                   ├─► server / web / receiver images (CI)
                                                   └─► mobile-release.yml (if apps/mobile changed)
                                                         ├─► iOS  → TestFlight
-                                                        └─► Android → Play internal track
-scripts/submit-to-stores.sh X.Y.Z ─► App Store review (auto-release) + Play production
+                                                        ├─► Android → Play internal track
+                                                        └─► mobile-submit.yml (both uploaded)
+                                                              ├─► App Store review (auto-release)
+                                                              └─► Play production, 100 %
 deploy the Go server to apps01 by hand (below)
 ```
+
+Write the store notes (`apps/mobile/fastlane/release-notes/X.Y.Z.txt`) and land
+them on main **before** the builds finish (in the release PR or just after
+merging it): the submit step reads them from main and fails without them.
 
 ## 1. Land changes on main
 
@@ -62,11 +68,24 @@ gh run watch $(gh run list -w mobile-release.yml -L 1 --json databaseId -q '.[0]
 
 ## 4. Submit to the stores
 
-Write the notes, then run the script. It takes the builds already uploaded in
-step 3. It doesn't rebuild.
+`mobile-release.yml` ends with a `submit` job (input `submit`, on by default)
+that calls `mobile-submit.yml` once both builds are uploaded. It runs
+`apps/mobile/scripts/submit-to-stores.sh` on an Ubuntu runner with the
+`release` environment's App Store Connect key and Play service account. It
+first waits (up to an hour) for App Store Connect to finish processing the iOS
+build. Nothing is rebuilt.
+
+If it failed (notes missing, a store refused the submission) or was switched
+off, fix the cause and run it on its own for the tag:
 
 ```sh
-$EDITOR apps/mobile/fastlane/release-notes/X.Y.Z.txt   # plain text, ≤ 500 chars, commit it
+$EDITOR apps/mobile/fastlane/release-notes/X.Y.Z.txt   # plain text, ≤ 500 chars, on main
+gh workflow run mobile-submit.yml --ref main -f tag=vX.Y.Z            # -f platform=ios|android
+```
+
+From a Mac, with the keys below, the same script does it directly:
+
+```sh
 apps/mobile/scripts/submit-to-stores.sh X.Y.Z          # or: … X.Y.Z ios|android
 ```
 
@@ -81,7 +100,8 @@ What the script does:
   16 KB alignment check. Then it promotes the build from internal to
   **production at 100%**, with the notes as the en-AU changelog.
 
-Credentials are never in the repo. The script reads them from:
+Credentials are never in the repo. Run from a Mac, the script reads them from
+(in CI they come from the `release` environment):
 
 | What | Default location | Override |
 |---|---|---|

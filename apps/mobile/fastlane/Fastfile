@@ -115,6 +115,29 @@ platform :ios do
   # for every locale, and submits with automatic release once Apple approves.
   # The metadata step runs separately first so a submission failure (Apple
   # wants an age-rating or compliance answer) leaves a ready version behind.
+  # App Store Connect only lists an uploaded build once it has processed it
+  # (about 15 minutes for 5.9.1), and submit_for_review fails until then
+  # ("Build number: ... does not exist"). Wait for it, up to WAIT_MINUTES.
+  lane :wait_for_build do
+    require_env("BUILD_NUMBER")
+    asc_api_key
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_ID)
+    UI.user_error!("App Store Connect has no app #{BUNDLE_ID}") unless app
+    deadline = Time.now + (ENV["WAIT_MINUTES"] || "60").to_i * 60
+    loop do
+      # spaceship's default include is refused by Apple; name it.
+      build = Spaceship::ConnectAPI.get_builds(
+        filter: { app: app.id, version: ENV["BUILD_NUMBER"] }, includes: "preReleaseVersion"
+      ).to_models.first
+      state = build&.processing_state
+      UI.message("build #{ENV['BUILD_NUMBER']}: #{state || 'not listed yet'}")
+      break if state == "VALID"
+      UI.user_error!("build #{ENV['BUILD_NUMBER']} is #{state}") if %w[FAILED INVALID].include?(state)
+      UI.user_error!("build #{ENV['BUILD_NUMBER']} still not processed; re-run later") if Time.now > deadline
+      sleep 60
+    end
+  end
+
   lane :submit_for_review do
     require_env("APP_VERSION", "BUILD_NUMBER")
     api_key = asc_api_key
