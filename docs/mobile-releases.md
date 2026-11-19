@@ -182,6 +182,17 @@ Problems already hit, and what fixed them:
   none/no. Then re-run the iOS half. To see Apple's exact reasons, create a
   `reviewSubmissionItems` entry through the App Store Connect API and read
   `errors[].meta.associatedErrors`.
+- **TestFlight upload fails: "A required agreement is missing or has
+  expired."** Apple published an updated agreement (Program License or Paid
+  Apps) and blocks every upload and submission until the Account Holder
+  accepts it: App Store Connect → Business (or developer.apple.com → Account).
+  The build itself is fine; after accepting, re-run the failed ios job (`gh run
+  rerun <run> --failed`), which rebuilds and uploads. Hit on 5.11.0
+  (2026-11-19).
+- **Android build fails resolving well-known artifacts** ("Could not find
+  org.jetbrains.kotlin:kotlin-stdlib:…", "Could not parse POM" from the plugin
+  portal) within the first minute of Gradle: a Maven Central / plugin portal
+  outage. Re-run the failed job. Hit on 5.11.0 (2026-11-19); the re-run passed.
 - **Encryption/IDFA questions** are answered by the lane
   (`export_compliance_uses_encryption: false`, `add_id_info_uses_idfa: false`).
 - **Release tags didn't trigger workflows.** Tags pushed with `GITHUB_TOKEN`
