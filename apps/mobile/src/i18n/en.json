@@ -4,6 +4,9 @@
     "cancel": "Cancel",
     "back": "Back"
   },
+  "notificationChannels": {
+    "corrections": "Page corrections"
+  },
   "errors": {
     "invalidEmail": "Invalid email address."
   },

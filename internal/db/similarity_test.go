@@ -2,6 +2,7 @@ package db
 
 import (
 	"testing"
+	"time"
 
 	"github.com/the-it-dept/rfspager/internal/rxproto"
 )
@@ -23,6 +24,9 @@ const (
 	// A different dispatch to the same brigade a minute later.
 	rayteOtherJob = "14 October 2026 07:47:30 LHRAYTE - 26-131350 - Grass fire - FIRECALL - 12 ADELAIDE ST,RAYMOND TERRACE,PORT STEPHENS (NSW),2324 - [151.744,-32.761]"
 	rayteStop     = "14 October 2026 07:58:12 26-131349 LHRAYTE Stop Message // 158F MASONITE RD TOMAGO"
+
+	raymondClean    = "FRINC TYPE: AFA TURNOUT: 101 INC: 100001-17112026"
+	raymondFragment = "LZmNC TYPE: AFA TURNOUT: "
 )
 
 func TestTextSimilarityOnRealPages(t *testing.T) {
@@ -39,12 +43,58 @@ func TestTextSimilarityOnRealPages(t *testing.T) {
 		{"another job to the same brigade", rayteOtherJob, rayteClean, 0, 0.75},
 		{"the stop message", rayteStop, rayteClean, 0, 0.5},
 		{"a copy cut short", rayteClean[:70], rayteClean, 0.95, 1},
+		// The plain score is one-way: a complete copy scores low against a
+		// fragment stored first. storedFragmentOf covers that case.
+		{"a clean copy against a damaged fragment stored first", raymondClean, raymondFragment, 0, 0.5},
 	}
 	for _, c := range cases {
 		got := textSimilarity(c.sample, c.against)
 		if got < c.min || got > c.max {
 			t.Errorf("%s: similarity %.3f, want within [%.2f, %.2f]", c.name, got, c.min, c.max)
 		}
+	}
+}
+
+// An FRNSW turnout, 17 Nov 2026: one receiver's truncated, repaired copy was
+// stored a second before four clean ones; the plain score put the clean copy
+// at 0.43 against it and the page was stored and pushed twice.
+func TestStoredFragmentOf(t *testing.T) {
+	at := time.Date(2026, 11, 16, 21, 24, 43, 0, time.UTC)
+	stored := duplicateRow{Message: raymondFragment, CreatedAt: at}
+	if !storedFragmentOf(stored, raymondClean, at.Add(time.Second)) {
+		t.Fatal("a damaged fragment stored a second earlier is the same transmission")
+	}
+	if storedFragmentOf(stored, raymondClean, at.Add(time.Minute)) {
+		t.Fatal("a fragment's opening matches any page of the same format; only within the simulcast window")
+	}
+	if storedFragmentOf(duplicateRow{Message: raymondClean, CreatedAt: at}, raymondFragment, at) {
+		t.Fatal("only a stored copy shorter than the new one is a fragment of it")
+	}
+	if storedFragmentOf(duplicateRow{Message: "FRINC TYPE", CreatedAt: at}, raymondClean, at) {
+		t.Fatal("too short to say which page it came from")
+	}
+	if storedFragmentOf(duplicateRow{Message: rayteClean[:60], CreatedAt: at}, rayteOtherJob, at) {
+		t.Fatal("a fragment of a different job to the same brigade")
+	}
+}
+
+func TestDifferentPages(t *testing.T) {
+	near := time.Date(2026, 10, 13, 20, 50, 0, 0, time.UTC)
+	clean := &rxproto.PageQuality{Codewords: 50}
+	if !differentPages(rayteClean, clean, rayteOtherJob, clean, near) {
+		t.Fatal("another job to the same brigade a minute later is a different page")
+	}
+	if differentPages(rayteGarbled, &rxproto.PageQuality{Codewords: 54, Corrected: 40}, rayteClean, clean, near) {
+		t.Fatal("a garbled re-send of the same page is the same page")
+	}
+	if differentPages(rayte1Garbled, &rxproto.PageQuality{Codewords: 54, Corrected: 34, Uncorrectable: 1}, rayte7Clean, clean, near) {
+		t.Fatal("a re-send whose incident number was damaged is still the same page")
+	}
+	if !differentPages(raymondClean, clean, "FRINC TYPE: AFA TURNOUT: 101 INC: 100009-17112026", clean, near) {
+		t.Fatal("two FRNSW incidents to the same station are different pages")
+	}
+	if differentPages("FRINC TYPE: q^C TURNOUT: 101 IC: 100001-17112P26", nil, raymondClean, clean, near) {
+		t.Fatal("a damaged incident number says nothing")
 	}
 }
 

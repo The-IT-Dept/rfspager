@@ -17,13 +17,17 @@ import { requestTrackingPermissionsAsync } from "expo-tracking-transparency"
 import { Settings } from "react-native-fbsdk-next"
 import { getMessaging, onMessage, setBackgroundMessageHandler } from "@react-native-firebase/messaging"
 import type { FirebaseMessagingTypes } from "@react-native-firebase/messaging"
-import notifee, { EventType } from "@notifee/react-native"
+import notifee, { AndroidImportance, EventType } from "@notifee/react-native"
 
+import { translate } from "../i18n"
 import { initIAP } from "../services/purchase-service"
 import { StoreManager } from "../components"
 import { useAuthStore, usePreferencesStore } from "../stores"
 
 enableScreens(true)
+
+// Must match notify.CorrectionsChannel on the server.
+const CORRECTIONS_CHANNEL = "corrections"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -73,7 +77,15 @@ function RootLayoutInner() {
   })
 
   const onMessageReceived = (message: FirebaseMessagingTypes.RemoteMessage) => {
+    // The server keys every page push "msg-<id>" (data.collapse) and, when a
+    // cleaner copy of a garbled page arrives, sends a correction under the
+    // same key (data.correction = "1"). Reusing the key as the notification
+    // id replaces the garbled notification instead of adding a second one,
+    // and corrections go on the quiet channel.
+    const collapse = message.data?.collapse
+    const correction = message.data?.correction === "1"
     return notifee.displayNotification({
+      id: typeof collapse === "string" ? collapse : undefined,
       title: message.notification?.title,
       body: message.notification?.body,
       ios: {
@@ -84,7 +96,7 @@ function RootLayoutInner() {
         },
       },
       android: {
-        channelId: "default",
+        channelId: correction ? CORRECTIONS_CHANNEL : "default",
       },
     })
   }
@@ -99,6 +111,17 @@ function RootLayoutInner() {
         Settings.setAdvertiserTrackingEnabled(true)
       }
     })
+
+    // Android channel for correction pushes (the server names it in the
+    // FCM payload): low importance, so a correction updates the tray
+    // quietly. A no-op on iOS, where the server silences corrections itself.
+    notifee
+      .createChannel({
+        id: CORRECTIONS_CHANNEL,
+        name: translate("notificationChannels.corrections") ?? "Page corrections",
+        importance: AndroidImportance.LOW,
+      })
+      .catch(console.error)
 
     const unsubscribe = onMessage(getMessaging(), onMessageReceived)
     setBackgroundMessageHandler(getMessaging(), onMessageReceived)

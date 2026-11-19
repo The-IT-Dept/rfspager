@@ -192,8 +192,14 @@ func main() {
 		slog.Error("failed to listen rfs_dispatch", "error", err)
 		os.Exit(1)
 	}
+	refanoutCh, err := listener.Listen("rfs_refanout", 64)
+	if err != nil {
+		slog.Error("failed to listen rfs_refanout", "error", err)
+		os.Exit(1)
+	}
 
 	fanoutWorker := dispatch.NewFanoutWorker(database.Conn(), fanoutMessageCh)
+	fanoutWorker.ListenRefanout(refanoutCh)
 	dispatchWorker := dispatch.NewDispatchWorker(database.Conn(), notifier, dispatchCh)
 	mobileSSE := mobile.NewSSEBroker(database.Conn())
 	publicSSE := public.NewSSEBroker(database.Conn())

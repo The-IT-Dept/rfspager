@@ -6,11 +6,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/the-it-dept/rfspager/internal/models"
+	"github.com/the-it-dept/rfspager/internal/pagetext"
 	"github.com/the-it-dept/rfspager/internal/rxproto"
 )
 
@@ -30,16 +33,20 @@ const (
 
 // duplicateRow is the stored copy a new page collided with.
 type duplicateRow struct {
-	ID      int64          `db:"id"`
-	Message string         `db:"message"`
-	Quality sql.NullString `db:"quality"`
+	ID        int64          `db:"id"`
+	Message   string         `db:"message"`
+	Quality   sql.NullString `db:"quality"`
+	Lat       sql.NullString `db:"lat"`
+	Lng       sql.NullString `db:"lng"`
+	CreatedAt time.Time      `db:"created_at"`
 }
 
-// rfsHeader is the page's own timestamp and unit code at the start of an
-// RFS dispatch, e.g. "13 October 2026 22:47:41 LHPOKOL1". Two copies with
-// the same header are the same page even a minute apart: the header carries
-// the dispatch time to the second.
-var rfsHeader = regexp.MustCompile(`^\d{1,2} [A-Z][a-z]+ \d{4} \d{2}:\d{2}:\d{2} \S+`)
+// rfsHeader is the page's own timestamp and first word at the start of an
+// RFS dispatch, e.g. "13 October 2026 22:47:41 LHPOKOL1" (SES pages put two
+// spaces after the time; the paging test pages use an ISO date). Two copies
+// with the same header are the same page whenever they are heard: the header
+// carries the dispatch time to the second.
+var rfsHeader = regexp.MustCompile(`^(?:\d{1,2} [A-Z][a-z]+ \d{4}|\d{4}-\d{2}-\d{2}) \d{2}:\d{2}:\d{2} +\S+`)
 
 // Similarity thresholds for the text-distance rules below, as a fraction of
 // the text that matches after edits.
@@ -55,52 +62,86 @@ const (
 	// resendWindow is how long the district systems keep re-sending a page
 	// from other sites; the third transmission lands about a minute later.
 	resendWindow = 3 * time.Minute
+	// headerLookback is how far back a page with an RFS header is matched
+	// against stored copies. The paging network now and then re-transmits
+	// a day or more of backlog in a few minutes (seven times between
+	// 8 October and 19 November 2026); a replayed page is the page we
+	// already have, not a new one.
+	headerLookback = 72 * time.Hour
+	// minFragment is the shortest stored fragment storedFragmentOf will
+	// match; anything shorter says too little about which page it came from.
+	minFragment = 16
+	// simulcastWindow is how far apart the receivers' copies of a single
+	// transmission land (their timestamps agree to the second or two).
+	simulcastWindow = 15 * time.Second
+	// correctionWindow is how long after a push went out a better copy
+	// still earns a correction push. Re-sends from other sites land within
+	// a few minutes; past this, a repaired row (say, by a replayed copy)
+	// must not wake anyone.
+	correctionWindow = 10 * time.Minute
 )
 
-// findDuplicate looks for a stored copy of the same page on this address:
-// identical text within 5 minutes, the same RFS header within 5 minutes,
-// the same first 30 characters (within 5 minutes when the text starts with
-// an RFS header, whose dispatch time is exact to the second; otherwise
-// 30 s), or a near-identical text within the resend window when either copy
-// needed heavy repair. The last rule is what catches a re-send whose repair
-// went wrong in one or two characters: "LHRaYE" for "LHRAYTE", "26-1149"
-// for "26-131349".
+// dupColumns are what findDuplicate reads of a stored copy.
+const dupColumns = `id, message, quality::text AS quality, lat, lng, created_at`
+
+// findDuplicate looks for a stored copy of the same page on this address,
+// most specific evidence first:
+//
+//   - identical text within 5 minutes;
+//   - the same RFS header within 5 minutes;
+//   - the same first 30 characters (within 5 minutes when the text starts
+//     with an RFS header, whose dispatch time is exact to the second;
+//     otherwise 30 s);
+//   - a near-identical text within the resend window when either copy
+//     needed heavy repair. This catches a re-send whose repair went wrong in
+//     one or two characters: "LHRaYE" for "LHRAYTE", "26-1149" for
+//     "26-131349". It also catches a damaged fragment stored a few seconds
+//     before a complete copy, which the plain score cannot (see
+//     storedFragmentOf). Copies that name different dispatch times or
+//     incidents in text that decoded cleanly are never matched this way;
+//   - the same RFS header within the last 72 hours: the network re-sending
+//     old backlog (see headerLookback). This comes after the recent rules
+//     so a clean copy of a replay still repairs a damaged copy of the same
+//     replay stored a second earlier, rather than matching the original.
 //
 // A heavily damaged page to an unknown capcode that resembles a page just
 // stored on a real one is returned with dropOnly: its address codeword was
 // repaired into a phantom capcode along with the text, so it must neither
 // be stored nor replace anything.
 func findDuplicate(ctx context.Context, q queryer, address, message string, ts time.Time, quality *rxproto.PageQuality, capcodeKnown bool) (row *duplicateRow, dropOnly bool, err error) {
+	one := func(query string, args ...any) (*duplicateRow, error) {
+		var r duplicateRow
+		err := q.GetContext(ctx, &r, query, args...)
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &r, nil
+	}
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(message)))
-	var r duplicateRow
-	err = q.GetContext(ctx, &r,
-		`SELECT id, message, quality::text AS quality FROM messages
+	if r, err := one(`SELECT `+dupColumns+` FROM messages
 		  WHERE address = $1 AND md5 = $2 AND deleted_at IS NULL
 		    AND created_at BETWEEN $3 AND $4
 		  ORDER BY created_at LIMIT 1`,
-		address, hash, ts.Add(-5*time.Minute), ts.Add(5*time.Minute))
-	if err == nil {
-		return &r, false, nil
-	}
-	if err != sql.ErrNoRows {
-		return nil, false, err
+		address, hash, ts.Add(-5*time.Minute), ts.Add(5*time.Minute)); r != nil || err != nil {
+		return r, false, err
 	}
 	if len(message) < 12 {
 		return nil, false, nil
 	}
 	header := rfsHeader.FindString(message)
-	if len(header) >= 20 {
-		err = q.GetContext(ctx, &r,
-			`SELECT id, message, quality::text AS quality FROM messages
+	byHeader := func(from, to time.Time) (*duplicateRow, error) {
+		return one(`SELECT `+dupColumns+` FROM messages
 			  WHERE address = $1 AND substr(message, 1, $2) = $3 AND deleted_at IS NULL
 			    AND created_at BETWEEN $4 AND $5
 			  ORDER BY created_at LIMIT 1`,
-			address, len(header), header, ts.Add(-5*time.Minute), ts.Add(5*time.Minute))
-		if err == nil {
-			return &r, false, nil
-		}
-		if err != sql.ErrNoRows {
-			return nil, false, err
+			address, len(header), header, from, to)
+	}
+	if len(header) >= 20 {
+		if r, err := byHeader(ts.Add(-5*time.Minute), ts.Add(5*time.Minute)); r != nil || err != nil {
+			return r, false, err
 		}
 	}
 	prefix := message
@@ -111,17 +152,12 @@ func findDuplicate(ctx context.Context, q queryer, address, message string, ts t
 	if header != "" {
 		prefixWindow = 5 * time.Minute
 	}
-	err = q.GetContext(ctx, &r,
-		`SELECT id, message, quality::text AS quality FROM messages
+	if r, err := one(`SELECT `+dupColumns+` FROM messages
 		  WHERE address = $1 AND substr(message, 1, 30) = $2 AND deleted_at IS NULL
 		    AND created_at BETWEEN $3 AND $4
 		  ORDER BY created_at LIMIT 1`,
-		address, prefix, ts.Add(-prefixWindow), ts.Add(prefixWindow))
-	if err == nil {
-		return &r, false, nil
-	}
-	if err != sql.ErrNoRows {
-		return nil, false, err
+		address, prefix, ts.Add(-prefixWindow), ts.Add(prefixWindow)); r != nil || err != nil {
+		return r, false, err
 	}
 
 	// Heavy repair: trust the timing more than the text. Any page on this
@@ -130,26 +166,38 @@ func findDuplicate(ctx context.Context, q queryer, address, message string, ts t
 	// one.
 	var cands []duplicateRow
 	if err := q.SelectContext(ctx, &cands,
-		`SELECT id, message, quality::text AS quality FROM messages
+		`SELECT `+dupColumns+` FROM messages
 		  WHERE address = $1 AND deleted_at IS NULL AND created_at BETWEEN $2 AND $3
 		  ORDER BY created_at LIMIT 10`,
 		address, ts.Add(-resendWindow), ts.Add(resendWindow)); err != nil {
 		return nil, false, err
 	}
 	for i := range cands {
-		if !suspectCopy(quality) && !suspectCopy(decodeQuality(cands[i].Quality)) {
+		candQuality := decodeQuality(cands[i].Quality)
+		if !suspectCopy(quality) && !suspectCopy(candQuality) {
 			continue
 		}
-		if textSimilarity(message, cands[i].Message) >= sameAddressSimilarity {
+		if differentPages(message, quality, cands[i].Message, candQuality, ts) {
+			continue
+		}
+		if textSimilarity(message, cands[i].Message) >= sameAddressSimilarity ||
+			storedFragmentOf(cands[i], message, ts) {
 			return &cands[i], false, nil
 		}
 	}
+
+	if len(header) >= 20 {
+		if r, err := byHeader(ts.Add(-headerLookback), ts.Add(-5*time.Minute)); r != nil || err != nil {
+			return r, false, err
+		}
+	}
+
 	if capcodeKnown || !heavilyDamaged(quality) {
 		return nil, false, nil
 	}
 	cands = cands[:0]
 	if err := q.SelectContext(ctx, &cands,
-		`SELECT id, message, quality::text AS quality FROM messages
+		`SELECT `+dupColumns+` FROM messages
 		  WHERE deleted_at IS NULL AND capcode_id IS NOT NULL AND created_at BETWEEN $1 AND $2
 		  ORDER BY created_at DESC LIMIT 50`,
 		ts.Add(-resendWindow), ts.Add(resendWindow)); err != nil {
@@ -163,14 +211,49 @@ func findDuplicate(ctx context.Context, q queryer, address, message string, ts t
 	return nil, false, nil
 }
 
+// differentPages reports whether two copies name different dispatches in
+// text that decoded cleanly: header times more than two seconds apart, or
+// different incident numbers. Re-sends of one page repeat both exactly;
+// a follow-up page to the same brigade differs in at least one.
+func differentPages(aText string, aQ *rxproto.PageQuality, bText string, bQ *rxproto.PageQuality, near time.Time) bool {
+	if at, an, ok := pagetext.DispatchTime(aText, near); ok && pagetext.HeaderTrusted(aText, aQ, an) {
+		if bt, bn, ok := pagetext.DispatchTime(bText, near); ok && pagetext.HeaderTrusted(bText, bQ, bn) {
+			if d := at.Sub(bt); d > 2*time.Second || d < -2*time.Second {
+				return true
+			}
+		}
+	}
+	if a, ok := pagetext.IncidentID(aText, aQ); ok {
+		if b, ok := pagetext.IncidentID(bText, bQ); ok && a != b {
+			return true
+		}
+	}
+	return false
+}
+
+// storedFragmentOf reports whether a stored copy is a damaged fragment of the
+// page just heard: the receivers' simultaneous copies of one transmission,
+// where the one cut short got in first ("LZmNC TYPE: AFA TURNOUT: " a second
+// before "FRINC TYPE: AFA TURNOUT: 432 INC: ..."). The plain score divides
+// by the longer text and can't see it. Limited to simulcastWindow, because
+// a fragment's opening reads like any page of the same format to the same
+// capcode.
+func storedFragmentOf(stored duplicateRow, message string, ts time.Time) bool {
+	if d := ts.Sub(stored.CreatedAt); d > simulcastWindow || d < -simulcastWindow {
+		return false
+	}
+	fragment, full := strings.TrimSpace(stored.Message), strings.TrimSpace(message)
+	if len(fragment) < minFragment || len(fragment) >= len(full) {
+		return false
+	}
+	return prefixSimilarity(fragment, full) >= sameAddressSimilarity
+}
+
 // suspectCopy reports whether the receiver had to work hard enough on a
 // copy that its text cannot be taken literally: anything unrepairable or cut
 // short, or half or more of the codewords corrected.
 func suspectCopy(q *rxproto.PageQuality) bool {
-	if q == nil {
-		return false
-	}
-	return q.Uncorrectable > 0 || q.Truncated || (q.Codewords > 0 && q.Corrected*2 >= q.Codewords)
+	return pagetext.Suspect(q)
 }
 
 // heavilyDamaged is the bar for doubting the address as well as the text.
@@ -193,6 +276,46 @@ func textSimilarity(sample, reference string) float64 {
 	return 1 - float64(levenshtein(a, b))/float64(n)
 }
 
+// prefixSimilarity scores a fragment against the best-matching prefix of a
+// longer text: 1 minus the edit distance as a fraction of the fragment.
+func prefixSimilarity(fragment, full string) float64 {
+	a, b := []byte(fragment), []byte(full)
+	if len(a) == 0 {
+		return 0
+	}
+	// No prefix longer than twice the fragment can be closer than the
+	// empty one, so the rest of the longer text never needs scoring.
+	if len(b) > 2*len(a) {
+		b = b[:2*len(a)]
+	}
+	return 1 - float64(prefixDistance(a, b))/float64(len(a))
+}
+
+// prefixDistance is the smallest edit distance between a and any prefix of b.
+func prefixDistance(a, b []byte) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	best := prev[0]
+	for _, d := range prev[1:] {
+		best = min(best, d)
+	}
+	return best
+}
+
 func levenshtein(a, b []byte) int {
 	prev := make([]int, len(b)+1)
 	cur := make([]int, len(b)+1)
@@ -213,11 +336,6 @@ func levenshtein(a, b []byte) int {
 	return prev[len(b)]
 }
 
-// garbleChars are characters that never appear in a clean RFS or FRNSW
-// dispatch; their count is the fallback damage estimate for copies stored
-// without a quality record.
-var garbleChars = regexp.MustCompile("[@^\\\\{}|`~$%<>!\";?_\x00-\x08\x0b\x0c\x0e-\x1f]")
-
 // damageScore ranks a copy: lower is better. A truncated page is worse than
 // any complete one; otherwise unrepairable codewords dominate, then the
 // number of corrections, because a copy that needed forty of them has had
@@ -231,7 +349,7 @@ func damageScore(text string, q *rxproto.PageQuality) int {
 		}
 		return score
 	}
-	return len(garbleChars.FindAllStringIndex(text, -1)) * 100
+	return pagetext.GarbleCount(text) * 100
 }
 
 // betterCopy reports whether the new copy should replace the stored one.
@@ -258,6 +376,101 @@ func decodeQuality(s sql.NullString) *rxproto.PageQuality {
 		return nil
 	}
 	return &q
+}
+
+// carryToNotifications brings a message's pushes up to date after a better
+// copy replaced its text. It runs in the upsert's transaction, after the
+// UPDATE that locked the message row; fan-out locks the same row, so the
+// notification rows it writes are either committed or not yet begun.
+//
+// A notification row moves unsent -> in flight -> delivered, and a delivered
+// row may become a pending correction and then a delivered correction. The
+// statements run in that order, each with a fresh snapshot, so a row that
+// moves on while they run is caught by a later one:
+//
+//  1. Unsent: carry the new text; nothing has gone out yet.
+//  2. Pending correction: carry the new text as the correction's text.
+//  3. In flight or waiting to retry, when this copy fixes the text: carry
+//     the new text, unflagged. If that send succeeds, the dispatcher sees
+//     the data changed under it and turns the row into a correction
+//     (markSentSQL); if it fails, the retry is an ordinary first push with
+//     the better text, so nobody's only alert for a page is a quiet one.
+//  4. Delivered, when this copy fixes the text: queue a correction. The
+//     row keeps the text that was pushed (the admin page compares it with
+//     the stored copy) and gains correction_body and first_pushed_at.
+//     Only once per notification, and only within correctionWindow.
+//
+// "fixes" means the new copy is undamaged. A delivered push that is not
+// corrected keeps the text it went out with.
+func carryToNotifications(ctx context.Context, tx *sqlx.Tx, messageID int64, text string, fixes bool) error {
+	var touched int64
+	exec := func(what, query string, args ...any) error {
+		res, err := tx.ExecContext(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("%s: %w", what, err)
+		}
+		n, _ := res.RowsAffected()
+		touched += n
+		return nil
+	}
+	window := int(correctionWindow.Seconds())
+	if err := exec("updating unsent pushes",
+		`UPDATE notifications
+		    SET data = (data::jsonb || jsonb_build_object('message', $2::text, 'body', $2::text))::text,
+		        updated_at = NOW()
+		  WHERE message_id = $1 AND push_failed_at IS NULL
+		    AND pushed_at IS NULL AND push_attempts = 0
+		    AND NOT COALESCE((data::jsonb->>'correction')::boolean, false)`,
+		messageID, text); err != nil {
+		return err
+	}
+	if err := exec("updating pending corrections",
+		`UPDATE notifications
+		    SET data = (data::jsonb || jsonb_build_object('correction_body', $2::text))::text,
+		        updated_at = NOW()
+		  WHERE message_id = $1 AND push_failed_at IS NULL AND pushed_at IS NULL
+		    AND COALESCE((data::jsonb->>'correction')::boolean, false)`,
+		messageID, text); err != nil {
+		return err
+	}
+	if fixes {
+		before := touched
+		if err := exec("updating pushes in flight",
+			`UPDATE notifications
+			    SET data = (data::jsonb || jsonb_build_object('message', $2::text, 'body', $2::text))::text,
+			        updated_at = NOW()
+			  WHERE message_id = $1 AND push_failed_at IS NULL AND pushed_at IS NULL AND push_attempts > 0
+			    AND created_at > NOW() - ($3 * interval '1 second')
+			    AND NOT COALESCE((data::jsonb->>'correction')::boolean, false)
+			    AND (data::jsonb->>'body') IS DISTINCT FROM $2::text`,
+			messageID, text, window); err != nil {
+			return err
+		}
+		inFlight := touched - before
+		if err := exec("queueing correction pushes",
+			`UPDATE notifications
+			    SET data = (data::jsonb || jsonb_build_object(
+			            'correction', true, 'correction_body', $2::text, 'first_pushed_at', pushed_at))::text,
+			        pushed_at = NULL, push_attempts = 0, push_last_error = NULL, updated_at = NOW()
+			  WHERE message_id = $1 AND push_failed_at IS NULL AND pushed_at IS NOT NULL
+			    AND created_at > NOW() - ($3 * interval '1 second')
+			    AND NOT COALESCE((data::jsonb->>'correction')::boolean, false)
+			    AND (data::jsonb->>'body') IS DISTINCT FROM $2::text`,
+			messageID, text, window); err != nil {
+			return err
+		}
+		if corrected := touched - before - inFlight; corrected > 0 || inFlight > 0 {
+			slog.Info("correction pushes queued", "message_id", messageID, "delivered", corrected, "in_flight", inFlight)
+		}
+	}
+	if touched > 0 {
+		// The dispatch trigger fires only on INSERT, and rows this
+		// transaction held locked were skipped by any claim meanwhile.
+		if _, err := tx.ExecContext(ctx, `SELECT pg_notify('rfs_dispatch', '')`); err != nil {
+			return fmt.Errorf("waking dispatch: %w", err)
+		}
+	}
+	return nil
 }
 
 // UpsertMessageDeduped stores msg unless a copy of the same page is already
@@ -304,14 +517,29 @@ func (d *DB) UpsertMessageDeduped(ctx context.Context, msg *models.Message) (str
 			existing.ID, msg.Message, msg.MD5, msg.Lat, msg.Lng, qualityJSON, msg.SystemID, incidentKey, msg.UpdatedAt); err != nil {
 			return "", err
 		}
-		// Pushes not yet sent for this message should carry the repaired text.
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE notifications
-			    SET data = (data::jsonb || jsonb_build_object('message', $2::text, 'body', $2::text))::text,
-			        updated_at = NOW()
-			  WHERE message_id = $1 AND pushed_at IS NULL AND push_failed_at IS NULL`,
-			existing.ID, msg.Message); err != nil {
+		fixes := !pagetext.Damaged(msg.Message, msg.Quality)
+		if err := carryToNotifications(ctx, tx, existing.ID, msg.Message, fixes); err != nil {
 			return "", err
+		}
+		// Fan-out decided who to wake from the copy stored then: its
+		// coordinates (alertzones), its quality (a damaged re-send wakes
+		// nobody), its header (a replay wakes nobody). If an undamaged copy
+		// replaces it soon after, fan-out runs again on this one. Its
+		// per-user NOT EXISTS keeps everyone already notified from a second
+		// push; the corrections above update what they were sent.
+		if fixes {
+			res, err := tx.ExecContext(ctx,
+				`UPDATE messages SET fanned_out_at = NULL, push_skip_reason = NULL, push_lag_s = NULL
+				  WHERE id = $1 AND fanned_out_at > NOW() - ($2 * interval '1 second')`,
+				existing.ID, int(correctionWindow.Seconds()))
+			if err != nil {
+				return "", fmt.Errorf("reopening fan-out: %w", err)
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				if _, err := tx.ExecContext(ctx, `SELECT pg_notify('rfs_refanout', $1::text)`, existing.ID); err != nil {
+					return "", fmt.Errorf("waking fan-out: %w", err)
+				}
+			}
 		}
 		msg.ID = existing.ID
 		return MessageReplaced, tx.Commit()

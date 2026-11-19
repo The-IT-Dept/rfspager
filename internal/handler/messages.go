@@ -16,6 +16,7 @@ import (
 
 	"github.com/the-it-dept/rfspager/internal/db"
 	"github.com/the-it-dept/rfspager/internal/models"
+	"github.com/the-it-dept/rfspager/internal/pagetext"
 	"github.com/the-it-dept/rfspager/internal/rxproto"
 )
 
@@ -146,6 +147,8 @@ func (h *MessageHandler) IngestPage(ctx context.Context, system *models.System, 
 	if timestamp.IsZero() {
 		timestamp = time.Now()
 	}
+	// A receiver with a dead RTC can be days ahead; the page is real.
+	timestamp = clampFuture(timestamp)
 	result, msg := h.createMessage(ctx, system, address, message, timestamp, nil, quality)
 	if msg == nil {
 		if result == "Duplicate message." {
@@ -210,6 +213,14 @@ func (h *MessageHandler) createMessage(ctx context.Context, system *models.Syste
 	// Every receiver's copy counts for the coverage map, so this goes
 	// before either duplicate check.
 	h.recordReception(ctx, system, address, message, timestamp, capcode, quality)
+	// ...and for spotting the paging network re-sending old backlog, which
+	// the dedupe mostly folds into the originals before fan-out sees it.
+	now := time.Now()
+	heard := timestamp
+	if heard.After(now) {
+		heard = now
+	}
+	pagetext.Replays.Observe(message, quality, heard, now)
 
 	// Cheap early exit for exact repeats. Copies that could replace a
 	// worse stored copy are handled by the upsert below.

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 
 	"github.com/the-it-dept/rfspager/internal/models"
@@ -24,6 +26,7 @@ type ClaimedNotification struct {
 type DispatchOutcome struct {
 	ID            string
 	Sent          bool   // at least one device succeeded
+	SomeRetryable bool   // ...but at least one other failed and could be retried
 	PermanentFail bool   // every device returned a non-retryable error
 	Err           string // joined error string for logging / push_last_error column
 	BadTokens     []string
@@ -105,25 +108,19 @@ func (n *Notifier) sendOne(ctx context.Context, claim ClaimedNotification, targe
 		return out
 	}
 
-	var payload struct {
-		Title string `json:"title"`
-		Body  string `json:"body"`
-	}
-	if err := json.Unmarshal(claim.Data, &payload); err != nil {
+	title, body, opts, err := pageContent(claim.Data)
+	if err != nil {
 		out.PermanentFail = true
-		out.Err = "invalid payload JSON: " + err.Error()
+		out.Err = err.Error()
 		return out
-	}
-	if payload.Title == "" {
-		payload.Title = "RFS Pager"
 	}
 
 	var (
-		errs           []string
-		nonRetryable   = 0
-		retryable      = 0
-		successes      = 0
-		badTokens      []string
+		errs         []string
+		nonRetryable = 0
+		retryable    = 0
+		successes    = 0
+		badTokens    []string
 	)
 	for _, t := range targets {
 		var err error
@@ -132,12 +129,12 @@ func (n *Notifier) sendOne(ctx context.Context, claim ClaimedNotification, targe
 			if n.apn == nil {
 				continue
 			}
-			err = n.apn.Send(ctx, t.PushToken, payload.Title, payload.Body, badge)
+			err = n.apn.SendWith(ctx, t.PushToken, title, body, badge, opts)
 		case "GCM":
 			if n.fcm == nil {
 				continue
 			}
-			err = n.fcm.Send(ctx, t.PushToken, payload.Title, payload.Body, badge)
+			err = n.fcm.SendWith(ctx, t.PushToken, title, body, badge, opts)
 		default:
 			continue
 		}
@@ -157,6 +154,7 @@ func (n *Notifier) sendOne(ctx context.Context, claim ClaimedNotification, targe
 	out.BadTokens = badTokens
 	if successes > 0 {
 		out.Sent = true
+		out.SomeRetryable = retryable > 0
 		if len(errs) > 0 {
 			out.Err = joinErrs(errs)
 		}
@@ -167,6 +165,49 @@ func (n *Notifier) sendOne(ctx context.Context, claim ClaimedNotification, targe
 	}
 	out.Err = joinErrs(errs)
 	return out
+}
+
+// pageContent reads a claimed notification's stored payload into what the
+// push says. A correction keeps the original title with a suffix and says
+// correction_body; body is what the original push said.
+func pageContent(data []byte) (title, body string, opts PushOptions, err error) {
+	var payload struct {
+		Title          string `json:"title"`
+		Body           string `json:"body"`
+		MessageID      int64  `json:"id"`
+		Correction     bool   `json:"correction"`
+		CorrectionBody string `json:"correction_body"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return "", "", PushOptions{}, fmt.Errorf("invalid payload JSON: %w", err)
+	}
+	title, body = payload.Title, payload.Body
+	if title == "" {
+		title = "RFS Pager"
+	}
+	opts = pagePushOptions(payload.MessageID, payload.Correction)
+	if payload.Correction {
+		title += CorrectionTitleSuffix
+		if payload.CorrectionBody != "" {
+			body = payload.CorrectionBody
+		}
+	}
+	return title, body, opts, nil
+}
+
+// CorrectionTitleSuffix marks a push that replaces an earlier one whose
+// text came from a damaged copy of the page.
+const CorrectionTitleSuffix = " (corrected)"
+
+// pagePushOptions keys every push about a page by its message id, so a
+// correction replaces the garbled notification on the device instead of
+// adding a second one.
+func pagePushOptions(messageID int64, correction bool) PushOptions {
+	opts := PushOptions{Correction: correction}
+	if messageID > 0 {
+		opts.CollapseID = "msg-" + strconv.FormatInt(messageID, 10)
+	}
+	return opts
 }
 
 func joinErrs(errs []string) string {
