@@ -29,7 +29,8 @@ Two user-visible push bugs, diagnosed against prod on 2026-11-19 from a user rep
 | 5 | Correction push when a better copy fixes an already-pushed page | yes |
 
 A design review (four adversarial reviewers: concurrency, push delivery, dedupe,
-failure modes) reshaped several of these; the reasons are recorded below.
+failure modes) and a code review (five lenses, each finding verified by a skeptic;
+9 of 10 confirmed and fixed) reshaped several of these; the reasons are recorded below.
 
 ## Page facts — `internal/pagetext`
 
@@ -72,18 +73,27 @@ the **72 h header lookback**; then the phantom-capcode drop.
   opening reads like any page of the same format to the same capcode.
 - `differentPages` vetoes the similarity rule when both copies carry trusted
   headers more than 2 s apart, or clean incident numbers that differ (a follow-up page
-  to the same brigade is not a re-send).
+  to the same brigade is not a re-send). Neither is trusted from a heavily corrected
+  copy: a repair can land on the wrong digit.
+- The fragment rule works in either arrival order (`fragmentOfSameTransmission`).
+- A copy with the same text but a better decode upgrades the stored quality (text and
+  `replaced_count` untouched), so fan-out releases a held copy whose text turned out
+  right; if the stored copy was damaged and already fanned out, fan-out reopens.
 
 ### Replacement → notifications (`carryToNotifications`)
 
-Runs in the upsert transaction after the `UPDATE messages` that locks the row.
-Statements follow the row's states so a row moving on between them is caught later:
+Runs in the upsert transaction after the `UPDATE messages` that locks the row, and
+first locks the message's live notification rows (`FOR UPDATE`) so the dispatcher
+can't move a row between the statements (claims skip them; `markSent` waits and then
+decides from the committed row, which is why its logic lives in its SET expressions
+rather than a CTE):
 
 1. unsent (`pushed_at NULL, attempts 0`, not a correction): carry the new text;
 2. pending correction: update `correction_body`;
-3. in flight / retrying, if the new copy is undamaged: carry the new text **unflagged**
-   (if that send succeeds, `markSent` turns it into a correction; if it fails, the
-   retry is an ordinary, audible first push);
+3. in flight / retrying: carry the new text with `carried_fix` (= undamaged and within
+   10 min). A retry sends the best text there is, as an ordinary audible push. If the
+   send in flight succeeds, `markSent` makes a correction only when `carried_fix`;
+   otherwise it records the text that actually went out;
 4. delivered within 10 min, not yet corrected, if undamaged: queue a correction —
    `correction: true`, `correction_body`, `first_pushed_at`, `pushed_at = NULL`.
    `message`/`body` keep what was actually pushed (the admin page compares them).
@@ -101,9 +111,10 @@ Pre-check per message (PK lookup), with an in-memory `held` map owned by `Run`:
 - damaged (and heard < 2 min ago), or stale and not yet a corroborated burst → hold;
   re-checked every second; released as soon as an undamaged copy replaces it, or at
   30 s from `min(first seen, heard)`;
-- at release: stale and a burst → `fanned_out_at`, `push_skip_reason = 'replay'`,
+- at release: stale and a burst → `fanned_out_at`, `push_skip_reason = 'replay'`
+  (unless the message already has notifications: a reopened, already-pushed page),
   `push_lag_s`, no notifications; otherwise fan out and record `push_hold_ms` /
-  `push_lag_s`.
+  `push_lag_s` (earlier values kept when a reopened message is re-decided).
 - `fanoutSQL` locks the message row (`FOR NO KEY UPDATE OF m`) under a 5 s
   `lock_timeout`: a replacement in progress commits first and its text is read; a
   later one waits and then sees (and corrects) the committed notification rows.
@@ -116,7 +127,8 @@ Pre-check per message (PK lookup), with an in-memory `held` map owned by `Run`:
   row becomes a correction (claimed data restored + `correction_body` + `first_pushed_at`)
   and is requeued — unless the claimed row was already a correction (one correction per
   push), or some device failed retryably (requeued as an ordinary, loud push).
-- `markFailed` on a correction restores the original delivery instead of marking failed.
+- `markFailed` on a correction restores the original delivery instead of marking failed,
+  and flags `correction_failed` (the admin page shows "correction not delivered").
 - Every page push carries collapse key `msg-<message id>`: APNs `apns-collapse-id`,
   FCM Android `notification.tag` plus `data.collapse`. A correction: title +
   " (corrected)", text from `correction_body`, no sound, `apns-expiration: 0` / FCM
@@ -131,6 +143,13 @@ Foreground display uses `data.collapse` as the notifee id (corrections replace i
 place) and the `corrections` channel for corrections; the app creates that channel
 (low importance, no sound). Until that release, FCM falls back to the default channel
 for corrections (they still replace the original in the tray, with sound).
+
+Known limitation: on Android the FCM SDK (app in background) posts a page as
+`(tag "msg-N", id 0)` and notifee (app in foreground) as `(no tag, hash("msg-N"))`.
+A correction replaces the original only when both took the same path; if the app
+changed state in the minute between them, the correction appears beside it.
+Matching FCM's key would need a notifee id whose Java hash is 0, which is not worth
+the hack.
 
 ## Admin
 

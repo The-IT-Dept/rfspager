@@ -68,7 +68,7 @@ const (
 	// 8 October and 19 November 2026); a replayed page is the page we
 	// already have, not a new one.
 	headerLookback = 72 * time.Hour
-	// minFragment is the shortest stored fragment storedFragmentOf will
+	// minFragment is the shortest fragment fragmentOfSameTransmission will
 	// match; anything shorter says too little about which page it came from.
 	minFragment = 16
 	// simulcastWindow is how far apart the receivers' copies of a single
@@ -97,7 +97,7 @@ const dupColumns = `id, message, quality::text AS quality, lat, lng, created_at`
 //     one or two characters: "LHRaYE" for "LHRAYTE", "26-1149" for
 //     "26-131349". It also catches a damaged fragment stored a few seconds
 //     before a complete copy, which the plain score cannot (see
-//     storedFragmentOf). Copies that name different dispatch times or
+//     fragmentOfSameTransmission). Copies that name different dispatch times or
 //     incidents in text that decoded cleanly are never matched this way;
 //   - the same RFS header within the last 72 hours: the network re-sending
 //     old backlog (see headerLookback). This comes after the recent rules
@@ -181,7 +181,7 @@ func findDuplicate(ctx context.Context, q queryer, address, message string, ts t
 			continue
 		}
 		if textSimilarity(message, cands[i].Message) >= sameAddressSimilarity ||
-			storedFragmentOf(cands[i], message, ts) {
+			fragmentOfSameTransmission(cands[i], message, ts) {
 			return &cands[i], false, nil
 		}
 	}
@@ -231,19 +231,22 @@ func differentPages(aText string, aQ *rxproto.PageQuality, bText string, bQ *rxp
 	return false
 }
 
-// storedFragmentOf reports whether a stored copy is a damaged fragment of the
-// page just heard: the receivers' simultaneous copies of one transmission,
-// where the one cut short got in first ("LZmNC TYPE: AFA TURNOUT: " a second
-// before "FRINC TYPE: AFA TURNOUT: 432 INC: ..."). The plain score divides
-// by the longer text and can't see it. Limited to simulcastWindow, because
-// a fragment's opening reads like any page of the same format to the same
-// capcode.
-func storedFragmentOf(stored duplicateRow, message string, ts time.Time) bool {
+// fragmentOfSameTransmission reports whether one of two copies is a damaged
+// fragment of the other from the same transmission: the receivers' copies
+// land within a second or two, and the one cut short may arrive first
+// ("LZmNC TYPE: AFA TURNOUT: " a second before "FRINC TYPE: AFA TURNOUT: 432
+// INC: ...") or last. The plain score divides by the longer text and can't
+// see it. Limited to simulcastWindow, because a fragment's opening reads like
+// any page of the same format to the same capcode.
+func fragmentOfSameTransmission(stored duplicateRow, message string, ts time.Time) bool {
 	if d := ts.Sub(stored.CreatedAt); d > simulcastWindow || d < -simulcastWindow {
 		return false
 	}
 	fragment, full := strings.TrimSpace(stored.Message), strings.TrimSpace(message)
-	if len(fragment) < minFragment || len(fragment) >= len(full) {
+	if len(fragment) > len(full) {
+		fragment, full = full, fragment
+	}
+	if len(fragment) < minFragment || len(fragment) == len(full) {
 		return false
 	}
 	return prefixSimilarity(fragment, full) >= sameAddressSimilarity
@@ -378,23 +381,43 @@ func decodeQuality(s sql.NullString) *rxproto.PageQuality {
 	return &q
 }
 
+// reopenFanout sends a message back to fan-out after an undamaged copy
+// replaced (or vouched for) the one fan-out decided from soon before. That
+// decision rested on the stored copy: its coordinates (alertzones), its
+// quality (a damaged re-send wakes nobody), its header (a replay wakes
+// nobody). fanoutSQL's per-user NOT EXISTS keeps everyone already notified
+// from a second push; carryToNotifications updates what they were sent.
+func reopenFanout(ctx context.Context, tx *sqlx.Tx, messageID int64) error {
+	res, err := tx.ExecContext(ctx,
+		`UPDATE messages SET fanned_out_at = NULL, push_skip_reason = NULL
+		  WHERE id = $1 AND fanned_out_at > NOW() - ($2 * interval '1 second')`,
+		messageID, int(correctionWindow.Seconds()))
+	if err != nil {
+		return fmt.Errorf("reopening fan-out: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_notify('rfs_refanout', $1::text)`, messageID); err != nil {
+			return fmt.Errorf("waking fan-out: %w", err)
+		}
+	}
+	return nil
+}
+
 // carryToNotifications brings a message's pushes up to date after a better
 // copy replaced its text. It runs in the upsert's transaction, after the
-// UPDATE that locked the message row; fan-out locks the same row, so the
-// notification rows it writes are either committed or not yet begun.
-//
-// A notification row moves unsent -> in flight -> delivered, and a delivered
-// row may become a pending correction and then a delivered correction. The
-// statements run in that order, each with a fresh snapshot, so a row that
-// moves on while they run is caught by a later one:
+// UPDATE that locked the message row (fan-out locks the same row, so the
+// notification rows it writes are either committed or not yet begun), and
+// it first locks the message's live notification rows, so the dispatcher
+// can't move one between the statements below: a claim skips them and
+// markSent waits, then rechecks against what this transaction wrote.
 //
 //  1. Unsent: carry the new text; nothing has gone out yet.
 //  2. Pending correction: carry the new text as the correction's text.
-//  3. In flight or waiting to retry, when this copy fixes the text: carry
-//     the new text, unflagged. If that send succeeds, the dispatcher sees
-//     the data changed under it and turns the row into a correction
-//     (markSentSQL); if it fails, the retry is an ordinary first push with
-//     the better text, so nobody's only alert for a page is a quiet one.
+//  3. In flight or waiting to retry: carry the new text, recording whether
+//     it fixes the page (carried_fix). A retry then sends the best text
+//     there is. If the send in flight succeeds, the dispatcher finds the
+//     data changed under it: a fix turns the row into a correction, anything
+//     else just records what was sent (markSentSQL).
 //  4. Delivered, when this copy fixes the text: queue a correction. The
 //     row keeps the text that was pushed (the admin page compares it with
 //     the stored copy) and gains correction_body and first_pushed_at.
@@ -403,18 +426,27 @@ func decodeQuality(s sql.NullString) *rxproto.PageQuality {
 // "fixes" means the new copy is undamaged. A delivered push that is not
 // corrected keeps the text it went out with.
 func carryToNotifications(ctx context.Context, tx *sqlx.Tx, messageID int64, text string, fixes bool) error {
+	var live int
+	if err := tx.GetContext(ctx, &live,
+		`SELECT count(*) FROM (SELECT 1 FROM notifications
+		    WHERE message_id = $1 AND push_failed_at IS NULL FOR UPDATE) locked`, messageID); err != nil {
+		return fmt.Errorf("locking pushes: %w", err)
+	}
+	if live == 0 {
+		return nil
+	}
 	var touched int64
-	exec := func(what, query string, args ...any) error {
+	exec := func(what, query string, args ...any) (int64, error) {
 		res, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
-			return fmt.Errorf("%s: %w", what, err)
+			return 0, fmt.Errorf("%s: %w", what, err)
 		}
 		n, _ := res.RowsAffected()
 		touched += n
-		return nil
+		return n, nil
 	}
 	window := int(correctionWindow.Seconds())
-	if err := exec("updating unsent pushes",
+	if _, err := exec("updating unsent pushes",
 		`UPDATE notifications
 		    SET data = (data::jsonb || jsonb_build_object('message', $2::text, 'body', $2::text))::text,
 		        updated_at = NOW()
@@ -424,7 +456,7 @@ func carryToNotifications(ctx context.Context, tx *sqlx.Tx, messageID int64, tex
 		messageID, text); err != nil {
 		return err
 	}
-	if err := exec("updating pending corrections",
+	if _, err := exec("updating pending corrections",
 		`UPDATE notifications
 		    SET data = (data::jsonb || jsonb_build_object('correction_body', $2::text))::text,
 		        updated_at = NOW()
@@ -433,21 +465,20 @@ func carryToNotifications(ctx context.Context, tx *sqlx.Tx, messageID int64, tex
 		messageID, text); err != nil {
 		return err
 	}
+	inFlight, err := exec("updating pushes in flight",
+		`UPDATE notifications
+		    SET data = (data::jsonb || jsonb_build_object('message', $2::text, 'body', $2::text,
+		            'carried_fix', $3::boolean AND created_at > NOW() - ($4 * interval '1 second')))::text,
+		        updated_at = NOW()
+		  WHERE message_id = $1 AND push_failed_at IS NULL AND pushed_at IS NULL AND push_attempts > 0
+		    AND NOT COALESCE((data::jsonb->>'correction')::boolean, false)
+		    AND (data::jsonb->>'body') IS DISTINCT FROM $2::text`,
+		messageID, text, fixes, window)
+	if err != nil {
+		return err
+	}
 	if fixes {
-		before := touched
-		if err := exec("updating pushes in flight",
-			`UPDATE notifications
-			    SET data = (data::jsonb || jsonb_build_object('message', $2::text, 'body', $2::text))::text,
-			        updated_at = NOW()
-			  WHERE message_id = $1 AND push_failed_at IS NULL AND pushed_at IS NULL AND push_attempts > 0
-			    AND created_at > NOW() - ($3 * interval '1 second')
-			    AND NOT COALESCE((data::jsonb->>'correction')::boolean, false)
-			    AND (data::jsonb->>'body') IS DISTINCT FROM $2::text`,
-			messageID, text, window); err != nil {
-			return err
-		}
-		inFlight := touched - before
-		if err := exec("queueing correction pushes",
+		corrected, err := exec("queueing correction pushes",
 			`UPDATE notifications
 			    SET data = (data::jsonb || jsonb_build_object(
 			            'correction', true, 'correction_body', $2::text, 'first_pushed_at', pushed_at))::text,
@@ -456,19 +487,18 @@ func carryToNotifications(ctx context.Context, tx *sqlx.Tx, messageID int64, tex
 			    AND created_at > NOW() - ($3 * interval '1 second')
 			    AND NOT COALESCE((data::jsonb->>'correction')::boolean, false)
 			    AND (data::jsonb->>'body') IS DISTINCT FROM $2::text`,
-			messageID, text, window); err != nil {
+			messageID, text, window)
+		if err != nil {
 			return err
 		}
-		if corrected := touched - before - inFlight; corrected > 0 || inFlight > 0 {
+		if corrected > 0 || inFlight > 0 {
 			slog.Info("correction pushes queued", "message_id", messageID, "delivered", corrected, "in_flight", inFlight)
 		}
 	}
-	if touched > 0 {
-		// The dispatch trigger fires only on INSERT, and rows this
-		// transaction held locked were skipped by any claim meanwhile.
-		if _, err := tx.ExecContext(ctx, `SELECT pg_notify('rfs_dispatch', '')`); err != nil {
-			return fmt.Errorf("waking dispatch: %w", err)
-		}
+	// Wake the dispatcher: its trigger fires only on INSERT, and any claim
+	// that ran meanwhile skipped the rows locked here.
+	if _, err := tx.ExecContext(ctx, `SELECT pg_notify('rfs_dispatch', '')`); err != nil {
+		return fmt.Errorf("waking dispatch: %w", err)
 	}
 	return nil
 }
@@ -506,7 +536,27 @@ func (d *DB) UpsertMessageDeduped(ctx context.Context, msg *models.Message) (str
 		return "", err
 	}
 	if existing != nil {
-		if dropOnly || !betterCopy(msg.Message, msg.Quality, existing.Message, decodeQuality(existing.Quality)) {
+		if dropOnly {
+			return MessageDuplicate, tx.Commit()
+		}
+		existingQuality := decodeQuality(existing.Quality)
+		if !betterCopy(msg.Message, msg.Quality, existing.Message, existingQuality) {
+			// The same text, decoded more cleanly: nothing changes for anyone
+			// reading it, but fan-out may be holding the stored copy as
+			// damaged when this one shows its text was right all along.
+			if strings.TrimSpace(msg.Message) == strings.TrimSpace(existing.Message) &&
+				damageScore(msg.Message, msg.Quality) < damageScore(existing.Message, existingQuality) {
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE messages SET quality = $2::jsonb, system_id = $3, updated_at = $4 WHERE id = $1`,
+					existing.ID, qualityJSON, msg.SystemID, msg.UpdatedAt); err != nil {
+					return "", fmt.Errorf("upgrading quality: %w", err)
+				}
+				if pagetext.Damaged(existing.Message, existingQuality) && !pagetext.Damaged(msg.Message, msg.Quality) {
+					if err := reopenFanout(ctx, tx, existing.ID); err != nil {
+						return "", err
+					}
+				}
+			}
 			return MessageDuplicate, tx.Commit()
 		}
 		if _, err := tx.ExecContext(ctx,
@@ -521,24 +571,9 @@ func (d *DB) UpsertMessageDeduped(ctx context.Context, msg *models.Message) (str
 		if err := carryToNotifications(ctx, tx, existing.ID, msg.Message, fixes); err != nil {
 			return "", err
 		}
-		// Fan-out decided who to wake from the copy stored then: its
-		// coordinates (alertzones), its quality (a damaged re-send wakes
-		// nobody), its header (a replay wakes nobody). If an undamaged copy
-		// replaces it soon after, fan-out runs again on this one. Its
-		// per-user NOT EXISTS keeps everyone already notified from a second
-		// push; the corrections above update what they were sent.
 		if fixes {
-			res, err := tx.ExecContext(ctx,
-				`UPDATE messages SET fanned_out_at = NULL, push_skip_reason = NULL, push_lag_s = NULL
-				  WHERE id = $1 AND fanned_out_at > NOW() - ($2 * interval '1 second')`,
-				existing.ID, int(correctionWindow.Seconds()))
-			if err != nil {
-				return "", fmt.Errorf("reopening fan-out: %w", err)
-			}
-			if n, _ := res.RowsAffected(); n > 0 {
-				if _, err := tx.ExecContext(ctx, `SELECT pg_notify('rfs_refanout', $1::text)`, existing.ID); err != nil {
-					return "", fmt.Errorf("waking fan-out: %w", err)
-				}
+			if err := reopenFanout(ctx, tx, existing.ID); err != nil {
+				return "", err
 			}
 		}
 		msg.ID = existing.ID

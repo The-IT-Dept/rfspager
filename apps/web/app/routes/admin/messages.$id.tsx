@@ -91,6 +91,7 @@ interface NotificationRow {
   pushed_message?: string | null;
   correction_message?: string | null;
   first_pushed_at?: string | null;
+  correction_failed?: boolean | null;
 }
 
 interface Notifications {
@@ -506,7 +507,9 @@ export default function MessageDetailPage() {
                               <span title="first push, then a correction push">
                                 {fmtDate(n.first_pushed_at)}
                                 <span className="block text-xs text-muted-foreground">
-                                  {n.pushed_at ? `corrected ${fmtDate(n.pushed_at)}` : "correction pending"}
+                                  {n.correction_failed ? (
+                                    <span className="text-destructive" title={n.push_last_error ?? undefined}>correction not delivered</span>
+                                  ) : n.pushed_at ? `corrected ${fmtDate(n.pushed_at)}` : "correction pending"}
                                 </span>
                               </span>
                             ) : n.pushed_at ? (

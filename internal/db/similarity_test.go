@@ -44,7 +44,7 @@ func TestTextSimilarityOnRealPages(t *testing.T) {
 		{"the stop message", rayteStop, rayteClean, 0, 0.5},
 		{"a copy cut short", rayteClean[:70], rayteClean, 0.95, 1},
 		// The plain score is one-way: a complete copy scores low against a
-		// fragment stored first. storedFragmentOf covers that case.
+		// fragment stored first. fragmentOfSameTransmission covers that case.
 		{"a clean copy against a damaged fragment stored first", raymondClean, raymondFragment, 0, 0.5},
 	}
 	for _, c := range cases {
@@ -58,23 +58,26 @@ func TestTextSimilarityOnRealPages(t *testing.T) {
 // An FRNSW turnout, 17 Nov 2026: one receiver's truncated, repaired copy was
 // stored a second before four clean ones; the plain score put the clean copy
 // at 0.43 against it and the page was stored and pushed twice.
-func TestStoredFragmentOf(t *testing.T) {
+func TestFragmentOfSameTransmission(t *testing.T) {
 	at := time.Date(2026, 11, 16, 21, 24, 43, 0, time.UTC)
 	stored := duplicateRow{Message: raymondFragment, CreatedAt: at}
-	if !storedFragmentOf(stored, raymondClean, at.Add(time.Second)) {
+	if !fragmentOfSameTransmission(stored, raymondClean, at.Add(time.Second)) {
 		t.Fatal("a damaged fragment stored a second earlier is the same transmission")
 	}
-	if storedFragmentOf(stored, raymondClean, at.Add(time.Minute)) {
+	if fragmentOfSameTransmission(stored, raymondClean, at.Add(time.Minute)) {
 		t.Fatal("a fragment's opening matches any page of the same format; only within the simulcast window")
 	}
-	if storedFragmentOf(duplicateRow{Message: raymondClean, CreatedAt: at}, raymondFragment, at) {
-		t.Fatal("only a stored copy shorter than the new one is a fragment of it")
+	if !fragmentOfSameTransmission(duplicateRow{Message: raymondClean, CreatedAt: at}, raymondFragment, at.Add(time.Second)) {
+		t.Fatal("the fragment may also arrive after the complete copy")
 	}
-	if storedFragmentOf(duplicateRow{Message: "FRINC TYPE", CreatedAt: at}, raymondClean, at) {
+	if fragmentOfSameTransmission(duplicateRow{Message: "FRINC TYPE", CreatedAt: at}, raymondClean, at) {
 		t.Fatal("too short to say which page it came from")
 	}
-	if storedFragmentOf(duplicateRow{Message: rayteClean[:60], CreatedAt: at}, rayteOtherJob, at) {
+	if fragmentOfSameTransmission(duplicateRow{Message: rayteClean[:60], CreatedAt: at}, rayteOtherJob, at) {
 		t.Fatal("a fragment of a different job to the same brigade")
+	}
+	if fragmentOfSameTransmission(duplicateRow{Message: raymondClean, CreatedAt: at}, raymondClean, at) {
+		t.Fatal("equal texts are not fragments of each other")
 	}
 }
 
@@ -95,6 +98,10 @@ func TestDifferentPages(t *testing.T) {
 	}
 	if differentPages("FRINC TYPE: q^C TURNOUT: 101 IC: 100001-17112P26", nil, raymondClean, clean, near) {
 		t.Fatal("a damaged incident number says nothing")
+	}
+	miscorrected := "14 October 2026 07:46:03 LHRaYE - 26-131549 - Power pole alight - FIRECALL - 158F MASONITE RD,TOMAGO,PORT STEPHENS (NSW),2322 - [151.763336,-32.801304]"
+	if differentPages(miscorrected, &rxproto.PageQuality{Codewords: 54, Corrected: 40}, rayteClean, clean, near) {
+		t.Fatal("an incident number from a heavily corrected copy says nothing")
 	}
 }
 

@@ -37,27 +37,44 @@ UPDATE notifications
  RETURNING id::text, notifiable_id, data, push_attempts;
 `
 
-// markSentSQL stamps a delivered push, unless a better copy of the page
-// carried its text to the row while the push was in flight (see
-// db.carryToNotifications). The device then has the old text, so the row
-// becomes a correction: the text that went out is put back (the claimed
-// data, $3), the new text becomes correction_body, and the row is queued
-// again. Two exceptions: a correction that was itself in flight is done
-// (one correction per push), and if some device missed this send ($4) the
-// row is queued again as an ordinary push with the new text, because a loud
-// repeat on one device beats a quiet first alert on another. Every SET
-// expression reads the row as it was. Returns whether the row was requeued.
+// markSentSQL stamps a delivered push. If a better copy of the page carried
+// its text to the row while the push was in flight (see
+// db.carryToNotifications), the device has the old text:
+//
+//   - the carried text fixes the page (carried_fix): the row becomes a
+//     correction, keeping the text that went out (the claimed data, $3) plus
+//     correction_body and first_pushed_at, and is queued again; but if some
+//     device missed this send ($4) it is queued again as an ordinary push
+//     with the new text, because a loud repeat on one device beats a quiet
+//     first alert on another;
+//   - otherwise (a better copy that is still damaged): delivered, recording
+//     the text that went out; a retry would have used the new one.
+//
+// A correction that was itself in flight is simply delivered: one
+// correction per push. Every SET expression reads the row as it was.
+// Returns whether the row was queued again.
+//
+// The decision is made from the row itself in every SET expression, not in a
+// CTE: if this waited on db.carryToNotifications' lock, Postgres rechecks
+// the updated row but a CTE would still hold the old one.
 const markSentSQL = `
 UPDATE notifications
-   SET pushed_at = CASE WHEN data = $3 OR ($3::jsonb ? 'correction') THEN NOW() END,
+   SET pushed_at = CASE WHEN data <> $3 AND NOT ($3::jsonb ? 'correction')
+                             AND COALESCE((data::jsonb->>'carried_fix')::boolean, false)
+                        THEN NULL ELSE NOW() END,
        data = CASE
-                WHEN data = $3 OR ($3::jsonb ? 'correction') OR $4 THEN data
-                ELSE ($3::jsonb || jsonb_build_object(
-                        'correction', true,
-                        'correction_body', data::jsonb->>'body',
-                        'first_pushed_at', NOW()))::text
+                WHEN data = $3 OR ($3::jsonb ? 'correction') THEN data
+                WHEN COALESCE((data::jsonb->>'carried_fix')::boolean, false) AND $4 THEN data
+                WHEN COALESCE((data::jsonb->>'carried_fix')::boolean, false)
+                  THEN ($3::jsonb || jsonb_build_object(
+                          'correction', true,
+                          'correction_body', data::jsonb->>'body',
+                          'first_pushed_at', NOW()))::text
+                ELSE $3
               END,
-       push_attempts = CASE WHEN data = $3 OR ($3::jsonb ? 'correction') THEN push_attempts ELSE 0 END,
+       push_attempts = CASE WHEN data <> $3 AND NOT ($3::jsonb ? 'correction')
+                                 AND COALESCE((data::jsonb->>'carried_fix')::boolean, false)
+                            THEN 0 ELSE push_attempts END,
        push_locked_until = NULL,
        push_last_error   = NULLIF($2, '')
  WHERE id = $1::uuid
@@ -65,13 +82,15 @@ RETURNING pushed_at IS NULL;
 `
 
 // markFailedSQL gives up on a push. A correction that can't be delivered
-// leaves the row as it was after the original push: delivered, at
-// first_pushed_at, not failed.
+// leaves the row as it was after the original push (delivered, at
+// first_pushed_at, not failed), flagged correction_failed for the admin page.
 const markFailedSQL = `
 UPDATE notifications
    SET push_failed_at    = CASE WHEN data::jsonb ? 'first_pushed_at' THEN NULL ELSE NOW() END,
        pushed_at         = CASE WHEN data::jsonb ? 'first_pushed_at'
                                 THEN (data::jsonb->>'first_pushed_at')::timestamptz ELSE pushed_at END,
+       data              = CASE WHEN data::jsonb ? 'first_pushed_at'
+                                THEN (data::jsonb || '{"correction_failed": true}'::jsonb)::text ELSE data END,
        push_locked_until = NULL,
        push_last_error   = $2
  WHERE id = $1::uuid;

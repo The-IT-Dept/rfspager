@@ -524,7 +524,8 @@ func (s *Store) ListMessageNotifications(ctx context.Context, messageID int64, l
 		        n.push_last_error, n.read_at,
 		        CASE WHEN n.data ~ '^\s*\{' THEN n.data::jsonb->>'message' END AS pushed_message,
 		        CASE WHEN n.data ~ '^\s*\{' THEN n.data::jsonb->>'correction_body' END AS correction_message,
-		        CASE WHEN n.data ~ '^\s*\{' THEN n.data::jsonb->>'first_pushed_at' END AS first_pushed_at
+		        CASE WHEN n.data ~ '^\s*\{' THEN n.data::jsonb->>'first_pushed_at' END AS first_pushed_at,
+		        CASE WHEN n.data ~ '^\s*\{' THEN (n.data::jsonb->>'correction_failed')::boolean END AS correction_failed
 		   FROM notifications n
 		   LEFT JOIN users u ON u.id = n.notifiable_id AND n.notifiable_type = 'App\Models\User'
 		  WHERE n.message_id = $1

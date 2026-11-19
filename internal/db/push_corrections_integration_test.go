@@ -196,7 +196,8 @@ func TestReplacementCorrectsPushesByState(t *testing.T) {
 		t.Errorf("unsent: %v", s.data)
 	}
 	s = readNotif(t, d, inFlight)
-	if s.data["body"] != cleanText || s.data["correction"] != nil || s.attempts != 1 || s.pushedAt.Valid || !s.lockedUntil.Valid {
+	if s.data["body"] != cleanText || s.data["correction"] != nil || s.data["carried_fix"] != true ||
+		s.attempts != 1 || s.pushedAt.Valid || !s.lockedUntil.Valid {
 		t.Errorf("in flight: data %v attempts %d pushed %v locked %v", s.data, s.attempts, s.pushedAt, s.lockedUntil)
 	}
 	s = readNotif(t, d, delivered)
@@ -257,11 +258,23 @@ func TestDamagedReplacementCorrectsNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var retrying string
+	if err := d.conn.QueryRowContext(ctx,
+		`INSERT INTO notifications (id, type, notifiable_type, notifiable_id, data, message_id, push_required, push_attempts, push_locked_until, push_last_error, created_at, updated_at)
+		 VALUES (gen_random_uuid(), 'App\Notifications\PagerNotification', 'App\Models\User', $1, $2, $3, true, 1, NOW() + interval '30 seconds', 'APN: 503', NOW(), NOW())
+		 RETURNING id::text`,
+		userID, `{"id": 1, "message": "x", "body": "x"}`, first.ID).Scan(&retrying); err != nil {
+		t.Fatal(err)
+	}
+
 	better := pageAt(sys, capcode, "0100311", "FRINC TYPE: MVA TURNOUT: 103 IC: 100003-17112026", now.Add(time.Second),
 		&rxproto.PageQuality{Codewords: 18, Corrected: 3, Uncorrectable: 1, Damaged: [][2]int{{30, 33}}})
 	mustUpsert(t, d, better, MessageReplaced)
 	if s := readNotif(t, d, id); s.data["correction"] != nil || !s.pushedAt.Valid {
 		t.Errorf("a still-damaged copy must not send a correction: %v", s.data)
+	}
+	if s := readNotif(t, d, retrying); s.data["body"] != better.Message || s.data["carried_fix"] != false {
+		t.Errorf("a push waiting to retry sends the best text there is, not as a fix: %v", s.data)
 	}
 	var fanned sql.NullTime
 	if err := d.conn.QueryRowContext(ctx, `SELECT fanned_out_at FROM messages WHERE id = $1`, first.ID).Scan(&fanned); err != nil {
@@ -269,6 +282,58 @@ func TestDamagedReplacementCorrectsNothing(t *testing.T) {
 	}
 	if !fanned.Valid {
 		t.Error("a still-damaged copy must not reopen fan-out")
+	}
+}
+
+// A copy the receiver struggled with but got right is held by fan-out as
+// damaged; a clean copy with the same text vouches for it, so the stored
+// quality is upgraded and the hold ends at the next recheck.
+func TestIdenticalCleanCopyUpgradesStoredQuality(t *testing.T) {
+	d, sys := managedSystemDB(t)
+	capcode := seedCapcode(t, d, "0100411", "104 Example")
+	at := time.Now().UTC().Truncate(time.Second)
+	text := "FRINC TYPE: AFA TURNOUT: 104 INC: 100004-17112026"
+
+	first := pageAt(sys, capcode, "0100411", text, at, &rxproto.PageQuality{Codewords: 18, Corrected: 9})
+	mustUpsert(t, d, first, MessageCreated)
+	mustUpsert(t, d, pageAt(sys, capcode, "0100411", text, at.Add(time.Second), &rxproto.PageQuality{Codewords: 18}), MessageDuplicate)
+	var quality string
+	var replaced int
+	if err := d.conn.QueryRowContext(context.Background(), `SELECT quality::text, replaced_count FROM messages WHERE id = $1`, first.ID).Scan(&quality, &replaced); err != nil {
+		t.Fatal(err)
+	}
+	var q rxproto.PageQuality
+	_ = json.Unmarshal([]byte(quality), &q)
+	if q.Corrected != 0 || replaced != 0 {
+		t.Fatalf("quality %s replaced %d: want the clean copy's quality, text untouched", quality, replaced)
+	}
+}
+
+// A damaged fragment that lands after the complete copy of the same
+// transmission is a duplicate, not a second page.
+func TestFragmentArrivingAfterCompleteCopyIsDuplicate(t *testing.T) {
+	d, sys := managedSystemDB(t)
+	capcode := seedCapcode(t, d, "0100511", "105 Example")
+	at := time.Now().UTC().Truncate(time.Second)
+	mustUpsert(t, d, pageAt(sys, capcode, "0100511", "FRINC TYPE: AFA TURNOUT: 105 INC: 100005-17112026", at, &rxproto.PageQuality{Codewords: 18}), MessageCreated)
+	mustUpsert(t, d, pageAt(sys, capcode, "0100511", "LZmNC TYPE: AFA TURNOUT: ", at.Add(time.Second),
+		&rxproto.PageQuality{Codewords: 9, Corrected: 4, Uncorrectable: 1, Truncated: true, Damaged: [][2]int{{0, 2}}}), MessageDuplicate)
+}
+
+// A heavily repaired copy whose incident number came out one digit wrong is
+// still the same page as the clean copy that follows.
+func TestMiscorrectedIncidentNumberStillMerges(t *testing.T) {
+	d, sys := managedSystemDB(t)
+	capcode := seedCapcode(t, d, "0010864", "Example")
+	at := time.Now().UTC().Truncate(time.Second)
+	mis := pageAt(sys, capcode, "0010864", "14 October 2026 07:46:03 LHRaYE - 26-100549 - Power pole alight - FIRECALL - 1 EXAMPLE RD,EXAMPLEVILLE",
+		at, &rxproto.PageQuality{Codewords: 54, Corrected: 40})
+	mustUpsert(t, d, mis, MessageCreated)
+	clean := pageAt(sys, capcode, "0010864", "14 October 2026 07:46:03 LHRAYTE - 26-100349 - Power pole alight - FIRECALL - 1 EXAMPLE RD,EXAMPLEVILLE",
+		at.Add(time.Second), &rxproto.PageQuality{Codewords: 54, Corrected: 9})
+	mustUpsert(t, d, clean, MessageReplaced)
+	if clean.ID != mis.ID {
+		t.Fatalf("replaced %d, want %d", clean.ID, mis.ID)
 	}
 }
 

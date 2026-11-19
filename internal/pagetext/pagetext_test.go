@@ -234,6 +234,8 @@ func TestIncidentID(t *testing.T) {
 		{"18 November 2026 08:51:11 LHEXAMP1 - 26-100007 - MVA", &rxproto.PageQuality{Codewords: 30, Uncorrectable: 1, Damaged: [][2]int{{38, 41}}}, ""},
 		{"18 November 2026 08:51:11 LHEXAMP1 - 26-100007 - MVA", &rxproto.PageQuality{Codewords: 30, Uncorrectable: 1, Damaged: [][2]int{{50, 52}}}, "26-100007"},
 		{"COFFS HARBOUR DAILY TEST 12:30", nil, ""},
+		{"FRINC TYPE: AFA TURNOUT: 101 INC: 1234-05012027", nil, "INC 1234-05012027"},
+		{"14 October 2026 07:46:03 LHRaYE - 26-131549 - Power pole alight", &rxproto.PageQuality{Codewords: 54, Corrected: 40}, ""},
 	}
 	for _, c := range cases {
 		got, ok := IncidentID(c.text, c.q)

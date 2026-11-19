@@ -158,6 +158,17 @@ func TestFanoutSuppressesOnlyCorroboratedReplays(t *testing.T) {
 	if s.notified != 0 || !s.fanned || s.skip.String != "replay" || s.lag.Int64 < 9*3600 {
 		t.Fatalf("a corroborated replay is stored and not pushed: %+v", s)
 	}
+
+	// Fan-out reopened (a better copy arrived) on a page already pushed: no
+	// new pushes, and not labelled "not pushed".
+	if _, err := f.conn.ExecContext(ctx, `UPDATE messages SET fanned_out_at = NULL, push_skip_reason = NULL WHERE id = $1`, lone); err != nil {
+		t.Fatal(err)
+	}
+	f.worker.processMessage(ctx, lone)
+	s = f.state(t, lone)
+	if s.notified != 1 || !s.fanned || s.skip.Valid {
+		t.Fatalf("an already-pushed page re-decided during a burst: %+v", s)
+	}
 }
 
 // Fan-out locks the message row: a better copy being stored at that moment
@@ -215,9 +226,9 @@ func TestDispatchCorrectionBookkeeping(t *testing.T) {
 		}
 		return id
 	}
-	carry := func(id string) { // a better copy lands while the push is in flight
+	carry := func(id string, fix bool) { // a better copy lands while the push is in flight
 		if _, err := f.conn.ExecContext(ctx,
-			`UPDATE notifications SET data = (data::jsonb || '{"message": "FRINC TYPE: MVA", "body": "FRINC TYPE: MVA"}')::text WHERE id = $1::uuid`, id); err != nil {
+			`UPDATE notifications SET data = (data::jsonb || jsonb_build_object('message', 'FRINC TYPE: MVA', 'body', 'FRINC TYPE: MVA', 'carried_fix', $2::boolean))::text WHERE id = $1::uuid`, id, fix); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -249,7 +260,7 @@ func TestDispatchCorrectionBookkeeping(t *testing.T) {
 	}
 
 	changed := newRow()
-	carry(changed)
+	carry(changed, true)
 	if n := sent(changed, original, false); n != 1 {
 		t.Fatal("a push whose text changed in flight is queued again")
 	}
@@ -271,7 +282,7 @@ func TestDispatchCorrectionBookkeeping(t *testing.T) {
 	}
 
 	partial := newRow()
-	carry(partial)
+	carry(partial, true)
 	if n := sent(partial, original, true); n != 1 {
 		t.Fatal("requeued")
 	}
@@ -279,13 +290,51 @@ func TestDispatchCorrectionBookkeeping(t *testing.T) {
 		t.Fatalf("a device missed the first send: an ordinary push with the new text, got %+v", r)
 	}
 
+	// A better copy that is still damaged: no correction; the row records
+	// what went out.
+	notFix := newRow()
+	carry(notFix, false)
+	if n := sent(notFix, original, false); n != 0 {
+		t.Fatal("a damaged copy landing in flight queues nothing")
+	}
+	if r := read(notFix); !r.Pushed || r.Data["body"] != "FRINC TYPE: q^C" || r.Data["correction"] != nil {
+		t.Fatalf("delivered with the text it carried: %+v", r)
+	}
+
+	// markSent waiting on a carry in progress decides from the row the carry
+	// commits, not the one it first saw.
+	racing := newRow()
+	tx, err := f.conn.BeginTxx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT 1 FROM notifications WHERE id = $1::uuid FOR UPDATE`, racing); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE notifications SET data = (data::jsonb || '{"message": "FRINC TYPE: MVA", "body": "FRINC TYPE: MVA", "carried_fix": true}')::text WHERE id = $1::uuid`, racing); err != nil {
+		t.Fatal(err)
+	}
+	requeued := make(chan int)
+	go func() { requeued <- sent(racing, original, false) }()
+	time.Sleep(300 * time.Millisecond)
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if n := <-requeued; n != 1 {
+		t.Fatal("markSent must see the carried fix it waited for and queue the correction")
+	}
+	if r := read(racing); r.Data["correction"] != true || r.Data["body"] != "FRINC TYPE: q^C" {
+		t.Fatalf("correction after the wait: %+v", r)
+	}
+
 	failing := newRow()
-	carry(failing)
+	carry(failing, true)
 	sent(failing, original, false)
 	w.recordOutcomes(ctx,
 		[]notify.ClaimedNotification{{ID: failing, Attempts: 1}},
 		[]notify.DispatchOutcome{{ID: failing, PermanentFail: true, Err: "no push tokens"}})
-	if r := read(failing); !r.Pushed || r.Failed {
-		t.Fatalf("an undeliverable correction leaves the original delivered: %+v", r)
+	if r := read(failing); !r.Pushed || r.Failed || r.Data["correction_failed"] != true {
+		t.Fatalf("an undeliverable correction leaves the original delivered, flagged: %+v", r)
 	}
 }

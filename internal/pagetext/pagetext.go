@@ -237,14 +237,18 @@ func (w *ReplayWatch) pruneLocked(now time.Time) {
 
 var (
 	rfsIncident   = regexp.MustCompile(`\b\d{2}-\d{6}\b`)
-	frnswIncident = regexp.MustCompile(`\bINC: (\d{6}-\d{8})\b`)
+	frnswIncident = regexp.MustCompile(`\bINC:\s*(\d+-\d{8})\b`)
 )
 
 // IncidentID is the incident number a page names (RFS "26-134814", FRNSW
 // "INC: 228486-17112026"), if one decoded cleanly: none of its characters
-// came from an unrepairable codeword. Two copies naming different incidents
-// are different pages however alike they read.
+// came from an unrepairable codeword, and the copy was not so heavily
+// corrected that a repair may have landed on the wrong digit. Two copies
+// naming different incidents are different pages however alike they read.
 func IncidentID(text string, q *rxproto.PageQuality) (string, bool) {
+	if q != nil && q.Codewords > 0 && q.Corrected*2 >= q.Codewords {
+		return "", false
+	}
 	if m := frnswIncident.FindStringSubmatchIndex(text); m != nil && intact(q, m[2], m[3]) {
 		return "INC " + text[m[2]:m[3]], true
 	}

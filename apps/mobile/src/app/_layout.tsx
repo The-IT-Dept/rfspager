@@ -85,7 +85,8 @@ function RootLayoutInner() {
     const collapse = message.data?.collapse
     const correction = message.data?.correction === "1"
     return notifee.displayNotification({
-      id: typeof collapse === "string" ? collapse : undefined,
+      // Only with a key: notifee rejects an id property that is undefined.
+      ...(typeof collapse === "string" && collapse ? { id: collapse } : {}),
       title: message.notification?.title,
       body: message.notification?.body,
       ios: {

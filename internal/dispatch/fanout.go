@@ -336,10 +336,16 @@ func (w *FanoutWorker) processMessage(ctx context.Context, messageID int64) {
 	}
 
 	if replay {
+		// A message fan-out reopened (a better copy arrived) may already
+		// have been pushed: then it is not "not pushed", and its earlier
+		// hold stays on record.
 		if _, err := w.db.ExecContext(ctx,
-			`UPDATE messages
-			    SET fanned_out_at = NOW(), push_skip_reason = 'replay', push_lag_s = $2,
-			        push_hold_ms = NULLIF($3, 0)
+			`UPDATE messages m
+			    SET fanned_out_at = NOW(),
+			        push_skip_reason = CASE WHEN EXISTS (SELECT 1 FROM notifications n WHERE n.message_id = m.id)
+			                                THEN NULL ELSE 'replay' END,
+			        push_lag_s = $2,
+			        push_hold_ms = COALESCE(NULLIF($3, 0), push_hold_ms)
 			  WHERE id = $1 AND fanned_out_at IS NULL`,
 			messageID, int(lag.Seconds()), int(heldFor.Milliseconds())); err != nil {
 			slog.Error("fanout: marking replayed page failed", "message_id", messageID, "error", err)
@@ -392,7 +398,8 @@ func (w *FanoutWorker) fanOut(ctx context.Context, messageID int64, heldFor, sta
 	}
 	if heldFor > 0 || staleLag > 0 {
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE messages SET push_hold_ms = NULLIF($2, 0), push_lag_s = NULLIF($3, 0) WHERE id = $1`,
+			`UPDATE messages SET push_hold_ms = COALESCE(NULLIF($2, 0), push_hold_ms),
+			        push_lag_s = COALESCE(NULLIF($3, 0), push_lag_s) WHERE id = $1`,
 			messageID, int(heldFor.Milliseconds()), int(staleLag.Seconds())); err != nil {
 			slog.Error("fanout: recording hold failed", "message_id", messageID, "error", err)
 			return
