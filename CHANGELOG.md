@@ -1,5 +1,21 @@
 # Changelog
 
+## [5.11.0](https://github.com/The-IT-Dept/rfspager/compare/v5.10.0...v5.11.0) (2026-11-19)
+
+
+### Features
+
+* **server:** let a receiver comp its supporters as well as its owner ([#61](https://github.com/The-IT-Dept/rfspager/issues/61)) ([0d2a2fa](https://github.com/The-IT-Dept/rfspager/commit/0d2a2fa41d3d7ff2ffe9723fb449d3a749b6c7f1))
+
+
+### Bug Fixes
+
+* incident detail route, incident times 11 hours early, private pending receivers ([#64](https://github.com/The-IT-Dept/rfspager/issues/64)) ([a862ac1](https://github.com/The-IT-Dept/rfspager/commit/a862ac1875aec5524ea282da039b701231495b6b))
+* prepare the repository for open-sourcing ([#63](https://github.com/The-IT-Dept/rfspager/issues/63)) ([f70cbed](https://github.com/The-IT-Dept/rfspager/commit/f70cbedef974d037f7fafde52db728cc609a66d6))
+* **push:** hold damaged copies, send corrections, stop re-pushing replayed backlog ([#66](https://github.com/The-IT-Dept/rfspager/issues/66)) ([1aa8c8f](https://github.com/The-IT-Dept/rfspager/commit/1aa8c8f037a117d117b0ed01a717315022d35864))
+* **push:** no correction when a sibling unit's page replaces a clean copy ([#67](https://github.com/The-IT-Dept/rfspager/issues/67)) ([c7fcf38](https://github.com/The-IT-Dept/rfspager/commit/c7fcf38a779980bc90260065e1d478c68b8642b3))
+* **push:** recognise sibling unit pages in every header shape ([#68](https://github.com/The-IT-Dept/rfspager/issues/68)) ([b931b7b](https://github.com/The-IT-Dept/rfspager/commit/b931b7b7fcbd49ae71ecefdc573eb5c4c8d009d2))
+
 ## [5.10.0](https://github.com/The-IT-Dept/rfspager/compare/v5.9.1...v5.10.0) (2026-10-23)
 
 
