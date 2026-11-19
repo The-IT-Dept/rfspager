@@ -71,10 +71,15 @@ the **72 h header lookback**; then the phantom-capcode drop.
   damaged fragment followed by a complete copy: fragment ≥ 16 chars, prefix-aligned
   similarity ≥ 0.85, and only within 15 s (the simulcast case), because a fragment's
   opening reads like any page of the same format to the same capcode.
-- `differentPages` vetoes the similarity rule when both copies carry trusted
-  headers more than 2 s apart, or clean incident numbers that differ (a follow-up page
-  to the same brigade is not a re-send). Neither is trusted from a heavily corrected
-  copy: a repair can land on the wrong digit.
+- `differentPages` vetoes the 30-char prefix rule (up to 5 candidates are tried, so a
+  vetoed earlier call doesn't hide the real duplicate) and the similarity rule when
+  both copies carry trusted headers more than 2 s apart, or clean incident numbers
+  that differ (a follow-up page to the same brigade is not a re-send; for an FRNSW
+  turnout the number is all that tells two calls to one station apart). Incident
+  numbers are not compared between copies heard within 15 s of each other: copies of
+  one transmission with a repaired-wrong digit are far more common than two calls to
+  one station that close together. A header is not trusted from a heavily corrected
+  copy.
 - The fragment rule works in either arrival order (`fragmentOfSameTransmission`).
 - A copy with the same text but a better decode upgrades the stored quality (text and
   `replaced_count` untouched), so fan-out releases a held copy whose text turned out
@@ -123,10 +128,12 @@ Pre-check per message (PK lookup), with an in-memory `held` map owned by `Run`:
 
 ## Dispatch and push — `internal/dispatch/dispatcher.go`, `internal/notify`
 
-- `markSent` stamps `pushed_at` only if `data` is still what was claimed. Otherwise the
-  row becomes a correction (claimed data restored + `correction_body` + `first_pushed_at`)
-  and is requeued — unless the claimed row was already a correction (one correction per
-  push), or some device failed retryably (requeued as an ordinary, loud push).
+- `markSent` stamps `pushed_at` if `data` is still what was claimed. If a carry changed
+  it in flight: with `carried_fix` the row becomes a correction (claimed data restored +
+  `correction_body` + `first_pushed_at`) and is requeued, or, if some device failed
+  retryably, is requeued as an ordinary, loud push with the new text; without
+  `carried_fix` it is delivered and records the claimed text that went out. A claimed
+  correction is delivered and records the correction that went out (one per push).
 - `markFailed` on a correction restores the original delivery instead of marking failed,
   and flags `correction_failed` (the admin page shows "correction not delivered").
 - Every page push carries collapse key `msg-<message id>`: APNs `apns-collapse-id`,
