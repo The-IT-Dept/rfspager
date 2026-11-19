@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/sideshow/apns2"
 	"github.com/sideshow/apns2/payload"
@@ -60,16 +61,31 @@ func NewAPN(keyID, teamID, bundleID, privateKeyPEM string, production bool) (*AP
 }
 
 func (a *APNClient) Send(ctx context.Context, deviceToken, title, body string, badge int) error {
+	return a.SendWith(ctx, deviceToken, title, body, badge, PushOptions{})
+}
+
+// SendWith is Send with per-push options: a collapse id (apns-collapse-id)
+// so a later push about the same page replaces this one on the device, and
+// for a correction no sound and apns-expiration 0 (deliver now or never).
+func (a *APNClient) SendWith(ctx context.Context, deviceToken, title, body string, badge int, opts PushOptions) error {
 	p := payload.NewPayload().
 		AlertTitle(title).
 		AlertBody(body).
-		Badge(badge).
-		Sound("default")
+		Badge(badge)
+	if !opts.Correction {
+		p = p.Sound("default")
+	}
 
 	notification := &apns2.Notification{
 		DeviceToken: deviceToken,
 		Topic:       a.bundleID,
+		CollapseID:  opts.CollapseID,
 		Payload:     p,
+	}
+	if opts.Correction {
+		// apns2 omits the header for the zero time; one nanosecond past the
+		// epoch is sent as "0", which APNs reads as "don't store".
+		notification.Expiration = time.Unix(0, 1)
 	}
 
 	resp, err := a.client.PushWithContext(ctx, notification)

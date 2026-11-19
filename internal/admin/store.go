@@ -508,7 +508,8 @@ type MessageNotifications struct {
 
 // ListMessageNotifications lists the users notified for a message, newest
 // first, with the text each push carried so the admin page can show when a
-// later, cleaner copy of the page replaced what was already sent.
+// later, cleaner copy of the page replaced what was already sent, and the
+// correction push sent for it (correction_message, first_pushed_at).
 func (s *Store) ListMessageNotifications(ctx context.Context, messageID int64, limit int) (*MessageNotifications, error) {
 	out := &MessageNotifications{Data: []map[string]any{}}
 	if err := s.db.QueryRowxContext(ctx,
@@ -521,7 +522,10 @@ func (s *Store) ListMessageNotifications(ctx context.Context, messageID int64, l
 		`SELECT n.id, n.notifiable_id AS user_id, u.email AS user_email, u.name AS user_name,
 		        n.created_at, n.pushed_at, n.push_failed_at, n.push_attempts, n.push_required,
 		        n.push_last_error, n.read_at,
-		        CASE WHEN n.data ~ '^\s*\{' THEN n.data::jsonb->>'message' END AS pushed_message
+		        CASE WHEN n.data ~ '^\s*\{' THEN n.data::jsonb->>'message' END AS pushed_message,
+		        CASE WHEN n.data ~ '^\s*\{' THEN n.data::jsonb->>'correction_body' END AS correction_message,
+		        CASE WHEN n.data ~ '^\s*\{' THEN n.data::jsonb->>'first_pushed_at' END AS first_pushed_at,
+		        CASE WHEN n.data ~ '^\s*\{' THEN (n.data::jsonb->>'correction_failed')::boolean END AS correction_failed
 		   FROM notifications n
 		   LEFT JOIN users u ON u.id = n.notifiable_id AND n.notifiable_type = 'App\Models\User'
 		  WHERE n.message_id = $1

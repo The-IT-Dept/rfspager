@@ -41,6 +41,9 @@ interface MessageDetail {
   lat?: number | string | null;
   lng?: number | string | null;
   fanned_out_at?: string | null;
+  push_skip_reason?: string | null;
+  push_lag_s?: number | null;
+  push_hold_ms?: number | null;
   created_at?: string;
   updated_at?: string | null;
   deleted_at?: string | null;
@@ -86,6 +89,9 @@ interface NotificationRow {
   push_last_error?: string | null;
   read_at?: string | null;
   pushed_message?: string | null;
+  correction_message?: string | null;
+  first_pushed_at?: string | null;
+  correction_failed?: boolean | null;
 }
 
 interface Notifications {
@@ -96,6 +102,33 @@ interface Notifications {
 }
 
 const NOTIFICATION_LIMIT = 200;
+
+// fmtLag renders a whole number of seconds as "28h 9m" or "45m".
+function fmtLag(seconds: number) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+// pushDecision explains what fan-out did beyond the usual: a replayed page
+// it didn't push, a late page it pushed anyway, a damaged copy it held.
+function pushDecision(msg: { push_skip_reason?: string | null; push_lag_s?: number | null; push_hold_ms?: number | null }) {
+  const parts: string[] = [];
+  const heard = msg.push_lag_s ? `, heard ${fmtLag(msg.push_lag_s)} after dispatch` : "";
+  if (msg.push_skip_reason === "replay") {
+    parts.push(`not pushed: the network re-sending old backlog${heard}`);
+  } else if (msg.push_skip_reason === "replay_after_push") {
+    parts.push(`pushed, then recognised as the network re-sending old backlog${heard}`);
+  } else if (msg.push_skip_reason) {
+    parts.push(`not pushed: ${msg.push_skip_reason}`);
+  } else if (msg.push_lag_s) {
+    parts.push(`heard ${fmtLag(msg.push_lag_s)} after dispatch; pushed (no replay burst)`);
+  }
+  if (msg.push_hold_ms) {
+    parts.push(`held ${(msg.push_hold_ms / 1000).toFixed(1)} s for a cleaner copy`);
+  }
+  return parts.length ? parts.join("; ") : "—";
+}
 
 function fmtDate(v?: string | null) {
   if (!v) return "—";
@@ -315,6 +348,7 @@ export default function MessageDetailPage() {
             </Field>
             <Field label="Created">{fmtDate(msg.created_at)}</Field>
             <Field label="Fanned out">{fmtDate(msg.fanned_out_at)}</Field>
+            <Field label="Push decision">{pushDecision(msg)}</Field>
             <Field label="Updated">{fmtDate(msg.updated_at)}</Field>
             <Field label="Deleted">{fmtDate(msg.deleted_at)}</Field>
             <Field label="Incident key"><CopyValue value={msg.incident_key} /></Field>
@@ -472,7 +506,16 @@ export default function MessageDetailPage() {
                           </TableCell>
                           <TableCell className="whitespace-nowrap">{fmtDate(n.created_at)}</TableCell>
                           <TableCell className="whitespace-nowrap">
-                            {n.pushed_at ? (
+                            {n.first_pushed_at ? (
+                              <span title="first push, then a correction push">
+                                {fmtDate(n.first_pushed_at)}
+                                <span className="block text-xs text-muted-foreground">
+                                  {n.correction_failed ? (
+                                    <span className="text-destructive" title={n.push_last_error ?? undefined}>correction not delivered</span>
+                                  ) : n.pushed_at ? `corrected ${fmtDate(n.pushed_at)}` : "correction pending"}
+                                </span>
+                              </span>
+                            ) : n.pushed_at ? (
                               fmtDate(n.pushed_at)
                             ) : n.push_failed_at ? (
                               <span className="text-destructive" title={n.push_last_error ?? undefined}>
@@ -493,6 +536,12 @@ export default function MessageDetailPage() {
                               </span>
                             ) : (
                               <span className="text-muted-foreground">same as stored</span>
+                            )}
+                            {n.correction_message && (
+                              <span className="block mt-1" title="the correction push sent once a cleaner copy arrived">
+                                <Badge variant="secondary" className="mr-1">corrected</Badge>
+                                <Mono>{clip(n.correction_message)}</Mono>
+                              </span>
                             )}
                           </TableCell>
                         </TableRow>

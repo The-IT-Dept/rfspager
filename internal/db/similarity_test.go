@@ -2,6 +2,7 @@ package db
 
 import (
 	"testing"
+	"time"
 
 	"github.com/the-it-dept/rfspager/internal/rxproto"
 )
@@ -23,6 +24,9 @@ const (
 	// A different dispatch to the same brigade a minute later.
 	rayteOtherJob = "14 October 2026 07:47:30 LHRAYTE - 26-131350 - Grass fire - FIRECALL - 12 ADELAIDE ST,RAYMOND TERRACE,PORT STEPHENS (NSW),2324 - [151.744,-32.761]"
 	rayteStop     = "14 October 2026 07:58:12 26-131349 LHRAYTE Stop Message // 158F MASONITE RD TOMAGO"
+
+	raymondClean    = "FRINC TYPE: AFA TURNOUT: 101 INC: 100001-17112026"
+	raymondFragment = "LZmNC TYPE: AFA TURNOUT: "
 )
 
 func TestTextSimilarityOnRealPages(t *testing.T) {
@@ -39,6 +43,9 @@ func TestTextSimilarityOnRealPages(t *testing.T) {
 		{"another job to the same brigade", rayteOtherJob, rayteClean, 0, 0.75},
 		{"the stop message", rayteStop, rayteClean, 0, 0.5},
 		{"a copy cut short", rayteClean[:70], rayteClean, 0.95, 1},
+		// The plain score is one-way: a complete copy scores low against a
+		// fragment stored first. fragmentOfSameTransmission covers that case.
+		{"a clean copy against a damaged fragment stored first", raymondClean, raymondFragment, 0, 0.5},
 	}
 	for _, c := range cases {
 		got := textSimilarity(c.sample, c.against)
@@ -47,6 +54,71 @@ func TestTextSimilarityOnRealPages(t *testing.T) {
 		}
 	}
 }
+
+// An FRNSW turnout, 17 Nov 2026: one receiver's truncated, repaired copy was
+// stored a second before four clean ones; the plain score put the clean copy
+// at 0.43 against it and the page was stored and pushed twice.
+func TestFragmentOfSameTransmission(t *testing.T) {
+	at := time.Date(2026, 11, 16, 21, 24, 43, 0, time.UTC)
+	stored := duplicateRow{Message: raymondFragment, CreatedAt: at}
+	if !fragmentOfSameTransmission(stored, raymondClean, at.Add(time.Second)) {
+		t.Fatal("a damaged fragment stored a second earlier is the same transmission")
+	}
+	if fragmentOfSameTransmission(stored, raymondClean, at.Add(time.Minute)) {
+		t.Fatal("a fragment's opening matches any page of the same format; only within the simulcast window")
+	}
+	if !fragmentOfSameTransmission(duplicateRow{Message: raymondClean, CreatedAt: at}, raymondFragment, at.Add(time.Second)) {
+		t.Fatal("the fragment may also arrive after the complete copy")
+	}
+	if fragmentOfSameTransmission(duplicateRow{Message: "FRINC TYPE", CreatedAt: at}, raymondClean, at) {
+		t.Fatal("too short to say which page it came from")
+	}
+	if fragmentOfSameTransmission(duplicateRow{Message: rayteClean[:60], CreatedAt: at}, rayteOtherJob, at) {
+		t.Fatal("a fragment of a different job to the same brigade")
+	}
+	if fragmentOfSameTransmission(duplicateRow{Message: raymondClean, CreatedAt: at}, raymondClean, at) {
+		t.Fatal("equal texts are not fragments of each other")
+	}
+}
+
+func TestDifferentPages(t *testing.T) {
+	near := time.Date(2026, 10, 13, 20, 50, 0, 0, time.UTC)
+	differentPages := func(a string, aQ *rxproto.PageQuality, b string, bQ *rxproto.PageQuality, near time.Time) bool {
+		return differentPages(a, aQ, b, bQ, near, time.Second)
+	}
+	clean := &rxproto.PageQuality{Codewords: 50}
+	if !differentPages(rayteClean, clean, rayteOtherJob, clean, near) {
+		t.Fatal("another job to the same brigade a minute later is a different page")
+	}
+	if differentPages(rayteGarbled, &rxproto.PageQuality{Codewords: 54, Corrected: 40}, rayteClean, clean, near) {
+		t.Fatal("a garbled re-send of the same page is the same page")
+	}
+	if differentPages(rayte1Garbled, &rxproto.PageQuality{Codewords: 54, Corrected: 34, Uncorrectable: 1}, rayte7Clean, clean, near) {
+		t.Fatal("a re-send whose incident number was damaged is still the same page")
+	}
+	if !differentPagesApart(raymondClean, clean, "FRINC TYPE: AFA TURNOUT: 101 INC: 100009-17112026", clean, near, time.Minute) {
+		t.Fatal("two FRNSW incidents to the same station a minute apart are different pages")
+	}
+	if differentPages("FRINC TYPE: q^C TURNOUT: 101 IC: 100001-17112P26", nil, raymondClean, clean, near) {
+		t.Fatal("a damaged incident number says nothing")
+	}
+	miscorrected := "14 October 2026 07:46:03 LHRaYE - 26-131549 - Power pole alight - FIRECALL - 158F MASONITE RD,TOMAGO,PORT STEPHENS (NSW),2322 - [151.763336,-32.801304]"
+	heavy := &rxproto.PageQuality{Codewords: 54, Corrected: 40}
+	if differentPages(miscorrected, heavy, rayteClean, clean, near) {
+		t.Fatal("a heavily corrected copy's incident number is not held against a copy of the same transmission")
+	}
+	if differentPages("FRINC TYPE: AFA TURNOUT: 101 INC: 100007-17112026", &rxproto.PageQuality{Codewords: 18, Corrected: 1},
+		"FRINC TYPE: AFA TURNOUT: 101 INC: 100001-17112026", clean, near) {
+		t.Fatal("copies of one transmission: a lightly repaired wrong digit doesn't make another page")
+	}
+	heavyTurnout := &rxproto.PageQuality{Codewords: 18, Corrected: 9}
+	if !differentPagesApart("FRINC TYPE: AFA TURNOUT: 101 INC: 100001-17112026", heavyTurnout,
+		"FRINC TYPE: AFA TURNOUT: 101 INC: 100002-17112026", clean, near, time.Minute) {
+		t.Fatal("two turnouts to one station a minute apart are different calls, however the first decoded")
+	}
+}
+
+var differentPagesApart = differentPages
 
 func TestSuspectCopy(t *testing.T) {
 	cases := []struct {
