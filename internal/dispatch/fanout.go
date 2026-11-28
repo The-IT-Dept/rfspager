@@ -41,8 +41,8 @@ const (
 	// milliseconds; a pathological plan must fail loudly and leave the page
 	// to reconcile rather than hold up every page behind it for minutes.
 	fanoutStatementTimeout = "30s"
-	// maxPushAge is how old a page may be, by when it was stored, for
-	// fan-out to still wake anyone. Older means fan-out was stalled or down
+	// maxPushAge is how long a page may have waited since it was stored
+	// for fan-out to still wake anyone. Longer means fan-out was stalled or down
 	// (it normally runs within a second, or holdMax for a held copy): the
 	// page stays in the feed but is marked push_skip_reason 'late', because
 	// a turnout pushed long after the event misleads more than it helps.
@@ -281,15 +281,18 @@ func (w *FanoutWorker) recheckHeld(ctx context.Context) {
 // fanoutCandidate is what fan-out needs to know about a message before it
 // decides whether, and when, to push it.
 type fanoutCandidate struct {
-	Address   string         `db:"address"`
-	Message   string         `db:"message"`
-	CreatedAt time.Time      `db:"created_at"`
+	Address   string    `db:"address"`
+	Message   string    `db:"message"`
+	CreatedAt time.Time `db:"created_at"`
+	// StoredAt is when the server last stored the page (inserted, or a
+	// better copy replaced it): what fan-out's own delay is measured from.
+	StoredAt  time.Time      `db:"stored_at"`
 	Quality   sql.NullString `db:"quality"`
 	FannedOut bool           `db:"fanned_out"`
 }
 
 const candidateSQL = `
-SELECT address, message, created_at, quality::text AS quality,
+SELECT address, message, created_at, updated_at AS stored_at, quality::text AS quality,
        fanned_out_at IS NOT NULL AS fanned_out
   FROM messages
  WHERE id = $1 AND deleted_at IS NULL`
@@ -321,7 +324,9 @@ func (w *FanoutWorker) processMessage(ctx context.Context, messageID int64) {
 	if heard.After(now) {
 		heard = now
 	}
-	if now.Sub(heard) > maxPushAge {
+	// Measured from when it was stored, not heard: a receiver delivering
+	// its buffer after a network drop isn't fan-out running late.
+	if now.Sub(c.StoredAt) > maxPushAge {
 		delete(w.held, messageID)
 		// Already pushed (a better copy reopened it) keeps its record;
 		// otherwise say why nobody was woken.
@@ -335,7 +340,7 @@ func (w *FanoutWorker) processMessage(ctx context.Context, messageID int64) {
 			return
 		}
 		slog.Warn("fanout: page too old to push", "message_id", messageID, "address", c.Address,
-			"age", now.Sub(heard).Round(time.Second).String())
+			"waited", now.Sub(c.StoredAt).Round(time.Second).String())
 		return
 	}
 	firstSeen, wasHeld := w.held[messageID]

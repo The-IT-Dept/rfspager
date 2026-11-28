@@ -67,20 +67,21 @@ type pipelineState struct {
 }
 
 // Waiting pages are those fan-out would pick up (as reconcile selects them)
-// from the last hour; older ones it never will, and the late count covers
-// those it skipped.
+// from the last hour, stored more than monitorStallAfter ago (stored, not
+// heard: a receiver's buffered pages arrive with old timestamps). Older ones
+// it never will, and the late count covers those it skipped.
 const pipelineStateSQL = `
 SELECT
   (SELECT count(*) FROM messages
     WHERE fanned_out_at IS NULL AND deleted_at IS NULL
       AND (capcode_id IS NOT NULL OR (lat IS NOT NULL AND lng IS NOT NULL))
       AND created_at > $1::timestamptz - INTERVAL '1 hour'
-      AND created_at < $1::timestamptz - $2::interval) AS waiting,
-  (SELECT min(created_at) FROM messages
+      AND updated_at < $1::timestamptz - $2::interval) AS waiting,
+  (SELECT min(updated_at) FROM messages
     WHERE fanned_out_at IS NULL AND deleted_at IS NULL
       AND (capcode_id IS NOT NULL OR (lat IS NOT NULL AND lng IS NOT NULL))
       AND created_at > $1::timestamptz - INTERVAL '1 hour'
-      AND created_at < $1::timestamptz - $2::interval) AS oldest_wait,
+      AND updated_at < $1::timestamptz - $2::interval) AS oldest_wait,
   (SELECT count(*) FROM messages
     WHERE push_skip_reason = 'late' AND deleted_at IS NULL AND capcode_id IS NOT NULL
       AND created_at > $1::timestamptz - INTERVAL '1 day'

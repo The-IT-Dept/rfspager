@@ -28,3 +28,18 @@ func TestFanoutSkipsLatePages(t *testing.T) {
 		t.Fatalf("late page: %+v, want no notifications, fanned out, reason late", s)
 	}
 }
+
+// Lateness is fan-out's own delay, counted from when the page was stored,
+// not from when the receiver heard it: a receiver delivering its buffer
+// after a network drop isn't a stalled fan-out, and its pages still go.
+func TestFanoutPushesPagesDeliveredLate(t *testing.T) {
+	f := newHoldFixture(t)
+	ctx := context.Background()
+	id := mustID(t, f.conn, `INSERT INTO messages (system_id, capcode_id, address, message, md5, created_at, updated_at)
+		VALUES ($1, $2, '1310104', 'LHCENTR1 - 26-140003 - MVA - HIGH ST,CESSNOCK', md5('x'), $3, $4) RETURNING id`,
+		f.system, f.capcode, f.now.Add(-20*time.Minute), f.now)
+	f.worker.processMessage(ctx, id)
+	if s := f.state(t, id); s.notified != 1 || s.skip.Valid {
+		t.Fatalf("page heard 20 min ago, stored just now: %+v, want pushed", s)
+	}
+}
