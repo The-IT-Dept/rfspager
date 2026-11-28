@@ -37,6 +37,16 @@ const (
 	// release the message row; past it the message is left for the next
 	// recheck or reconcile instead of stalling every other page.
 	fanoutLockTimeout = "5s"
+	// fanoutStatementTimeout bounds one fan-out. It normally takes
+	// milliseconds; a pathological plan must fail loudly and leave the page
+	// to reconcile rather than hold up every page behind it for minutes.
+	fanoutStatementTimeout = "30s"
+	// maxPushAge is how old a page may be, by when it was stored, for
+	// fan-out to still wake anyone. Older means fan-out was stalled or down
+	// (it normally runs within a second, or holdMax for a held copy): the
+	// page stays in the feed but is marked push_skip_reason 'late', because
+	// a turnout pushed long after the event misleads more than it helps.
+	maxPushAge = 15 * time.Minute
 )
 
 // reconcileWindow is how far back the catch-up scan looks for orphan messages
@@ -80,6 +90,22 @@ msg AS (
        -- and this reads its text; one stored later waits for this to
        -- commit and then sees, and corrects, these notification rows.
        FOR NO KEY UPDATE OF m
+),
+-- Who this incident has already woken: the users notified for the other
+-- copies of the same dispatch stored from 15 minutes before this one.
+-- Worked out once, from the incident's handful of messages and the
+-- notifications of those messages. Asked per recipient instead, the
+-- planner may walk each recipient's whole notification history (tens of
+-- thousands of rows each); a statistics refresh flipped it to that on
+-- 2026-11-27 and fan-out took minutes per page.
+already_notified AS MATERIALIZED (
+    SELECT DISTINCT n2.notifiable_id
+      FROM msg
+      JOIN messages m2 ON m2.incident_key = msg.incident_key
+                      AND m2.id <> msg.id
+                      AND m2.created_at > msg.created_at - INTERVAL '15 minutes'
+      JOIN notifications n2 ON n2.message_id = m2.id
+                           AND n2.notifiable_type = 'App\Models\User'
 ),
 recipients AS (
     SELECT s.user_id
@@ -134,15 +160,7 @@ inserted AS (
        -- One push per incident message per user: a dispatch that went to
        -- several capcodes this user follows is notified once. Copies of
        -- the same dispatch share an incident_key (see handler.IncidentKey).
-       AND NOT (msg.incident_key IS NOT NULL AND EXISTS (
-            SELECT 1 FROM notifications n2
-              JOIN messages m2 ON m2.id = n2.message_id
-             WHERE n2.notifiable_id = r.user_id
-               AND n2.notifiable_type = 'App\Models\User'
-               AND m2.id <> msg.id
-               AND m2.incident_key = msg.incident_key
-               AND m2.created_at > msg.created_at - INTERVAL '15 minutes'
-           ))
+       AND NOT EXISTS (SELECT 1 FROM already_notified a WHERE a.notifiable_id = r.user_id)
        -- A copy the receiver had to repair heavily (anything unrepairable
        -- or cut short, or half its codewords corrected), arriving within
        -- three minutes of another page on the same capcode, is a re-send
@@ -303,6 +321,23 @@ func (w *FanoutWorker) processMessage(ctx context.Context, messageID int64) {
 	if heard.After(now) {
 		heard = now
 	}
+	if now.Sub(heard) > maxPushAge {
+		delete(w.held, messageID)
+		// Already pushed (a better copy reopened it) keeps its record;
+		// otherwise say why nobody was woken.
+		if _, err := w.db.ExecContext(ctx,
+			`UPDATE messages m
+			    SET fanned_out_at = NOW(),
+			        push_skip_reason = CASE WHEN EXISTS (SELECT 1 FROM notifications n WHERE n.message_id = m.id)
+			                                THEN push_skip_reason ELSE 'late' END
+			  WHERE id = $1 AND fanned_out_at IS NULL`, messageID); err != nil {
+			slog.Error("fanout: marking late page failed", "message_id", messageID, "error", err)
+			return
+		}
+		slog.Warn("fanout: page too old to push", "message_id", messageID, "address", c.Address,
+			"age", now.Sub(heard).Round(time.Second).String())
+		return
+	}
 	firstSeen, wasHeld := w.held[messageID]
 	if !wasHeld {
 		firstSeen = now
@@ -378,7 +413,7 @@ func (w *FanoutWorker) fanOut(ctx context.Context, messageID int64, heldFor, sta
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `SET LOCAL lock_timeout = '`+fanoutLockTimeout+`'`); err != nil {
+	if _, err := tx.ExecContext(ctx, `SET LOCAL lock_timeout = '`+fanoutLockTimeout+`'; SET LOCAL statement_timeout = '`+fanoutStatementTimeout+`'`); err != nil {
 		slog.Error("fanout: lock timeout failed", "message_id", messageID, "error", err)
 		return
 	}

@@ -200,6 +200,14 @@ func main() {
 
 	fanoutWorker := dispatch.NewFanoutWorker(database.Conn(), fanoutMessageCh)
 	fanoutWorker.ListenRefanout(refanoutCh)
+	// Pipeline watchdog: pushes OPS_ALERT_USER_IDS when pages stop being
+	// fanned out or pushed on time, and when it recovers.
+	fanoutMonitor := dispatch.NewFanoutMonitor(database.Conn(), func(ctx context.Context, title, body string) {
+		notifier.NotifyOps(ctx, cfg.OpsAlertUserIDs, title, body)
+	})
+	if len(cfg.OpsAlertUserIDs) == 0 {
+		slog.Warn("OPS_ALERT_USER_IDS is empty: notification pipeline stalls will only be logged")
+	}
 	dispatchWorker := dispatch.NewDispatchWorker(database.Conn(), notifier, dispatchCh)
 	mobileSSE := mobile.NewSSEBroker(database.Conn())
 	publicSSE := public.NewSSEBroker(database.Conn())
@@ -248,8 +256,9 @@ func main() {
 
 	bgCtx, cancelBg := context.WithCancel(context.Background())
 	var bg sync.WaitGroup
-	bg.Add(6)
+	bg.Add(7)
 	go func() { defer bg.Done(); fanoutWorker.Run(bgCtx) }()
+	go func() { defer bg.Done(); fanoutMonitor.Run(bgCtx) }()
 	go func() { defer bg.Done(); dispatchWorker.Run(bgCtx) }()
 	go func() { defer bg.Done(); mobileSSE.Run(bgCtx, mobileSSEMessageCh) }()
 	go func() { defer bg.Done(); publicSSE.Run(bgCtx, publicSSEMessageCh) }()

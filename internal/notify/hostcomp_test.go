@@ -31,3 +31,10 @@ func TestHostCompPushWithoutDatabaseIsANoop(t *testing.T) {
 	nilNotifier.NotifyHostCompSupporterStarted(context.Background(), 1, "x")
 	(&Notifier{}).NotifyHostCompLapsed(context.Background(), 1, "x")
 }
+
+// An ops alert with no database, or nobody to tell, skips rather than panics.
+func TestNotifyOpsWithoutDatabaseIsANoop(t *testing.T) {
+	var nilNotifier *Notifier
+	nilNotifier.NotifyOps(context.Background(), []int64{1}, "t", "b")
+	(&Notifier{}).NotifyOps(context.Background(), nil, "t", "b")
+}

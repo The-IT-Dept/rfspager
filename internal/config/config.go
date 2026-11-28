@@ -61,10 +61,13 @@ type Config struct {
 	LibredeskAgentID   int
 	// LibredeskTeamID (optional, 0 = none) is the team receiver-application
 	// conversations are assigned to.
-	LibredeskTeamID      int
-	FacebookAppID        string
-	FacebookAppSecret    string
-	TrustedProxyCIDRs    []string
+	LibredeskTeamID   int
+	FacebookAppID     string
+	FacebookAppSecret string
+	TrustedProxyCIDRs []string
+	// OpsAlertUserIDs are the RFSPager accounts pushed when the
+	// notification pipeline stalls (OPS_ALERT_USER_IDS, comma-separated).
+	OpsAlertUserIDs      []int64
 	IAPProductIDs        string
 	AppleIAPEnvironment  string
 	GoogleIAPEnvironment string
@@ -226,7 +229,27 @@ func Load() (*Config, error) {
 	if cfg.GoogleIAPEnvironment != "Production" && cfg.GoogleIAPEnvironment != "Test" {
 		return nil, fmt.Errorf("GOOGLE_IAP_ENVIRONMENT must be Production or Test")
 	}
+	ids, err := parseUserIDs(os.Getenv("OPS_ALERT_USER_IDS"))
+	if err != nil {
+		return nil, fmt.Errorf("OPS_ALERT_USER_IDS: %w", err)
+	}
+	cfg.OpsAlertUserIDs = ids
 	return cfg, nil
+}
+
+// parseUserIDs reads a comma- or space-separated list of user ids. Any
+// entry that isn't a positive integer is an error, so a typo can't quietly
+// drop someone from the list.
+func parseUserIDs(raw string) ([]int64, error) {
+	var out []int64
+	for _, entry := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' }) {
+		id, err := strconv.ParseInt(entry, 10, 64)
+		if err != nil || id <= 0 {
+			return nil, fmt.Errorf("%q is not a user id", entry)
+		}
+		out = append(out, id)
+	}
+	return out, nil
 }
 
 func getEnv(key, fallback string) string {

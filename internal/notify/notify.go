@@ -255,6 +255,15 @@ func upperFirst(s string) string {
 	return string(s[0]-'a'+'A') + s[1:]
 }
 
+// NotifyOps pushes an operational alert (the notification pipeline has
+// stalled or recovered) to the accounts of the people running the service.
+// Best-effort; failures are logged by pushToUser.
+func (n *Notifier) NotifyOps(ctx context.Context, userIDs []int64, title, body string) {
+	for _, id := range userIDs {
+		n.pushToUser(ctx, id, title, body, "ops alert")
+	}
+}
+
 // pushToUser sends title/body to every push target the user has.
 func (n *Notifier) pushToUser(ctx context.Context, userID int64, title, body, what string) {
 	if n == nil || n.db == nil {
