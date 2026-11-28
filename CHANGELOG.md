@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.11.1](https://github.com/The-IT-Dept/rfspager/compare/v5.11.0...v5.11.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **dispatch:** plan-proof incident dedupe, no late pushes, stall alerts ([#76](https://github.com/The-IT-Dept/rfspager/issues/76)) ([ce99511](https://github.com/The-IT-Dept/rfspager/commit/ce99511bde87f081836d860a3e7df45dbdd3f651))
+* **web:** PO Box 236, Budgewoi NSW 2262 as the postal address in the terms and privacy policy ([#72](https://github.com/The-IT-Dept/rfspager/issues/72)) ([a93b769](https://github.com/The-IT-Dept/rfspager/commit/a93b76992b3eae617a0c8b50a1388b361e8cee09))
+* **web:** The IT Dept Pty Ltd is the licensor in the terms of service, not Nicholas Pratley ([#74](https://github.com/The-IT-Dept/rfspager/issues/74)) ([e7f34d1](https://github.com/The-IT-Dept/rfspager/commit/e7f34d1c49c99fbcf8367356155678aec80728c2))
+
 ## [5.11.0](https://github.com/The-IT-Dept/rfspager/compare/v5.10.0...v5.11.0) (2026-11-19)
 
 
