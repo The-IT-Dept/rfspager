@@ -43,3 +43,36 @@ func TestFanoutPushesPagesDeliveredLate(t *testing.T) {
 		t.Fatalf("page heard 20 min ago, stored just now: %+v, want pushed", s)
 	}
 }
+
+// A fan-out that hits the statement timeout isn't retried straight away
+// (it would hold up every page behind it again); it is retried once after a
+// back-off, and a second timeout gives the page up as 'timeout'.
+func TestFanoutBacksOffAndGivesUpOnTimeouts(t *testing.T) {
+	f := newHoldFixture(t)
+	ctx := context.Background()
+	if _, err := f.conn.ExecContext(ctx, `
+		CREATE FUNCTION slow_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.5); RETURN NEW; END $$;
+		CREATE TRIGGER slow_insert BEFORE INSERT ON notifications FOR EACH ROW EXECUTE FUNCTION slow_insert();`); err != nil {
+		t.Fatal(err)
+	}
+	f.worker.statementTimeout = "100ms"
+	id := f.insert(t, "LHCENTR1 - 26-140004 - Grass fire - FIRECALL - MAIN RD,CESSNOCK", nil)
+
+	f.worker.processMessage(ctx, id)
+	if s := f.state(t, id); s.notified != 0 || s.fanned {
+		t.Fatalf("after one timeout: %+v", s)
+	}
+	f.now = f.now.Add(30 * time.Second)
+	f.worker.processMessage(ctx, id)
+	if got := f.worker.timeouts[id].count; got != 1 {
+		t.Fatalf("retried within the back-off: %d timeouts", got)
+	}
+	f.now = f.now.Add(timeoutBackoff)
+	f.worker.processMessage(ctx, id)
+	if s := f.state(t, id); s.notified != 0 || !s.fanned || s.skip.String != "timeout" {
+		t.Fatalf("after a second timeout: %+v, want given up as timeout", s)
+	}
+	if _, held := f.worker.timeouts[id]; held {
+		t.Fatal("given-up page still tracked")
+	}
+}

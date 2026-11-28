@@ -44,6 +44,11 @@ func TestFanoutMonitorAlertsOnStallAndRecovery(t *testing.T) {
 	id := mustID(t, f.conn, `INSERT INTO messages (system_id, capcode_id, address, message, md5, created_at, updated_at)
 		VALUES ($1, $2, '1310104', 'stuck page', md5('stuck page'), $3, $3) RETURNING id`, f.system, f.capcode, clock.Add(-5*time.Minute))
 	m.Check(ctx)
+	if len(rec.titles) != 0 {
+		t.Fatalf("alerted on a single bad sample: %v", rec.titles)
+	}
+	clock = clock.Add(time.Minute)
+	m.Check(ctx)
 	if title, body := rec.last(t); len(rec.titles) != 1 || !strings.Contains(title, "stalled") || !strings.Contains(body, "1 page") {
 		t.Fatalf("stall alert = %q / %q (%d alerts)", title, body, len(rec.titles))
 	}
@@ -62,6 +67,11 @@ func TestFanoutMonitorAlertsOnStallAndRecovery(t *testing.T) {
 	if _, err := f.conn.ExecContext(ctx, `UPDATE messages SET fanned_out_at = NOW() WHERE id = $1`, id); err != nil {
 		t.Fatal(err)
 	}
+	m.Check(ctx)
+	if len(rec.titles) != 2 {
+		t.Fatalf("announced recovery on a single good sample: %v", rec.titles)
+	}
+	clock = clock.Add(time.Minute)
 	m.Check(ctx)
 	if title, _ := rec.last(t); len(rec.titles) != 3 || !strings.Contains(title, "recovered") {
 		t.Fatalf("recovery alert = %v", rec.titles)
@@ -85,6 +95,7 @@ func TestFanoutMonitorAlertsOnLateSkipsAndPushBacklog(t *testing.T) {
 	mustID(t, f.conn, `INSERT INTO messages (system_id, capcode_id, address, message, md5, created_at, updated_at, fanned_out_at, push_skip_reason)
 		VALUES ($1, $2, '1310104', 'late page', md5('late page'), $3, $3, $4, 'late') RETURNING id`, f.system, f.capcode, clock.Add(-20*time.Minute), clock.Add(-time.Minute))
 	m.Check(ctx)
+	m.Check(ctx)
 	if _, body := rec.last(t); !strings.Contains(body, "too late") {
 		t.Fatalf("late-skip alert body = %q", body)
 	}
@@ -97,9 +108,24 @@ func TestFanoutMonitorAlertsOnLateSkipsAndPushBacklog(t *testing.T) {
 		VALUES (gen_random_uuid(), 'App\Notifications\PagerNotification', 'App\Models\User', $1, '{}', true, $2, $2)`, userID, clock.Add(-4*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
+	// A push waiting out a retry backoff is the dispatcher working, not a
+	// stall.
+	if _, err := f.conn.ExecContext(ctx, `UPDATE notifications SET push_locked_until = $1`, clock.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
 	rec2 := &opsRecorder{}
 	m2 := NewFanoutMonitor(f.conn, rec2.alert)
 	m2.now = func() time.Time { return clock }
+	m2.Check(ctx)
+	m2.Check(ctx)
+	if len(rec2.titles) != 0 {
+		t.Fatalf("alerted on a push in backoff: %v", rec2.bodies)
+	}
+	// Its lease long expired and nobody has picked it up: stalled.
+	if _, err := f.conn.ExecContext(ctx, `UPDATE notifications SET push_locked_until = $1`, clock.Add(-4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	m2.Check(ctx)
 	m2.Check(ctx)
 	if _, body := rec2.last(t); !strings.Contains(body, "waiting to be pushed") {
 		t.Fatalf("push backlog alert body = %q", body)

@@ -6,6 +6,7 @@ import (
 	"net/mail"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -247,7 +248,9 @@ func parseUserIDs(raw string) ([]int64, error) {
 		if err != nil || id <= 0 {
 			return nil, fmt.Errorf("%q is not a user id", entry)
 		}
-		out = append(out, id)
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
 	}
 	return out, nil
 }

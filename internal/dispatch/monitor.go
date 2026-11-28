@@ -22,8 +22,12 @@ type FanoutMonitor struct {
 	alert func(ctx context.Context, title, body string)
 	now   func() time.Time
 
-	stalledSince time.Time // zero while healthy
+	stalledSince time.Time // zero until a stall has been alerted
 	lastAlert    time.Time
+	// Consecutive bad and good samples: a stall is alerted, and a
+	// recovery announced, only after monitorConfirm of them in a row, so
+	// one odd minute doesn't send a pair of pushes.
+	bad, good int
 }
 
 const (
@@ -36,6 +40,7 @@ const (
 	// monitorLateWindow is how far back skipped-as-late pages count.
 	monitorLateWindow = 15 * time.Minute
 	monitorRealert    = 30 * time.Minute
+	monitorConfirm    = 2
 )
 
 // NewFanoutMonitor returns a monitor that calls alert on stalls and
@@ -66,6 +71,12 @@ type pipelineState struct {
 	OldestPushAt *time.Time `db:"oldest_push"`
 }
 
+// A notification counts as waiting only while the dispatcher could claim
+// it (not leased, not in a retry backoff) and has been able to for
+// monitorStallAfter: retries and corrections are the dispatcher working.
+// Pages skipped as 'late' or 'timeout' count as a stall for
+// monitorLateWindow after they were skipped.
+//
 // Waiting pages are those fan-out would pick up (as reconcile selects them)
 // from the last hour, stored more than monitorStallAfter ago (stored, not
 // heard: a receiver's buffered pages arrive with old timestamps). Older ones
@@ -83,17 +94,20 @@ SELECT
       AND created_at > $1::timestamptz - INTERVAL '1 hour'
       AND updated_at < $1::timestamptz - $2::interval) AS oldest_wait,
   (SELECT count(*) FROM messages
-    WHERE push_skip_reason = 'late' AND deleted_at IS NULL AND capcode_id IS NOT NULL
+    WHERE push_skip_reason IN ('late', 'timeout') AND deleted_at IS NULL
+      AND (capcode_id IS NOT NULL OR (lat IS NOT NULL AND lng IS NOT NULL))
       AND created_at > $1::timestamptz - INTERVAL '1 day'
       AND fanned_out_at > $1::timestamptz - $3::interval) AS late,
   (SELECT count(*) FROM notifications
     WHERE push_required AND pushed_at IS NULL AND push_failed_at IS NULL
       AND created_at > $1::timestamptz - INTERVAL '1 hour'
-      AND created_at < $1::timestamptz - $2::interval) AS push_waiting,
-  (SELECT min(created_at) FROM notifications
+      AND (push_locked_until IS NULL OR push_locked_until < $1::timestamptz)
+      AND COALESCE(push_locked_until, updated_at, created_at) < $1::timestamptz - $2::interval) AS push_waiting,
+  (SELECT min(COALESCE(push_locked_until, updated_at, created_at)) FROM notifications
     WHERE push_required AND pushed_at IS NULL AND push_failed_at IS NULL
       AND created_at > $1::timestamptz - INTERVAL '1 hour'
-      AND created_at < $1::timestamptz - $2::interval) AS oldest_push`
+      AND (push_locked_until IS NULL OR push_locked_until < $1::timestamptz)
+      AND COALESCE(push_locked_until, updated_at, created_at) < $1::timestamptz - $2::interval) AS oldest_push`
 
 // Check looks at the pipeline once and alerts on a change, or a reminder
 // due.
@@ -106,15 +120,20 @@ func (m *FanoutMonitor) Check(ctx context.Context) {
 		return
 	}
 	stalled := s.Waiting > 0 || s.Late > 0 || s.PushWaiting > 0
+	if stalled {
+		m.bad, m.good = m.bad+1, 0
+	} else {
+		m.bad, m.good = 0, m.good+1
+	}
 
 	switch {
-	case stalled && m.stalledSince.IsZero():
+	case stalled && m.stalledSince.IsZero() && m.bad >= monitorConfirm:
 		m.stalledSince = now
 		m.send(ctx, now, "RFSPager: notifications stalled", describe(s, now))
-	case stalled && now.Sub(m.lastAlert) >= monitorRealert:
+	case stalled && !m.stalledSince.IsZero() && now.Sub(m.lastAlert) >= monitorRealert:
 		m.send(ctx, now, "RFSPager: notifications still stalled",
 			describe(s, now)+" Stalled for "+minutes(now.Sub(m.stalledSince))+".")
-	case !stalled && !m.stalledSince.IsZero():
+	case !stalled && !m.stalledSince.IsZero() && m.good >= monitorConfirm:
 		m.send(ctx, now, "RFSPager: notifications recovered",
 			"Pages are being pushed on time again, after "+minutes(now.Sub(m.stalledSince))+".")
 		m.stalledSince = time.Time{}
@@ -135,7 +154,7 @@ func describe(s pipelineState, now time.Time) string {
 		out += fmt.Sprintf("%s waiting to be fanned out, oldest %s. ", plural(s.Waiting, "page"), age(s.OldestWait, now))
 	}
 	if s.Late > 0 {
-		out += fmt.Sprintf("%s skipped as too late to push in the last %s. ", plural(s.Late, "page"), minutes(monitorLateWindow))
+		out += fmt.Sprintf("%s skipped as too late to push (or timed out) in the last %s. ", plural(s.Late, "page"), minutes(monitorLateWindow))
 	}
 	if s.PushWaiting > 0 {
 		out += fmt.Sprintf("%s waiting to be pushed, oldest %s. ", plural(s.PushWaiting, "notification"), age(s.OldestPushAt, now))
