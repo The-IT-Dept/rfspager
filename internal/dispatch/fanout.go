@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"github.com/the-it-dept/rfspager/internal/hostcomp"
 	"github.com/the-it-dept/rfspager/internal/pagetext"
 	"github.com/the-it-dept/rfspager/internal/rxproto"
@@ -37,7 +38,28 @@ const (
 	// release the message row; past it the message is left for the next
 	// recheck or reconcile instead of stalling every other page.
 	fanoutLockTimeout = "5s"
+	// fanoutStatementTimeout bounds one fan-out. It normally takes
+	// milliseconds; a pathological plan must fail loudly and leave the page
+	// to reconcile rather than hold up every page behind it for minutes.
+	fanoutStatementTimeout = "30s"
+	// maxPushAge is how long a page may have waited since it was stored
+	// for fan-out to still wake anyone. Longer means fan-out was stalled or down
+	// (it normally runs within a second, or holdMax for a held copy): the
+	// page stays in the feed but is marked push_skip_reason 'late', because
+	// a turnout pushed long after the event misleads more than it helps.
+	maxPushAge = 15 * time.Minute
+	// timeoutBackoff is how long a page whose fan-out hit the statement
+	// timeout waits before its one retry; a second timeout gives it up as
+	// push_skip_reason 'timeout'. Retrying every minute would keep holding
+	// up the pages behind it.
+	timeoutBackoff = 2 * time.Minute
 )
+
+// timeoutState tracks a page whose fan-out timed out.
+type timeoutState struct {
+	count   int
+	retryAt time.Time
+}
 
 // reconcileWindow is how far back the catch-up scan looks for orphan messages
 // (messages that have no notification rows yet). LISTEN/NOTIFY is the primary
@@ -80,6 +102,22 @@ msg AS (
        -- and this reads its text; one stored later waits for this to
        -- commit and then sees, and corrects, these notification rows.
        FOR NO KEY UPDATE OF m
+),
+-- Who this incident has already woken: the users notified for the other
+-- copies of the same dispatch stored from 15 minutes before this one.
+-- Worked out once, from the incident's handful of messages and the
+-- notifications of those messages. Asked per recipient instead, the
+-- planner may walk each recipient's whole notification history (tens of
+-- thousands of rows each); a statistics refresh flipped it to that on
+-- 2026-11-27 and fan-out took minutes per page.
+already_notified AS MATERIALIZED (
+    SELECT DISTINCT n2.notifiable_id
+      FROM msg
+      JOIN messages m2 ON m2.incident_key = msg.incident_key
+                      AND m2.id <> msg.id
+                      AND m2.created_at > msg.created_at - INTERVAL '15 minutes'
+      JOIN notifications n2 ON n2.message_id = m2.id
+                           AND n2.notifiable_type = 'App\Models\User'
 ),
 recipients AS (
     SELECT s.user_id
@@ -134,15 +172,7 @@ inserted AS (
        -- One push per incident message per user: a dispatch that went to
        -- several capcodes this user follows is notified once. Copies of
        -- the same dispatch share an incident_key (see handler.IncidentKey).
-       AND NOT (msg.incident_key IS NOT NULL AND EXISTS (
-            SELECT 1 FROM notifications n2
-              JOIN messages m2 ON m2.id = n2.message_id
-             WHERE n2.notifiable_id = r.user_id
-               AND n2.notifiable_type = 'App\Models\User'
-               AND m2.id <> msg.id
-               AND m2.incident_key = msg.incident_key
-               AND m2.created_at > msg.created_at - INTERVAL '15 minutes'
-           ))
+       AND NOT EXISTS (SELECT 1 FROM already_notified a WHERE a.notifiable_id = r.user_id)
        -- A copy the receiver had to repair heavily (anything unrepairable
        -- or cut short, or half its codewords corrected), arriving within
        -- three minutes of another page on the same capcode, is a re-send
@@ -188,10 +218,15 @@ type FanoutWorker struct {
 	held    map[int64]time.Time
 	now     func() time.Time
 	replays *pagetext.ReplayWatch
+	// timeouts are pages whose fan-out hit the statement timeout. Only the
+	// Run goroutine touches it.
+	timeouts         map[int64]timeoutState
+	statementTimeout string
 }
 
 func NewFanoutWorker(db *sqlx.DB, wakeCh <-chan string) *FanoutWorker {
-	return &FanoutWorker{db: db, wakeCh: wakeCh, held: map[int64]time.Time{}, now: time.Now, replays: pagetext.Replays}
+	return &FanoutWorker{db: db, wakeCh: wakeCh, held: map[int64]time.Time{}, now: time.Now, replays: pagetext.Replays,
+		timeouts: map[int64]timeoutState{}, statementTimeout: fanoutStatementTimeout}
 }
 
 // ListenRefanout makes the worker fan out again the messages named on ch
@@ -263,15 +298,18 @@ func (w *FanoutWorker) recheckHeld(ctx context.Context) {
 // fanoutCandidate is what fan-out needs to know about a message before it
 // decides whether, and when, to push it.
 type fanoutCandidate struct {
-	Address   string         `db:"address"`
-	Message   string         `db:"message"`
-	CreatedAt time.Time      `db:"created_at"`
+	Address   string    `db:"address"`
+	Message   string    `db:"message"`
+	CreatedAt time.Time `db:"created_at"`
+	// StoredAt is when the server last stored the page (inserted, or a
+	// better copy replaced it): what fan-out's own delay is measured from.
+	StoredAt  time.Time      `db:"stored_at"`
 	Quality   sql.NullString `db:"quality"`
 	FannedOut bool           `db:"fanned_out"`
 }
 
 const candidateSQL = `
-SELECT address, message, created_at, quality::text AS quality,
+SELECT address, message, created_at, updated_at AS stored_at, quality::text AS quality,
        fanned_out_at IS NOT NULL AS fanned_out
   FROM messages
  WHERE id = $1 AND deleted_at IS NULL`
@@ -297,11 +335,34 @@ func (w *FanoutWorker) processMessage(ctx context.Context, messageID int64) {
 	}
 	quality := decodeQuality(c.Quality)
 	now := w.now()
+	if ts, ok := w.timeouts[messageID]; ok && now.Before(ts.retryAt) {
+		return
+	}
 	// A receiver clock running fast must not make a page look later than
 	// it is: never count it as heard after now.
 	heard := c.CreatedAt
 	if heard.After(now) {
 		heard = now
+	}
+	// Measured from when it was stored, not heard: a receiver delivering
+	// its buffer after a network drop isn't fan-out running late.
+	if now.Sub(c.StoredAt) > maxPushAge {
+		delete(w.held, messageID)
+		// Already pushed (a better copy reopened it) keeps its record;
+		// otherwise say why nobody was woken.
+		if _, err := w.db.ExecContext(ctx,
+			`UPDATE messages m
+			    SET fanned_out_at = NOW(),
+			        push_skip_reason = CASE WHEN EXISTS (SELECT 1 FROM notifications n WHERE n.message_id = m.id)
+			                                THEN push_skip_reason ELSE 'late' END
+			  WHERE id = $1 AND fanned_out_at IS NULL
+			    AND updated_at < $2`, messageID, now.Add(-maxPushAge)); err != nil {
+			slog.Error("fanout: marking late page failed", "message_id", messageID, "error", err)
+			return
+		}
+		slog.Warn("fanout: page too old to push", "message_id", messageID, "address", c.Address,
+			"waited", now.Sub(c.StoredAt).Round(time.Second).String())
+		return
 	}
 	firstSeen, wasHeld := w.held[messageID]
 	if !wasHeld {
@@ -365,27 +426,53 @@ func (w *FanoutWorker) processMessage(ctx context.Context, messageID int64) {
 	if stale {
 		staleLag = lag
 	}
-	w.fanOut(ctx, messageID, heldFor, staleLag)
+	if timedOut := w.fanOut(ctx, messageID, heldFor, staleLag); !timedOut {
+		delete(w.timeouts, messageID)
+		return
+	}
+	ts := w.timeouts[messageID]
+	ts.count++
+	if ts.count < 2 {
+		ts.retryAt = now.Add(timeoutBackoff)
+		w.timeouts[messageID] = ts
+		slog.Error("fanout: timed out, retrying later", "message_id", messageID, "timeout", w.statementTimeout, "retry_in", timeoutBackoff.String())
+		return
+	}
+	delete(w.timeouts, messageID)
+	if _, err := w.db.ExecContext(ctx,
+		`UPDATE messages m
+		    SET fanned_out_at = NOW(),
+		        push_skip_reason = CASE WHEN EXISTS (SELECT 1 FROM notifications n WHERE n.message_id = m.id)
+		                                THEN push_skip_reason ELSE 'timeout' END
+		  WHERE id = $1 AND fanned_out_at IS NULL`, messageID); err != nil {
+		slog.Error("fanout: giving up timed-out page failed", "message_id", messageID, "error", err)
+		return
+	}
+	slog.Error("fanout: timed out twice, page not pushed", "message_id", messageID, "address", c.Address)
 }
 
 // fanOut runs fanoutSQL for one message in a transaction that also records
 // how long it was held and, for a stale page pushed because no replay was
-// corroborated, how late it was heard.
-func (w *FanoutWorker) fanOut(ctx context.Context, messageID int64, heldFor, staleLag time.Duration) {
+// corroborated, how late it was heard. It reports whether the statement
+// timeout cut it off.
+func (w *FanoutWorker) fanOut(ctx context.Context, messageID int64, heldFor, staleLag time.Duration) (timedOut bool) {
 	tx, err := w.db.BeginTxx(ctx, nil)
 	if err != nil {
 		slog.Error("fanout: begin failed", "message_id", messageID, "error", err)
-		return
+		return false
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `SET LOCAL lock_timeout = '`+fanoutLockTimeout+`'`); err != nil {
+	if _, err := tx.ExecContext(ctx, `SET LOCAL lock_timeout = '`+fanoutLockTimeout+`'; SET LOCAL statement_timeout = '`+w.statementTimeout+`'`); err != nil {
 		slog.Error("fanout: lock timeout failed", "message_id", messageID, "error", err)
-		return
+		return false
 	}
 	rows, err := tx.QueryxContext(ctx, fanoutSQL, fanoutLockKey, messageID)
 	if err != nil {
+		if isStatementTimeout(err) {
+			return true
+		}
 		slog.Error("fanout: query failed", "message_id", messageID, "error", err)
-		return
+		return false
 	}
 	count := 0
 	for rows.Next() {
@@ -394,8 +481,11 @@ func (w *FanoutWorker) fanOut(ctx context.Context, messageID int64, heldFor, sta
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
+		if isStatementTimeout(err) {
+			return true
+		}
 		slog.Error("fanout: scan failed", "message_id", messageID, "error", err)
-		return
+		return false
 	}
 	if heldFor > 0 || staleLag > 0 {
 		if _, err := tx.ExecContext(ctx,
@@ -403,14 +493,22 @@ func (w *FanoutWorker) fanOut(ctx context.Context, messageID int64, heldFor, sta
 			        push_lag_s = COALESCE(NULLIF($3, 0), push_lag_s) WHERE id = $1`,
 			messageID, int(heldFor.Milliseconds()), int(staleLag.Seconds())); err != nil {
 			slog.Error("fanout: recording hold failed", "message_id", messageID, "error", err)
-			return
+			return false
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		slog.Error("fanout: commit failed", "message_id", messageID, "error", err)
-		return
+		return false
 	}
 	slog.Info("fanout: processed", "message_id", messageID, "recipients", count)
+	return false
+}
+
+// isStatementTimeout reports whether err is Postgres cancelling a statement
+// for statement_timeout (SQLSTATE 57014).
+func isStatementTimeout(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "57014"
 }
 
 func decodeQuality(s sql.NullString) *rxproto.PageQuality {

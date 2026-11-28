@@ -90,3 +90,61 @@ Subscription state comes straight from the stores.
   writes. To re-apply Google's state for one user, publish a RENEWED
   notification for their token to the RTDN topic (see the RTDN script's test
   command) and the webhook does the rest.
+
+## Notification pipeline stalls
+
+A page goes through *fan-out* (`internal/dispatch/fanout.go`: who gets it,
+one notification row each) and then *dispatch* (the push). Both normally take
+about a second. `dispatch.FanoutMonitor` checks every minute. It pushes the
+accounts in `OPS_ALERT_USER_IDS` (comma-separated user ids in
+`/opt/rfspager-go/.env`) when any of these hold:
+
+- a page from the last hour hasn't been fanned out three minutes after it
+  arrived;
+- a page was skipped as too late, or because its fan-out timed out twice,
+  in the last 15 minutes;
+- a notification has been claimable for three minutes without being
+  pushed. A push waiting out a retry backoff doesn't count.
+
+It alerts after two bad checks in a row, reminds you every 30 minutes while
+the stall lasts, and says when two checks in a row are clean. With the
+setting empty, stalls are only logged. It needs the database, both to check
+and to find your push tokens, so a database outage won't reach you this way;
+that needs an external uptime check on `/health`.
+
+Safeguards in fan-out:
+- Each fan-out runs under a 30 s `statement_timeout`. A page that times out
+  is retried once after two minutes. A second timeout gives it up as
+  `push_skip_reason = 'timeout'`.
+- A page stored more than 15 minutes before fan-out reaches it isn't pushed.
+  This counts from when the server stored it (`updated_at`), not the
+  receiver's heard time. It is marked `push_skip_reason = 'late'` and stays in
+  the feed, because a turnout pushed hours late misleads people.
+- The one-push-per-incident check is worked out once per page from the
+  incident's own messages (the `already_notified` CTE), so the plan can't
+  depend on how many notifications each recipient has.
+
+On 2026-11-27 a statistics refresh flipped that check to walking every
+recipient's whole notification history. Fan-out took 7–25 minutes per page
+for 19 hours.
+
+To diagnose:
+
+```sql
+-- fan-out lag per message
+SELECT id, created_at, fanned_out_at - created_at AS lag, push_skip_reason
+  FROM messages WHERE created_at > now() - interval '2 hours' ORDER BY id DESC LIMIT 30;
+-- anything slow running now
+SELECT now() - query_start, state, wait_event_type, left(query, 120)
+  FROM pg_stat_activity WHERE datname = 'rfspager' AND state <> 'idle' ORDER BY 1 DESC;
+```
+
+If it is stuck, run `EXPLAIN` on `fanoutSQL`, with `$1`/`$2` substituted and
+the `hostcomp.Access` splices expanded, and check that the plan never scans
+notifications by `notifiable_id`. Then:
+1. Mark backlog older than 15 minutes as done, so it doesn't flood people:
+   `UPDATE messages SET fanned_out_at = now(), push_skip_reason = 'late' WHERE fanned_out_at IS NULL AND updated_at < now() - interval '15 minutes' AND created_at > now() - interval '1 day'`.
+   Expect the monitor to keep reporting a stall for 15 minutes afterwards,
+   because the skipped pages count.
+2. `ANALYZE notifications; ANALYZE messages;`
+3. Restart `rfspager-go`, which drops the in-memory queue of old wake-ups.

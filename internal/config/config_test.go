@@ -7,7 +7,7 @@ import (
 
 func cleanConfigEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"JWT_SECRET", "ADMIN_EMAIL", "ADMIN_PASSWORD", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICE_MONTHLY", "STRIPE_PRICE_YEARLY", "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM", "SMTP_MODE", "LIBREDESK_URL", "LIBREDESK_API_KEY", "LIBREDESK_API_SECRET", "LIBREDESK_INBOX_ID", "LIBREDESK_AGENT_ID", "LIBREDESK_TEAM_ID", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "GOOGLE_PUBSUB_AUDIENCE", "GOOGLE_PUBSUB_SERVICE_EMAIL", "TRUSTED_PROXY_CIDRS", "IAP_PRODUCT_IDS", "APPLE_IAP_ENVIRONMENT", "GOOGLE_IAP_ENVIRONMENT"} {
+	for _, key := range []string{"JWT_SECRET", "ADMIN_EMAIL", "ADMIN_PASSWORD", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICE_MONTHLY", "STRIPE_PRICE_YEARLY", "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM", "SMTP_MODE", "LIBREDESK_URL", "LIBREDESK_API_KEY", "LIBREDESK_API_SECRET", "LIBREDESK_INBOX_ID", "LIBREDESK_AGENT_ID", "LIBREDESK_TEAM_ID", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "GOOGLE_PUBSUB_AUDIENCE", "GOOGLE_PUBSUB_SERVICE_EMAIL", "TRUSTED_PROXY_CIDRS", "IAP_PRODUCT_IDS", "APPLE_IAP_ENVIRONMENT", "GOOGLE_IAP_ENVIRONMENT", "OPS_ALERT_USER_IDS"} {
 		t.Setenv(key, "")
 	}
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
@@ -81,5 +81,30 @@ func TestLoadLibredeskTeamIsOptional(t *testing.T) {
 		if cfg.LibredeskTeamID != want {
 			t.Fatalf("team %q: LibredeskTeamID = %d, want %d", team, cfg.LibredeskTeamID, want)
 		}
+	}
+}
+
+// Who gets pipeline alerts. A typo must stop the server rather than
+// quietly leave nobody alerted.
+func TestLoadOpsAlertUserIDs(t *testing.T) {
+	cleanConfigEnv(t)
+	t.Setenv("JWT_SECRET", "test-only-jwt-secret-with-enough-variety-123456789")
+	t.Setenv("OPS_ALERT_USER_IDS", " 1, 42,,")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.OpsAlertUserIDs) != 2 || cfg.OpsAlertUserIDs[0] != 1 || cfg.OpsAlertUserIDs[1] != 42 {
+		t.Fatalf("OpsAlertUserIDs = %v", cfg.OpsAlertUserIDs)
+	}
+	for _, bad := range []string{"1,abc", "0", "-3"} {
+		t.Setenv("OPS_ALERT_USER_IDS", bad)
+		if _, err := Load(); err == nil {
+			t.Errorf("accepted OPS_ALERT_USER_IDS=%q", bad)
+		}
+	}
+	t.Setenv("OPS_ALERT_USER_IDS", "")
+	if cfg, err := Load(); err != nil || len(cfg.OpsAlertUserIDs) != 0 {
+		t.Fatalf("unset: %v %v", cfg.OpsAlertUserIDs, err)
 	}
 }
